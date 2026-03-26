@@ -1,0 +1,234 @@
+"""
+Log Manager - Zentrales Logging-System für Bruno Trading Bot
+Speichert Logs in Redis mit Pub/Sub für Live-Updates
+"""
+
+import logging
+import json
+import asyncio
+from datetime import datetime, timezone
+from typing import List, Dict, Optional, Callable
+from enum import Enum
+from dataclasses import dataclass, asdict
+
+from app.core.redis_client import redis_client
+
+logger = logging.getLogger(__name__)
+
+
+class LogLevel(Enum):
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+
+class LogCategory(Enum):
+    SYSTEM = "SYSTEM"
+    AGENT = "AGENT"
+    TRADING = "TRADING"
+    API = "API"
+    DATABASE = "DATABASE"
+    REDIS = "REDIS"
+    WEBSOCKET = "WEBSOCKET"
+    BINANCE = "BINANCE"
+    LLM = "LLM"
+    BACKUP = "BACKUP"
+
+
+@dataclass
+class LogEntry:
+    timestamp: str
+    level: str
+    category: str
+    source: str
+    message: str
+    details: Optional[Dict] = None
+    stack_trace: Optional[str] = None
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> "LogEntry":
+        return cls(**data)
+
+
+class LogManager:
+    """
+    Zentraler Log-Manager mit Redis-Speicher und Pub/Sub
+    """
+    
+    def __init__(self, max_logs: int = 10000):
+        self.redis = redis_client
+        self.max_logs = max_logs
+        self.log_key = "logs:all"
+        self.channel = "logs:live"
+        self.subscribers: List[Callable] = []
+        self._initialized = False
+        
+    async def initialize(self):
+        """Initialisiert den Log-Manager"""
+        if not self._initialized:
+            await self.redis.connect()
+            self._initialized = True
+            await self.info("SYSTEM", "LogManager", "Log-System initialisiert")
+    
+    async def add_log(
+        self, 
+        level: LogLevel, 
+        category: LogCategory, 
+        source: str, 
+        message: str,
+        details: Optional[Dict] = None,
+        stack_trace: Optional[str] = None
+    ) -> LogEntry:
+        """
+        Fügt einen Log-Eintrag hinzu
+        
+        Args:
+            level: Log-Level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+            category: Log-Kategorie (SYSTEM, AGENT, TRADING, etc.)
+            source: Quelle des Logs (z.B. "QuantAgent", "BinanceAPI")
+            message: Log-Nachricht
+            details: Optionale Details als Dictionary
+            stack_trace: Stack-Trace bei Fehlern
+        """
+        entry = LogEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            level=level.value,
+            category=category.value if hasattr(category, 'value') else category,
+            source=source,
+            message=message,
+            details=details,
+            stack_trace=stack_trace
+        )
+        
+        # In Redis speichern (LPUSH für neueste zuerst)
+        log_json = json.dumps(entry.to_dict())
+        await self.redis.redis.lpush(self.log_key, log_json)
+        
+        # Größe begrenzen
+        await self.redis.redis.ltrim(self.log_key, 0, self.max_logs - 1)
+        
+        # Pub/Sub für Live-Updates
+        await self.redis.publish_message(self.channel, log_json)
+        
+        # Auch in Python-Logging ausgeben
+        log_method = getattr(logger, level.value.lower())
+        log_method(f"[{category.value if hasattr(category, 'value') else category}] {source}: {message}")
+        
+        return entry
+    
+    # Convenience-Methoden für verschiedene Log-Levels
+    async def debug(self, category: LogCategory, source: str, message: str, details: Optional[Dict] = None):
+        return await self.add_log(LogLevel.DEBUG, category, source, message, details)
+    
+    async def info(self, category: LogCategory, source: str, message: str, details: Optional[Dict] = None):
+        return await self.add_log(LogLevel.INFO, category, source, message, details)
+    
+    async def warning(self, category: LogCategory, source: str, message: str, details: Optional[Dict] = None):
+        return await self.add_log(LogLevel.WARNING, category, source, message, details)
+    
+    async def error(self, category: LogCategory, source: str, message: str, details: Optional[Dict] = None, stack_trace: Optional[str] = None):
+        return await self.add_log(LogLevel.ERROR, category, source, message, details, stack_trace)
+    
+    async def critical(self, category: LogCategory, source: str, message: str, details: Optional[Dict] = None, stack_trace: Optional[str] = None):
+        return await self.add_log(LogLevel.CRITICAL, category, source, message, details, stack_trace)
+    
+    async def get_logs(
+        self, 
+        limit: int = 1000,
+        level: Optional[str] = None,
+        category: Optional[str] = None,
+        source: Optional[str] = None,
+        search: Optional[str] = None,
+        since: Optional[str] = None
+    ) -> List[LogEntry]:
+        """
+        Holt Logs mit Filtern
+        
+        Args:
+            limit: Maximale Anzahl Logs
+            level: Filter nach Log-Level
+            category: Filter nach Kategorie
+            source: Filter nach Quelle
+            search: Text-Suche in Nachricht
+            since: Zeitstempel für Logs seit diesem Zeitpunkt
+        """
+        # Alle Logs aus Redis holen
+        log_jsons = await self.redis.redis.lrange(self.log_key, 0, -1)
+        logs = []
+        
+        for log_json in log_jsons:
+            try:
+                log_dict = json.loads(log_json)
+                log = LogEntry.from_dict(log_dict)
+                
+                # Filter anwenden
+                if level and log.level != level:
+                    continue
+                if category and log.category != category:
+                    continue
+                if source and log.source != source:
+                    continue
+                if search and search.lower() not in log.message.lower():
+                    continue
+                if since and log.timestamp < since:
+                    continue
+                    
+                logs.append(log)
+            except Exception as e:
+                logger.error(f"Fehler beim Parsen von Log: {e}")
+                continue
+        
+        # Nach Zeitstempel sortieren (neueste zuerst) und limitieren
+        logs.sort(key=lambda x: x.timestamp, reverse=True)
+        return logs[:limit]
+    
+    async def clear_logs(self) -> bool:
+        """Löscht alle Logs"""
+        try:
+            await self.redis.redis.delete(self.log_key)
+            await self.info("SYSTEM", "LogManager", "Alle Logs gelöscht")
+            return True
+        except Exception as e:
+            logger.error(f"Fehler beim Löschen der Logs: {e}")
+            return False
+    
+    async def get_stats(self) -> Dict:
+        """Holt Log-Statistiken"""
+        try:
+            total = await self.redis.redis.llen(self.log_key)
+            
+            # Zählung nach Level
+            log_jsons = await self.redis.redis.lrange(self.log_key, 0, -1)
+            levels = {"DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0, "CRITICAL": 0}
+            categories = set()
+            sources = set()
+            
+            for log_json in log_jsons:
+                try:
+                    log_dict = json.loads(log_json)
+                    level = log_dict.get("level", "INFO")
+                    if level in levels:
+                        levels[level] += 1
+                    categories.add(log_dict.get("category", "UNKNOWN"))
+                    sources.add(log_dict.get("source", "UNKNOWN"))
+                except:
+                    continue
+            
+            return {
+                "total": total,
+                "by_level": levels,
+                "categories": list(categories),
+                "sources": list(sources)
+            }
+        except Exception as e:
+            logger.error(f"Fehler beim Holen der Statistiken: {e}")
+            return {"total": 0, "by_level": {}, "categories": [], "sources": []}
+
+
+# Singleton-Instanz
+log_manager = LogManager()

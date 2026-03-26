@@ -108,7 +108,7 @@ class QuantAgent:
                     signal=calc_result["signal"],
                     confidence=calc_result["confidence"],
                     indicators={"rsi": calc_result["rsi"]},
-                    timestamp=datetime.now(timezone.utc)
+                    timestamp=datetime.now(timezone.utc).isoformat()
                 )
 
                 # 4. In Redis Pub/Sub und Cache schreiben

@@ -10,3 +10,4 @@ pydantic-settings
 httpx
 pgvector
 numpy
+pandas==2.2.1
