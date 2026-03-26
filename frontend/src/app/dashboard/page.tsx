@@ -9,6 +9,17 @@ import {
 
 const ChartWidget = dynamic(() => import("../../components/ChartWidget"), { ssr: false });
 
+// Client-side time component to fix hydration error
+function TimeDisplay({ timestamp }: { timestamp: string }) {
+  const [time, setTime] = useState("");
+  
+  useEffect(() => {
+    setTime(new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  }, [timestamp]);
+  
+  return <>{time}</>;
+}
+
 export default function TradingPage() {
   const [metrics, setMetrics] = useState({
     price: 0,
@@ -215,7 +226,7 @@ export default function TradingPage() {
                     agent={log.source.replace('agent.', '').toUpperCase()}
                     action={log.level}
                     text={log.message}
-                    time={new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    time={<TimeDisplay timestamp={log.timestamp} />}
                     color={
                       log.level === 'ERROR' ? 'border-red-500/30 text-red-400' :
                       log.level === 'WARNING' ? 'border-yellow-500/30 text-yellow-400' :
