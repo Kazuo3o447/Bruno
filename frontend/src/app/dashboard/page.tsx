@@ -12,12 +12,19 @@ const ChartWidget = dynamic(() => import("../../components/ChartWidget"), { ssr:
 // Client-side time component to fix hydration error
 function TimeDisplay({ timestamp }: { timestamp: string }) {
   const [time, setTime] = useState("");
+  const [mounted, setMounted] = useState(false);
   
   useEffect(() => {
+    setMounted(true);
     setTime(new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
   }, [timestamp]);
   
-  return <>{time}</>;
+  // Return placeholder during SSR to avoid mismatch
+  if (!mounted) {
+    return <span>--:--:--</span>;
+  }
+  
+  return <span suppressHydrationWarning>{time}</span>;
 }
 
 export default function TradingPage() {
