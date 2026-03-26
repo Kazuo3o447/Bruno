@@ -1,0 +1,85 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: bruno-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-bruno}
+      POSTGRES_PASSWORD: ${DB_PASS:-bruno_secret}
+      POSTGRES_DB: ${DB_NAME:-bruno_trading}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  redis:
+    image: redis:alpine
+    container_name: bruno-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  api-backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: bruno-backend
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-bruno}
+      - DB_PASS=${DB_PASS:-bruno_secret}
+      - DB_NAME=${DB_NAME:-bruno_trading}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./backups:/app/backups
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  bruno-frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: bruno-frontend
+    restart: unless-stopped
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+  redis_data:
