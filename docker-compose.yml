@@ -5,6 +5,11 @@ services:
     image: timescale/timescaledb:latest-pg16
     container_name: bruno-postgres
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bruno} -d ${DB_NAME:-bruno_trading}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     environment:
       POSTGRES_USER: ${DB_USER:-bruno}
       POSTGRES_PASSWORD: ${DB_PASS:-bruno_secret}
@@ -20,9 +25,14 @@ services:
         max-file: "3"
 
   redis:
-    image: redis:alpine
+    image: redis/redis-stack-server:latest
     container_name: bruno-redis
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     ports:
       - "6379:6379"
     volumes:
@@ -55,6 +65,33 @@ services:
     volumes:
       - ./backend:/app
       - ./backups:/app/backups
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  worker-backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    command: python -m app.worker
+    container_name: bruno-worker
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+      - api-backend
+    environment:
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-bruno}
+      - DB_PASS=${DB_PASS:-bruno_secret}
+      - DB_NAME=${DB_NAME:-bruno_trading}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    volumes:
+      - ./backend:/app
     logging:
       driver: "json-file"
       options:

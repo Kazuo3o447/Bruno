@@ -149,7 +149,7 @@ class OllamaClient:
         """Prüft ob Ollama erreichbar ist."""
         try:
             models = await self.list_models()
-            return models is not None and len(models.get('models', [])) > 0
+            return models is not None
         except Exception:
             return False
 

@@ -1,3 +1,53 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Bruno Design System ── */
+:root {
+  --bg-primary: #06060f;
+  --bg-card: #0c0c18;
+  --bg-card-hover: #10101f;
+  --bg-elevated: #121225;
+  --border-subtle: #1a1a2e;
+  --border-active: #2d2b5e;
+  --accent-indigo: #6366f1;
+  --accent-glow: rgba(99, 102, 241, 0.15);
+  --text-primary: #e2e8f0;
+  --text-muted: #64748b;
+  --text-dim: #475569;
+}
+
+/* Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--border-active);
+}
+
+/* Glow utility */
+.glow-indigo {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.08), 0 0 60px rgba(99, 102, 241, 0.04);
+}
+
+/* Smooth page transitions */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-page-in {
+  animation: fadeIn 0.35s ease-out;
+}
+
+/* Select dropdown styling for dark mode */
+select option {
+  background: #0c0c18;
+  color: #e2e8f0;
+}

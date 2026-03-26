@@ -169,11 +169,23 @@ async def test_news_feeds() -> TestResult:
     """Testet News Feed APIs"""
     start_time = datetime.now(timezone.utc)
     try:
-        # Teste CryptoPanic API
+        # Teste CryptoPanic API mit echtem Key
+        token = settings.CRYPTOPANIC_API_KEY
+        if not token:
+            return TestResult(
+                name="CryptoPanic News",
+                category="News Feed",
+                status="warning",
+                response_time_ms=0,
+                message="Kein API Key konfiguriert",
+                details={"error": "CRYPTOPANIC_API_KEY is missing"},
+                timestamp=datetime.now(timezone.utc).isoformat()
+            )
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 "https://cryptopanic.com/api/v1/posts/",
-                params={"auth_token": "demo", "public": "true"}
+                params={"auth_token": token}
             )
             response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             
@@ -183,7 +195,7 @@ async def test_news_feeds() -> TestResult:
                     category="News Feed",
                     status="success",
                     response_time_ms=response_time,
-                    message="News Feed erreichbar",
+                    message="News Feed erreichbar & authentifiziert",
                     details={"status_code": response.status_code, "source": "CryptoPanic"},
                     timestamp=datetime.now(timezone.utc).isoformat()
                 )
@@ -191,10 +203,10 @@ async def test_news_feeds() -> TestResult:
                 return TestResult(
                     name="CryptoPanic News",
                     category="News Feed",
-                    status="warning",
+                    status="error",
                     response_time_ms=response_time,
-                    message=f"News Feed Status: {response.status_code}",
-                    details={"status_code": response.status_code},
+                    message=f"News Feed Fehler: Status {response.status_code}",
+                    details={"status_code": response.status_code, "body": response.text[:100]},
                     timestamp=datetime.now(timezone.utc).isoformat()
                 )
     except Exception as e:
@@ -202,9 +214,9 @@ async def test_news_feeds() -> TestResult:
         return TestResult(
             name="CryptoPanic News",
             category="News Feed",
-            status="warning",
+            status="error",
             response_time_ms=response_time,
-            message=f"News Feed Warnung: {str(e)}",
+            message=f"Verbindungsfehler: {str(e)}",
             details={"error": str(e)},
             timestamp=datetime.now(timezone.utc).isoformat()
         )

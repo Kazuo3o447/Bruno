@@ -1,19 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status
+from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades
 from app.core.redis_client import redis_client
 from app.core.llm_client import ollama_client
 from app.core.database import init_db, close_db
 from app.core.log_manager import log_manager
 from app.core.scheduler import scheduler
-from app.agents.quant import QuantAgent
-from app.agents.ingestion import IngestionAgent
-from app.agents.sentiment import SentimentAgent
-from app.agents.risk import RiskAgent
-from app.agents.execution import ExecutionAgent
-from app.agents.quant_new import QuantAgent as QuantAgentNew
 import logging
 import asyncio
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,115 +34,101 @@ app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(systemtest.router, prefix="/api/v1", tags=["systemtest"])
 app.include_router(agents_status.router, prefix="/api/v1", tags=["agents_status"])
-
-# Globaler Quant Agent
-quant_agent = QuantAgent()
-background_tasks = set()
-
-# NEU: Alle Agenten Instanzen
-agent_instances = {
-    "ingestion": IngestionAgent(),
-    "quant": QuantAgentNew(),
-    "sentiment": SentimentAgent(),
-    "risk": RiskAgent(),
-    "execution": ExecutionAgent()
-}
-active_agent_tasks = []
-
+app.include_router(trades.router, prefix="/api/v1/trades", tags=["trades"])
 
 @app.on_event("startup")
 async def startup_event():
     """Initialisiert alle Services beim Start."""
     try:
-        # Datenbank initialisieren
         await init_db()
         logger.info("Datenbank initialisiert")
         
-        # Redis Verbindung herstellen
         await redis_client.connect()
         logger.info("Redis verbunden")
         
-        # Log Manager initialisieren
         await log_manager.initialize()
         logger.info("Log Manager initialisiert")
         
-        # Scheduler initialisieren
         await scheduler.initialize()
         logger.info("Scheduler initialisiert")
         
-        # Starte alle Agenten als Background Tasks
-        logger.info("Starte alle Agenten...")
-        for name, agent in agent_instances.items():
-            task = asyncio.create_task(agent.start())
-            active_agent_tasks.append(task)
-            logger.info(f"Agent {name} gestartet.")
-        
-        # Ollama Verbindung prüfen
         ollama_healthy = await ollama_client.health_check()
-        logger.info(f"Ollama Status: {'OK' if ollama_healthy else 'FEHLER'}")
+        logger.info(f"Ollama Status: {'OK' if ollama_healthy else 'FEHLER (Fallback in Agents)'}")
         
-        # Quant Agent starten
-        task_quant = asyncio.create_task(quant_agent.run_analysis_loop())
-        background_tasks.add(task_quant)
-        task_quant.add_done_callback(background_tasks.discard)
-        logger.info("Quant Agent gestartet")
-        
-        logger.info("Alle Services gestartet")
+        logger.info("Bruno API Services gestartet")
         
     except Exception as e:
         logger.error(f"Startup Fehler: {e}")
         raise
 
-
 @app.on_event("shutdown")
 async def shutdown_event():
     """Räumt alle Resources beim Herunterfahren."""
     try:
-        logger.info("Stoppe alle Agenten...")
-        for agent in agent_instances.values():
-            await agent.stop()
-            
-        # Warte kurz, bis Tasks sich beenden
-        await asyncio.gather(*active_agent_tasks, return_exceptions=True)
-        logger.info("Alle Agenten gestoppt.")
-        
-        # Quant Agent stoppen
-        await quant_agent.close()
-        logger.info("Quant Agent gestoppt")
-        
-        # Ollama Client schließen
         await ollama_client.close()
         logger.info("Ollama Client geschlossen")
         
-        # Redis Verbindung schließen
         await redis_client.disconnect()
         logger.info("Redis Verbindung geschlossen")
         
-        # Datenbank Verbindungen schließen
         await close_db()
         logger.info("Datenbank Verbindungen geschlossen")
         
-        logger.info("Alle Services heruntergefahren")
+        logger.info("Bruno API Services heruntergefahren")
         
     except Exception as e:
         logger.error(f"Shutdown Fehler: {e}")
 
-
 @app.get("/health")
 async def health_check():
-    """Health Check mit Service-Status."""
-    redis_healthy = await redis_client.health_check()
-    ollama_healthy = await ollama_client.health_check()
+    """Health Check mit echtem Service-Status für alle Komponenten."""
     
-    return {
-        "status": "healthy",
-        "version": "0.1.0",
-        "services": {
-            "redis": "ok" if redis_healthy else "error",
-            "ollama": "ok" if ollama_healthy else "error"
-        }
-    }
+    # 1. Ollama Check
+    ollama_status = "disconnected"
+    ollama_models = []
+    try:
+        ollama_healthy = await ollama_client.health_check()
+        if ollama_healthy:
+            ollama_status = "connected"
+            models_data = await ollama_client.list_models()
+            if models_data:
+                ollama_models = [m.get("name", "") for m in models_data.get("models", [])]
+    except Exception as e:
+        logger.warning(f"Ollama Health Check fehlgeschlagen: {e}")
+    
+    # 2. Redis Check
+    redis_status = "disconnected"
+    try:
+        if await redis_client.health_check():
+            redis_status = "connected"
+    except Exception as e:
+        logger.warning(f"Redis Health Check fehlgeschlagen: {e}")
+    
+    # 3. DB Check
+    db_status = "disconnected"
+    try:
+        from app.core.database import engine
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+            db_status = "connected"
+    except Exception as e:
+        logger.warning(f"DB Health Check fehlgeschlagen: {e}")
 
+    overall = "healthy" if all([
+        ollama_status == "connected",
+        redis_status == "connected",
+        db_status == "connected"
+    ]) else "degraded"
+
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "ollama": ollama_status,
+        "ollama_models": ollama_models,
+        "redis": redis_status,
+        "database": db_status,
+    }
 
 @app.get("/")
 async def root():

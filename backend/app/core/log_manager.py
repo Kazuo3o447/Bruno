@@ -71,10 +71,47 @@ class LogManager:
     async def initialize(self):
         """Initialisiert den Log-Manager"""
         if not self._initialized:
-            await self.redis.connect()
-            self._initialized = True
-            await self.info("SYSTEM", "LogManager", "Log-System initialisiert")
+            try:
+                # Prüfen ob Redis bereits connected ist
+                if not self.redis.redis:
+                    await self.redis.connect()
+                self._initialized = True
+                await self.info(LogCategory.SYSTEM, "LogManager", "Log-System initialisiert")
+            except Exception as e:
+                logger.error(f"LogManager Init Fehler: {e}")
     
+    async def _cleanup_old_logs(self):
+        """Löscht Logs, die älter als 24 Stunden sind."""
+        try:
+            # Wir prüfen das älteste Element (am Ende der Liste)
+            # Da wir LPUSH machen, ist das Element am Index -1 das älteste
+            oldest_json = await self.redis.redis.lindex(self.log_key, -1)
+            if not oldest_json:
+                return
+
+            oldest_dict = json.loads(oldest_json)
+            oldest_ts = datetime.fromisoformat(oldest_dict["timestamp"])
+            
+            # Wenn älter als 24h
+            if (datetime.now(timezone.utc) - oldest_ts).total_seconds() > 86400:
+                # Wir löschen solange, bis das älteste Element wieder aktuell ist
+                # Da eine Liste groß sein kann, machen wir das schrittweise
+                deleted = 0
+                while deleted < 100: # Max 100 pro Durchgang um Blockade zu vermeiden
+                    last_json = await self.redis.redis.lindex(self.log_key, -1)
+                    if not last_json: break
+                    
+                    last_dict = json.loads(last_json)
+                    last_ts = datetime.fromisoformat(last_dict["timestamp"])
+                    
+                    if (datetime.now(timezone.utc) - last_ts).total_seconds() > 86400:
+                        await self.redis.redis.rpop(self.log_key)
+                        deleted += 1
+                    else:
+                        break
+        except Exception as e:
+            logger.error(f"Fehler bei Log-Cleanup: {e}")
+
     async def add_log(
         self, 
         level: LogLevel, 
@@ -109,7 +146,12 @@ class LogManager:
         log_json = json.dumps(entry.to_dict())
         await self.redis.redis.lpush(self.log_key, log_json)
         
-        # Größe begrenzen
+        # 24h Cleanup triggern (nicht bei jedem Log, um Performance zu sparen, z.B. bei jedem 10.)
+        import random
+        if random.random() < 0.1: 
+            asyncio.create_task(self._cleanup_old_logs())
+        
+        # Harte Obergrenze trotzdem beibehalten
         await self.redis.redis.ltrim(self.log_key, 0, self.max_logs - 1)
         
         # Pub/Sub für Live-Updates

@@ -92,44 +92,49 @@ async def get_sources():
 @router.websocket("/logs/ws")
 async def logs_websocket(websocket: WebSocket):
     """
-    WebSocket für Live-Log-Updates
+    WebSocket für Live-Log-Updates.
+    Nutzt Redis Pub/Sub für sofortige Benachrichtigung.
     """
     await websocket.accept()
     
+    # Task für das Senden von Log-Updates
+    send_task = None
+    
     try:
-        # Letzte 100 Logs senden
-        logs = await log_manager.get_logs(limit=100)
+        # 1. Letzte 100 Logs als Historie senden
+        history = await log_manager.get_logs(limit=100)
         await websocket.send_json({
             "type": "history",
-            "logs": [log.to_dict() for log in logs]
+            "logs": [log.to_dict() for log in history]
         })
         
-        # Auf neue Logs warten
-        async def log_listener(message):
-            try:
-                log_data = json.loads(message)
-                await websocket.send_json({
-                    "type": "new_log",
-                    "log": log_data
-                })
-            except Exception as e:
-                print(f"Fehler beim Senden von Log: {e}")
-        
-        # Subscriben
-        pubsub = await redis_client.client.pubsub()
+        # 2. Redis Pub/Sub Subscription
+        pubsub = redis_client.redis.pubsub()
         await pubsub.subscribe("logs:live")
         
-        while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if message and message["type"] == "message":
-                await log_listener(message["data"])
-            
-            # Auf Client-Nachrichten prüfen (für Filter-Updates etc.)
+        async def forward_logs():
             try:
-                data = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
+                while True:
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    if message and message["type"] == "message":
+                        log_data = json.loads(message["data"])
+                        await websocket.send_json({
+                            "type": "new_log",
+                            "log": log_data
+                        })
+            except Exception as e:
+                print(f"Log Forwarder Error: {e}")
+
+        # Start forwarder as background task
+        send_task = asyncio.create_task(forward_logs())
+        
+        # 3. Main Loop für Client-Kommandos (z.B. Filter-Anfragen)
+        while True:
+            try:
+                # Wir warten auf Nachrichten vom Client
+                data = await websocket.receive_json()
                 if data.get("action") == "filter":
-                    # Filter anwenden und gefilterte Logs senden
-                    logs = await log_manager.get_logs(
+                    filtered = await log_manager.get_logs(
                         limit=data.get("limit", 1000),
                         level=data.get("level"),
                         category=data.get("category"),
@@ -137,21 +142,27 @@ async def logs_websocket(websocket: WebSocket):
                         search=data.get("search")
                     )
                     await websocket.send_json({
-                        "type": "filtered",
-                        "logs": [log.to_dict() for log in logs]
+                        "type": "history", # Wir nutzen history type zum Überschreiben im Frontend
+                        "logs": [log.to_dict() for log in filtered]
                     })
-            except asyncio.TimeoutError:
-                pass
+            except WebSocketDisconnect:
+                break
             except Exception as e:
-                print(f"WebSocket Fehler: {e}")
+                print(f"WS Client Message Error: {e}")
                 break
                 
-    except WebSocketDisconnect:
-        print("Log WebSocket disconnected")
     except Exception as e:
-        print(f"Log WebSocket Error: {e}")
+        print(f"Log WebSocket General Error: {e}")
     finally:
+        if send_task:
+            send_task.cancel()
         try:
+            # PubSub aufräumen
+            # In redis-py 4.2+ sollte man aclose() oder unsubscribe() + close() nutzen
             await pubsub.unsubscribe("logs:live")
+            # Wir checken ob wir close() aufrufen können (je nach redis-py version)
+            if hasattr(pubsub, "aclose"):
+                await pubsub.aclose()
         except:
             pass
+        print("Log WebSocket Cleanup abgeschlossen.")

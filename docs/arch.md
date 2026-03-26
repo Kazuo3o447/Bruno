@@ -135,6 +135,9 @@ Das System verfügt über ein hocheffizientes, API-gesteuertes Backup-Modul für
 | Tabelle | Zweck | Besonderheiten |
 |---------|-------|----------------|
 | `market_candles` | TimescaleDB Hypertable | Zeitserien-Daten, Primär-Key: (time, symbol) |
+| `orderbook_snapshots`| TimescaleDB Hypertable | Tiefe des Orderbuchs, Volumen-Spreads und Imbalance Ratio |
+| `liquidations` | TimescaleDB Hypertable | Binance Force-Orders, Long/Short Kaskaden |
+| `funding_rates` | TimescaleDB Hypertable | Mark-Price und Funding Rates für Derivate |
 | `trade_audit_logs` | Trade-Historie | Agent-Scores, LLM-Reasoning |
 | `news_embeddings` | pgvector Vektoren | 1536-Dimension Embeddings |
 | `agent_status` | Agenten-Monitoring | Heartbeat, Performance-Metriken |
@@ -197,39 +200,19 @@ Das System verfügt über ein hocheffizientes, API-gesteuertes Backup-Modul für
 
 ## System-Status
 
-### ✅ Phase 2 & 3 Backend + Frontend - Produktivbereit
+### ✅ Phase 1 Abgeschlossen - Architekturtrennung
 
 | Komponente | Status | Details |
 |------------|--------|---------|
-| **FastAPI Backend** | ✅ Produktiv | Health-Check, CORS, WebSocket, Backup API |
-| **PostgreSQL** | ✅ Produktiv | TimescaleDB + pgvector, 9 Tabellen |
-| **Redis** | ✅ Produktiv | Singleton Connector, Caching, Streams |
-| **WebSocket Server** | ✅ Produktiv | 4 Live-Streams, Disconnect Handling |
-| **LLM Bridge** | ⚠️ Optional | Client implementiert, Ollama nicht gestartet |
-| **Frontend** | ✅ Produktiv | Next.js, Tailwind, Dashboard, Charts, WebSocket |
-| **Quant Agent** | ✅ Produktiv | RSI(14), NumPy, Warmup, Threading, Redis Pub/Sub |
+| **FastAPI Backend** | ✅ API Only | Läuft exklusiv als API, ohne Agenten-Code |
+| **Worker Orchestrator**| ✅ Neu | Agenten laufen entkoppelt im `bruno-worker` Container |
+| **Agenten Basis** | ✅ Refactored | `BaseAgent`, `PollingAgent` und `StreamingAgent` implementiert |
+| **Message Contracts** | ✅ Pydantic | Strikte Redis-Signale, Telemetrie, Logging & Fehlererkennung |
 
-### 🎯 Erreichbarkeit
-| Service | URL | Status |
-|---------|-----|-------|
-| Frontend "Bruno" | http://localhost:3000 | ✅ |
-| FastAPI Backend | http://localhost:8000 | ✅ |
-| API Docs | http://localhost:8000/docs | ✅ |
-| Quant Agent Status | http://localhost:8000/api/v1/agents/status/quant | ✅ |
-| PostgreSQL | localhost:5432 | ✅ |
-| Redis | localhost:6379 | ✅ |
-
-### 📊 Live-Daten Flow (Aktiv)
-```
-Binance WebSocket → Quant Agent (RSI) → Redis Pub/Sub → Frontend Dashboard
-```
-
-### 🚀 System-Status (2026-03-26)
-- **Docker Container:** 4/4 laufen
-- **Binance API:** Live BTC/USDT: 69.696 USD
-- **Quant Agent:** RSI: 42.05 | Signal: 0
-- **Paper-Trading:** Bereit
+### 🎯 Ziel Phase 2: Data Foundation & Rich Context
+- **Vorgabe:** Maximierung der Datenqualität (Free-Tier API) gemäß `data.md`.
+- **Inhalt:** Orderbuch-Tiefe, Liquidations, Funding-Rates, Fear & Greed Index in TimescaleDB.
 
 ---
 
-*Letzte Aktualisierung: 2026-03-26 - Phase 2 komplett getestet & produktivbereit*
+*Letzte Aktualisierung: 2026-03-26 - Phase 1 Migration abgeschlossen*

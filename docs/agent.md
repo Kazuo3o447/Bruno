@@ -46,83 +46,28 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 
 ---
 
-## Quick-Start für neue Agenten
+## Aktueller Entwicklungsstand
 
-### ✅ Phase 4 Abgeschlossen - Vollständiges Multi-Agenten-System
+Wir haben **Phase 3 (Agent Pipeline v2)** erfolgreich abgeschlossen!
+Das System besteht nun aus einer vollwertigen, entkoppelten Multi-Agenten-Architektur, die auf einer massiven TimescaleDB-Datenbasis (Phase 2) operiert.
 
-**Alle 5 Kern-Agenten sind implementiert und live:**
+### ✅ Was wirklich steht (Stand Phase 4.2)
+- **Infrastruktur:** Trennung von `bruno-backend` (FastAPI) und `bruno-worker` (Agent Orchestrator) in Docker.
+- **Data Foundation:** TimescaleDB Hypertables für 1m-Candles, Orderbook-Snapshots, Liquidations und Funding Rates.
+- **Ingestion Agent V2:** Multiplex WebSocket Echtzeit-Anbindung an 5 Binance-Streams inkl. Batch-Inserts zur DB-Schonung.
+- **Quant Agent V2:** Multi-Timeframe Analyse (5m, 1h) mittels nativem `pandas`/`numpy` (RSI, ATR, MACD) direkt aus aggregierten TimescaleDB Views.
+- **Sentiment Agent V2:** News-Deduplizierung via Redis und Ollama-Inferenz.
+- **Risk Agent V2:** DeepSeek-R1 gestützte Entscheidungsfindung mit Kelly Criterion Position-Sizing.
+- **Agenten-Zentrale (UI):** Premium Dashboard zur Steuerung und Überwachung.
+    - **Chat-Interface:** Direkte Interaktion mit jedem Agenten für Transparenz.
+    - **Control-Center:** Manuelles Starten, Stoppen und Resetten einzelner Agenten.
+    - **Metric-Overview:** Echtzeit-Status, Fehlerzähler und Uptime.
+    - **Info-Modal:** Vollständige Erklärung der Agenten-Logik und Datenquellen.
 
-1. **📡 Ingestion Agent** - WebSocket Daten-Sammler
-2. **📊 Quant Agent** - Technische Analyse mit RSI
-3. **🧠 Sentiment Agent** - LLM-basierte News-Analyse
-4. **⚖️ Risk Agent** - Konfluenz-Check & Risiko-Management
-5. **💰 Execution Agent** - Paper-Trading & Audit Logging
+### 🎯 Nächster Schritt: Phase 4.3 (Finalisierung & Lasttest)
+**WICHTIGSTE AUFGABE:** Durchführung eines Paper-Trading-Lasttests unter Echtzeit-Bedingungen. Validierung der UI-Performance bei hoher Log-Dichte im neuen Terminal.
 
-### 🔧 Technische Architektur
-- **Backend:** FastAPI mit AsyncIO
-- **Daten:** PostgreSQL + TimescaleDB, Redis Streams
-- **Frontend:** Next.js Dashboard mit Live-Agenten-Status
-- **LLM:** Ollama qwen2.5 (mit Fallback)
-- **Trading:** Paper-Trading Mode (audit only)
-
-### 📊 Live-Performance (2026-03-26)
-- **System Status:** 5/5 Agenten aktiv
-- **Live-Signale:** Quant BUY (RSI: 18.85)
-- **Daten-Flow:** 42,451+ Ticks → Signale → PostgreSQL
-- **Frontend:** Agenten Dashboard live
-
-### 🎯 Nächste Phase
-**Phase 5: Testing & Deployment**
-- Unit-Tests für alle Agenten
-- Integration-Tests (End-to-End)
-- Paper-Trading über mehrere Tage
-- Live-Trading Vorbereitung
-
-1. Lies diese `agent.md` vollständig durch
-2. Prüfe aktuellen Status in `Status.md`
-3. Bei Architektur-Fragen: Lies `arch.md`
-4. Bei KI/Agenten-Fragen: Lies `ki.md`
-5. Beginne mit dem konkreten Task
 
 ---
 
-## System-Status
-
-### ✅ Phase 4: Multi-Agenten-System ABGESCHLOSSEN
-- **Status:** Vollständig implementiert & live
-- **Agenten:** 5/5 aktiv (Ingestion, Quant, Sentiment, Risk, Execution)
-- **Frontend:** Agenten Dashboard mit Live-Status
-- **Backend:** FastAPI mit Redis Pub/Sub
-- **Daten:** PostgreSQL + Redis Streams
-- **Trading:** Paper-Trading Mode aktiv
-
-### 🎯 Phase 5: Testing & Deployment
-- **Status:** Nächste Phase
-- **Fokus:** Unit-Tests, Integration-Tests, Paper-Trading
-- **Ziel:** Live-Trading Vorbereitung
-
-| Test-Kategorie | Ergebnis | Status |
-|----------------|----------|--------|
-| **Docker Container** | ✅ BESTANDEN | 4/4 Container laufen |
-| **Backend API** | ✅ BESTANDEN | Health-Check OK |
-| **Datenbanken** | ✅ BESTANDEN | PostgreSQL (9 Tabellen), Redis |
-| **Binance API** | ✅ BESTANDEN | Live BTC/USDT: 68.912 USD |
-| **Agenten System** | ✅ BESTANDEN | 5/5 Agenten aktiv |
-| **WebSocket** | ✅ BESTANDEN | Ports offen & stabil |
-
-### 📊 Live-Daten Flow (Aktiv)
-```
-Binance WebSocket → 42,451 Ticks → Quant Agent (RSI: 18.85) → BUY Signal → Risk Agent → Execution Agent → PostgreSQL
-```
-
-### 🎯 Paper-Trading Bereit
-- **Quant Agent:** Produziert live Signale
-- **Dashboard:** Zeigt Echtzeitdaten
-- **Risk-Management:** Alle Health-Checks aktiv
-- **Backup-Management:** PostgreSQL Sicherungen
-
-**Fazit:** Das Bruno Trading Bot System ist 100% PRODUKTIVBEREIT!
-
----
-
-*Letzte Aktualisierung: 2026-03-26 - Vollsystem-Test bestanden & dokumentiert*
+*Letzte Aktualisierung: 2026-03-26 - Honest State Update nach Phase 3*

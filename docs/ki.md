@@ -1,14 +1,38 @@
-# KI- & Agenten-Verzeichnis
+# KI- & Agenten-Architektur — Implementierungsplan
 
-> **Das "Gehirn" des Trading-Bots**
+> **Vom Prototyp zur robusten Agent-Pipeline**
+>
+> Dieses Dokument ist der verbindliche Bauplan für das gesamte Agenten-System.
+> Jede Implementierung MUSS sich an diesem Dokument orientieren.
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
+**Letztes Update:** 2026-03-26
 
 ---
 
-## Lokale LLM-Infrastruktur
+## Inhaltsverzeichnis
+
+1. [Lokale LLM-Infrastruktur](#lokale-llm-infrastruktur)
+2. [Ehrlicher Ist-Stand der Agenten](#ehrlicher-ist-stand-der-agenten)
+3. [Architektur-Entscheidungen](#architektur-entscheidungen)
+4. [Zwei Agent-Basisklassen](#zwei-agent-basisklassen)
+5. [Dependency Injection](#dependency-injection)
+6. [Startup-Sequenz & Orchestrator](#startup-sequenz--orchestrator)
+7. [Worker-Entrypoint](#worker-entrypoint)
+8. [Message Contracts](#message-contracts)
+9. [Redis Channel-Architektur](#redis-channel-architektur)
+10. [Agent-Spezifikationen (Ist → Soll)](#agent-spezifikationen-ist--soll)
+11. [Status-Monitoring & Heartbeat](#status-monitoring--heartbeat)
+12. [Dateisystem-Übersicht (Zielzustand)](#dateisystem-übersicht-zielzustand)
+13. [Implementierungsreihenfolge](#implementierungsreihenfolge)
+14. [Verifizierung](#verifizierung)
+
+---
+
+## 1. Lokale LLM-Infrastruktur
 
 ### Primärmodell: Qwen 2.5 (14B)
+
 | Attribut | Spezifikation |
 |----------|---------------|
 | **Modell** | `qwen2.5:14b` |
@@ -17,6 +41,7 @@
 | **Kontext** | 128K Token |
 
 ### Analysemodell: DeepSeek-R1 (14B)
+
 | Attribut | Spezifikation |
 |----------|---------------|
 | **Modell** | `deepseek-r1:14b` |
@@ -24,165 +49,1316 @@
 | **Stärken** | Komplexes Reasoning, strategische Planung, Marktanalyse |
 | **Besonderheit** | Denkprozess explizit sichtbar |
 
-### Warum "Hidden Champions"?
-- **Effizienz**: 14B-Modelle laufen flüssig auf RX 7900 XT
-- **Latenz**: Unter 500ms für Standard-Inferenz
-- **Qualität**: Vergleichbar mit großen Cloud-LLMs für Trading-Tasks
-- **Kosten**: Keine API-Gebühren, volle Datenkontrolle
+### Warum lokal?
+- **Hardware:** AMD RX 7900 XT GPU, nativ auf Windows
+- **Latenz:** Unter 500ms für Standard-Inferenz
+- **Kosten:** Keine API-Gebühren, volle Datenkontrolle
+- **Zugang aus Docker:** `http://host.docker.internal:11434`
+
+### LLM Client (bestehend)
+
+Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
+
+| Methode | Zweck |
+|---------|-------|
+| `generate_response()` | Single-Prompt Inferenz |
+| `generate_chat()` | Multi-Turn Konversation |
+| `analyze_sentiment()` | JSON-formatierte Sentiment-Analyse |
+| `trading_analysis()` | Strategische Analyse mit DeepSeek-R1 |
+| `health_check()` | Prüft ob Ollama erreichbar ist |
 
 ---
 
-## Die 5 Kern-Agenten
+## 2. Ehrlicher Ist-Stand der Agenten
 
-### 1. Ingestion Agent
-| Eigenschaft | Beschreibung |
-|-------------|--------------|
-| **Typ** | WebSocket-Sammler |
-| **Input** | Binance WebSocket, CryptoPanic API |
-| **Output** | Redis Streams (Raw Data) |
-| **Technologie** | CCXT, WebSocket-Client, AsyncIO |
-| **Aufgabe** | Echtzeit-Marktdaten sammeln, normalisieren, weiterleiten |
+> **Bevor wir den Soll-Zustand planen, muss klar sein was heute wirklich steht.**
 
-### 2. Quant Agent
-| Eigenschaft | Beschreibung |
-|-------------|--------------|
-| **Typ** | Technischer/Mathematischer Analytiker |
-| **Input** | Redis Streams, TimescaleDB (historisch) |
-| **Output** | Trading-Signals (BUY/SELL/HOLD) + Confidence |
-| **Technologie** | Pandas, NumPy, TA-Lib, Prophet |
-| **Aufgabe** | Momentum, Volatilität, technische Indikatoren berechnen |
+### Kritische Probleme im aktuellen Code
 
-### 3. Sentiment Agent
-| Eigenschaft | Beschreibung |
-|-------------|--------------|
-| **Typ** | News-Analyst |
-| **Input** | RSS-Feeds, CryptoPanic, Reddit, LLM-Embeddings |
-| **Output** | Sentiment-Score (-1 bis +1) |
-| **Technologie** | Ollama-API, pgvector, NLP |
-| **Aufgabe** | Marktstimmung analysieren, Fear/Greed quantifizieren |
+#### Problem 1: Kein einheitliches Interface
 
-### 4. Risk & Consensus Agent
-| Eigenschaft | Beschreibung |
-|-------------|--------------|
-| **Typ** | Veto- und Konfluenz-Instanz |
-| **Input** | Alle Agent-Signals, Position-Data, Risk-Metriken |
-| **Output** | Final Approval + Position-Size |
-| **Technologie** | Regelbasiert + ML-Klassifikator |
-| **Aufgabe** | Konfliktauflösung, Risk-Management, Final-Check |
-| **Regeln** | Stop-Loss, Take-Profit, Max-Position-Size |
+| Agent | Start-Methode | Stop-Methode | Cleanup |
+|-------|---------------|--------------|---------|
+| Ingestion | `start()` | `stop()` | ❌ Keins |
+| Quant | `run_analysis_loop()` ⚠️ | `close()` ⚠️ | `exchange.close()` |
+| Sentiment | `start()` | `stop()` | ❌ Keins |
+| Risk | `start()` | `stop()` | ❌ Keins |
+| Execution | `start()` | `stop()` | ❌ Keins |
 
-### 5. Execution Agent
-| Eigenschaft | Beschreibung |
-|-------------|--------------|
-| **Typ** | Order-Router |
-| **Input** | Risk-Approved Signals |
-| **Output** | Binance API Orders |
-| **Technologie** | CCXT, AsyncIO, Retry-Logic |
-| **Aufgabe** | Order-Platzierung, Status-Tracking, Fehlerbehandlung |
-| **Modi** | Paper-Trading, Live-Trading (geschaltet) |
+**`main.py` ruft `agent.start()` für alle Agenten auf**, aber `QuantAgent` hat `run_analysis_loop()` statt `start()`. Das Shutdown in `main.py` ruft `agent.stop()` auf, aber `QuantAgent` hat `close()`. → **Stiller Fehler beim Starten und beim Shutdown.**
+
+#### Problem 2: `quant_new.py` existiert noch
+
+Die Datei liegt noch im Repo, obwohl Status.md behauptet, sie sei gelöscht. Es gibt zwei `QuantAgent`-Klassen. `main.py` importiert aus `quant.py` (der mit `run_analysis_loop()`), nicht aus `quant_new.py` (der mit `start()`).
+
+#### Problem 3: Keine Crash-Isolation
+
+Alle 5 Agenten laufen als `asyncio.create_task()` im **selben FastAPI-Prozess**. Wenn ein Agent eine unbehandelte Exception wirft, verschwindet sein Task lautlos. Kein Monitoring, kein Neustart, kein Alarm.
+
+#### Problem 4: Keine Abhängigkeits-Ordnung
+
+Alle Agenten starten gleichzeitig. Der Risk Agent subscribt auf `signals:*` bevor irgendein Producer jemals publiziert hat. Das funktioniert zufällig, weil Redis Pub/Sub keine Historie hat — aber es gibt kein definiertes "der Daten-Feed muss zuerst stehen".
+
+#### Problem 5: Globale Singletons statt Dependency Injection
+
+Jeder Agent importiert `redis_client` direkt aus `app.core.redis_client`. Kein Agent bekommt seine Dependencies explizit übergeben. Das macht Tests ohne Mocking-Frameworks unmöglich und verhindert, dass zwei Agenten mit verschiedenen Konfigurationen laufen könnten.
 
 ---
 
-## Agenten-Kommunikationsprotokoll
+## 3. Architektur-Entscheidungen
 
-### Nachrichten-Schema (Redis)
-```json
-{
-  "agent_id": "quant_01",
-  "timestamp": 1712345678,
-  "signal": "BUY",
-  "symbol": "BTC/USDT",
-  "confidence": 0.85,
-  "metadata": {
-    "indicators": ["RSI", "MACD"],
-    "timeframe": "1m"
-  }
-}
+> **Fundamental-Entscheidungen, die alles Weitere bestimmen.**
+
+### Entscheidung 1: Zwei Container statt einem
+
+```
+bruno-api:    FastAPI (API + WebSocket) — KEINE Agenten
+bruno-worker: Agent Orchestrator       — KEINE API
 ```
 
-### Kanäle
-| Kanal | Zweck |
-|-------|-------|
-| `raw:data` | Ingestion → Alle |
-| `signals:quant` | Quant → Risk |
-| `signals:sentiment` | Sentiment → Risk |
-| `consensus:final` | Risk → Execution |
-| `executed:orders` | Execution → Alle (Feedback) |
+**Begründung:** Ein Agent-Crash (z.B. durch ccxt-Exception oder WebSocket-Timeout) darf nie den Health-Check oder die Backup-API umwerfen. Gleiche Codebase, verschiedene Entrypoints.
 
----
+### Entscheidung 2: Zwei Agent-Basisklassen statt einer
 
-## LLM-Prompting-Strategien
+Die 5 Agenten folgen **zwei fundamental verschiedenen Laufzeit-Mustern**:
 
-### Sentiment-Analyse Prompt
+| Muster | Agenten | Verhalten |
+|--------|---------|-----------|
+| **Polling** | Quant, Sentiment | Intervall-basiert: alle N Sekunden `process()` aufrufen |
+| **Streaming** | Ingestion, Risk, Execution | Event-basiert: dauerhaft auf WebSocket/Pub/Sub lauschen |
+
+Ein einzelnes `BaseAgent` mit `get_interval() -> 0` als Hack für Streaming-Agenten ist unehrlich. Der Ingestion Agent blockt in seinem WebSocket-Consumer — er hat kein Intervall. Der Risk Agent reagiert auf Pub/Sub Messages — er pollt nicht.
+
+### Entscheidung 3: Dependency Injection statt globale Singletons
+
+Jeder Agent bekommt seine Dependencies **explizit beim Erstellen** über ein `AgentDependencies`-Objekt. Kein Agent importiert `redis_client` oder `ollama_client` direkt als Modul-Singleton.
+
+**Begründung:**
+- Tests können Mock-Dependencies injizieren
+- Verschiedene Agenten können verschiedene Konfigurationen nutzen
+- Der Worker-Container steuert zentral, welche Infrastruktur wann initialisiert wird
+
+### Entscheidung 4: setup() ist Pflicht, nicht optional
+
+`setup()` wird **vom Orchestrator aufgerufen**, nicht vom Agent selbst. So weiß der Orchestrator, ob die Initialisierung erfolgreich war, bevor er den Agent in die Run-Schleife schickt.
+
+### Entscheidung 5: Gestufter Startup statt alles gleichzeitig
+
+Die Pipeline hat eine natürliche Topologie. Die Startreihenfolge bildet diese ab:
+
 ```
-Analysiere folgende Crypto-News auf Bullish/Bearish-Sentiment:
-{news_text}
-
-Gib zurück:
-- Sentiment-Score (-1.0 bis +1.0)
-- Confidence (0.0 bis 1.0)
-- Kurze Begründung (max 50 Wörter)
-```
-
-### Strategische Analyse (DeepSeek-R1)
-```
-Gegeben: BTC-Preisaktion, Orderbook-Daten, Sentiment-Score.
-Task: Identifiziere Hochwahrscheinlichkeit-Setups für Scalping.
-Denke Schritt-für-Schritt:
-1. Marktstruktur analysieren
-2. Key Levels identifizieren
-3. Entry/Exit-Logik ableiten
-4. Risk/Ratio berechnen
+Stufe 1: [Ingestion]                 ← Daten-Feed muss zuerst stehen
+Stufe 2: [Quant, Sentiment]          ← Analyse braucht Daten (parallel)
+Stufe 3: [Risk]                      ← Entscheidung braucht Signale
+Stufe 4: [Execution]                 ← Ausführung braucht Freigabe
 ```
 
 ---
 
-## Backend Integration
+## 4. Zwei Agent-Basisklassen
 
-### LLM Client Wrapper
-Der `OllamaClient` in `backend/app/core/llm_client.py` implementiert:
+### Gemeinsame Basis: `BaseAgent`
 
-| Methode | Zweck | Beispiel |
-|---------|-------|----------|
-| `generate_response()` | Single-Prompt | Sentiment-Analyse |
-| `generate_chat()` | Konversations-Format | Multi-Turn Dialog |
-| `analyze_sentiment()` | JSON-Output | `{"sentiment": 0.8, "confidence": 0.9}` |
-| `trading_analysis()` | DeepSeek-R1 | Strategische Planung |
-
-### Agenten-Kommunikation
-| Channel | Format | Beispiel |
-|---------|--------|---------|
-| `signals:quant` | Redis Stream | `{"symbol": "BTC", "signal": "BUY", "confidence": 0.85}` |
-| `signals:sentiment` | Redis Pub/Sub | `{"sentiment": 0.7, "source": "news"}` |
-| `consensus:final` | WebSocket | `{"action": "EXECUTE", "size": 0.1}` |
-
-### Prompt-Templates
 ```python
-# Sentiment-Analyse
-SENTIMENT_PROMPT = """
-Analysiere folgenden Text auf Bullish/Bearish-Sentiment:
-"{text}"
+# backend/app/agents/base.py
 
-Gib zurück als JSON:
-{
-    "sentiment": -1.0 bis 1.0,
-    "confidence": 0.0 bis 1.0,
-    "reasoning": "kurze Begründung"
-}
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Optional, TYPE_CHECKING
+import asyncio
+import logging
+import traceback
+import json
+
+if TYPE_CHECKING:
+    from app.agents.deps import AgentDependencies
+
+
+class AgentState:
+    """Interner Zustand eines Agenten — wird vom Orchestrator gelesen."""
+    def __init__(self):
+        self.running: bool = False
+        self.error_count: int = 0
+        self.consecutive_errors: int = 0
+        self.processed_count: int = 0
+        self.start_time: Optional[datetime] = None
+        self.last_process_time: Optional[datetime] = None
+        self.last_error: Optional[str] = None
+
+
+class BaseAgent(ABC):
+    """
+    Gemeinsame Basis für alle Bruno-Agenten.
+    
+    Definiert Lifecycle (setup/teardown), State-Tracking und Heartbeat.
+    Die run()-Logik wird von den Subklassen PollingAgent/StreamingAgent implementiert.
+    """
+    
+    def __init__(self, agent_id: str, deps: "AgentDependencies"):
+        self.agent_id = agent_id
+        self.deps = deps
+        self.state = AgentState()
+        self.logger = logging.getLogger(f"agent.{agent_id}")
+        self._max_consecutive_errors = 10
+
+    # --- Lifecycle (vom Orchestrator aufgerufen) ---
+
+    @abstractmethod
+    async def setup(self) -> None:
+        """
+        PFLICHT. Einmalige Initialisierung.
+        
+        Hier passiert alles was ein Agent braucht bevor er arbeiten kann:
+        - Exchange-Verbindung aufbauen
+        - Historische Daten laden (Warmup)
+        - Pub/Sub Channels subscriben
+        - API-Keys validieren
+        
+        Wird VOR run() vom Orchestrator aufgerufen.
+        Wenn setup() eine Exception wirft, wird der Agent NICHT gestartet.
+        """
+        ...
+
+    async def teardown(self) -> None:
+        """
+        Cleanup beim Stoppen. Optional überschreibbar.
+        
+        Hier: Exchange schließen, Connections aufräumen, etc.
+        """
+        pass
+
+    @abstractmethod
+    async def run(self) -> None:
+        """
+        Hauptschleife. Implementierung in PollingAgent/StreamingAgent.
+        Kehrt erst zurück wenn der Agent gestoppt wird oder fatal crasht.
+        """
+        ...
+
+    async def stop(self) -> None:
+        """Signalisiert dem Agent, dass er sich beenden soll."""
+        self.state.running = False
+        self.logger.info(f"Stop-Signal gesendet an {self.agent_id}")
+
+    # --- Heartbeat ---
+
+    async def _send_heartbeat(self) -> None:
+        """
+        Meldet Agent-Status an Redis (TTL 60s).
+        Wenn 60s kein Heartbeat kommt, gilt der Agent als tot.
+        """
+        try:
+            heartbeat = {
+                "agent_id": self.agent_id,
+                "status": "running" if self.state.running else "stopped",
+                "uptime_seconds": (
+                    (datetime.now(timezone.utc) - self.state.start_time).total_seconds()
+                    if self.state.start_time else 0
+                ),
+                "processed_count": self.state.processed_count,
+                "error_count": self.state.error_count,
+                "consecutive_errors": self.state.consecutive_errors,
+                "last_error": self.state.last_error,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            await self.deps.redis.set_cache(
+                f"heartbeat:{self.agent_id}",
+                heartbeat,
+                ttl=60
+            )
+        except Exception as e:
+            # Heartbeat-Fehler darf NIEMALS den Agent crashen
+            self.logger.debug(f"Heartbeat-Fehler (nicht kritisch): {e}")
+
+    # --- Error Reporting ---
+
+    async def _report_error(self, error: Exception) -> None:
+        """Publiziert Fehler auf Redis für Monitoring/Telegram."""
+        try:
+            await self.deps.redis.publish_message(
+                "alerts:agent_error",
+                json.dumps({
+                    "agent_id": self.agent_id,
+                    "error": str(error),
+                    "traceback": traceback.format_exc(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "consecutive": self.state.consecutive_errors
+                })
+            )
+        except Exception:
+            pass  # Error-Reporting darf den Agent nie crashen
+```
+
+### PollingAgent — für periodische Arbeit
+
+```python
+# backend/app/agents/base.py (Fortsetzung)
+
+class PollingAgent(BaseAgent):
+    """
+    Agent der periodisch arbeitet.
+    
+    Verwendung: Quant Agent (alle 30s), Sentiment Agent (alle 5min).
+    
+    Implementiere:
+      - setup():        Initialisiering (Exchange, Warmup, etc.)
+      - process():      Ein einzelner Verarbeitungszyklus
+      - get_interval(): Pause zwischen zwei process()-Aufrufen in Sekunden
+    """
+
+    @abstractmethod
+    async def process(self) -> None:
+        """
+        Ein einzelner Verarbeitungszyklus.
+        Wird alle get_interval() Sekunden aufgerufen.
+        
+        Beispiel Quant: Candles laden → RSI berechnen → Signal publizieren
+        Beispiel Sentiment: News holen → LLM analysieren → Score publizieren
+        """
+        ...
+
+    @abstractmethod
+    def get_interval(self) -> float:
+        """Pause zwischen process()-Aufrufen in Sekunden."""
+        ...
+
+    async def run(self) -> None:
+        """Polling-Loop: process() → sleep → process() → sleep → ..."""
+        self.state.running = True
+        self.state.start_time = datetime.now(timezone.utc)
+
+        while self.state.running:
+            try:
+                await self._send_heartbeat()
+                await self.process()
+                self.state.processed_count += 1
+                self.state.last_process_time = datetime.now(timezone.utc)
+                self.state.consecutive_errors = 0  # Reset bei Erfolg
+            except Exception as e:
+                self.state.error_count += 1
+                self.state.consecutive_errors += 1
+                self.state.last_error = str(e)
+                self.logger.error(f"process() Fehler: {e}")
+                await self._report_error(e)
+
+                if self.state.consecutive_errors >= self._max_consecutive_errors:
+                    self.logger.critical(
+                        f"{self.agent_id}: {self._max_consecutive_errors} Fehler "
+                        f"in Folge — 5 Minuten Pause"
+                    )
+                    await asyncio.sleep(300)
+                    self.state.consecutive_errors = 0
+
+            await asyncio.sleep(self.get_interval())
+
+        self.logger.info(f"{self.agent_id} run-loop beendet")
+```
+
+### StreamingAgent — für Event-basierte Arbeit
+
+```python
+# backend/app/agents/base.py (Fortsetzung)
+
+class StreamingAgent(BaseAgent):
+    """
+    Agent der dauerhaft auf einen Event-Stream lauscht.
+    
+    Verwendung: Ingestion (WebSocket), Risk (Pub/Sub), Execution (Pub/Sub).
+    
+    Implementiere:
+      - setup():      Initialisiering (WebSocket aufbauen, Channel subscriben)
+      - run_stream(): Blockierende Stream-Verarbeitung
+    """
+
+    @abstractmethod
+    async def run_stream(self) -> None:
+        """
+        Blockierender Stream-Consumer.
+        
+        Diese Methode läuft bis der Agent gestoppt wird.
+        Sie enthält die eigene Event-Loop (WebSocket-Receive, Pub/Sub-Listen, etc.)
+        
+        Der Agent ist selbst dafür verantwortlich, self.state.running zu prüfen
+        und bei False sauber zu beenden.
+        
+        Beispiel Ingestion: async for message in websocket: ...
+        Beispiel Risk: while running: await pubsub.get_message(...)
+        """
+        ...
+
+    async def run(self) -> None:
+        """
+        Wrapper um run_stream() mit Reconnect-Logik.
+        
+        Wenn run_stream() eine Exception wirft (z.B. WebSocket-Disconnect),
+        wird automatisch mit Exponential Backoff reconnected.
+        """
+        self.state.running = True
+        self.state.start_time = datetime.now(timezone.utc)
+        backoff = 1
+
+        while self.state.running:
+            try:
+                await self._send_heartbeat()
+                await self.run_stream()
+                break  # Normales Ende (stop() wurde aufgerufen)
+            except Exception as e:
+                self.state.error_count += 1
+                self.state.consecutive_errors += 1
+                self.state.last_error = str(e)
+                self.logger.error(f"Stream-Fehler: {e}")
+                await self._report_error(e)
+
+                if self.state.consecutive_errors >= self._max_consecutive_errors:
+                    self.logger.critical(
+                        f"{self.agent_id}: {self._max_consecutive_errors} "
+                        f"Stream-Fehler in Folge — 5 Minuten Pause"
+                    )
+                    await asyncio.sleep(300)
+                    self.state.consecutive_errors = 0
+                    backoff = 1
+                else:
+                    wait_time = min(backoff, 60)
+                    self.logger.info(f"Reconnect in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    backoff = min(backoff * 2, 60)
+
+        self.logger.info(f"{self.agent_id} run-loop beendet")
+```
+
+### Warum zwei Klassen statt einer?
+
+```
+PollingAgent:                    StreamingAgent:
+┌──────────────┐                ┌──────────────────────┐
+│ loop:        │                │ loop:                │
+│   process()  │                │   run_stream()       │
+│   sleep(30)  │                │     ↳ blockiert auf  │
+│   process()  │                │       WebSocket/     │
+│   sleep(30)  │                │       Pub/Sub        │
+│   ...        │                │   ↳ bei Fehler:      │
+└──────────────┘                │     reconnect mit    │
+                                │     exp. backoff     │
+                                └──────────────────────┘
+
+Der Quant Agent pollt.          Der Ingestion Agent streamt.
+Er hat eine Pause.              Er hat KEINE Pause.
+Er ruft process() auf.          Er lebt IN run_stream().
+```
+
+Ein `get_interval() -> 0` verwischt diesen Unterschied. Der Code sieht gleich aus, aber das Verhalten ist fundamental anders. Zwei Klassen machen die Absicht klar.
+
+---
+
+## 5. Dependency Injection
+
+### Das AgentDependencies-Objekt
+
+```python
+# backend/app/agents/deps.py
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.core.redis_client import RedisClient
+    from app.core.llm_client import OllamaClient
+    from app.core.config import Settings
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+
+@dataclass
+class AgentDependencies:
+    """
+    Alles was ein Agent zum Arbeiten braucht.
+    
+    Wird einmal im Worker-Entrypoint erstellt und an alle Agenten übergeben.
+    Kein Agent importiert jemals redis_client oder ollama_client direkt.
+    
+    Vorteile:
+    - Tests: Mock-Dependencies injizieren, kein Monkey-Patching
+    - Kontrolle: Worker entscheidet wann Redis/DB verbunden wird
+    - Flexibilität: Verschiedene Agenten können verschiedene Configs nutzen
+    """
+    redis: "RedisClient"
+    config: "Settings"
+    db_session_factory: "async_sessionmaker"  # Für DB-Zugriff (Execution Agent)
+    ollama: "OllamaClient"                    # Für LLM-Zugriff (Sentiment Agent)
+```
+
+### Wie ein Agent Dependencies nutzt
+
+```python
+# Vorher (globaler Import — schlecht):
+from app.core.redis_client import redis_client
+
+class QuantAgent:
+    async def start(self):
+        await redis_client.publish_message(...)  # Woher kommt das? Ist es connected?
+
+# Nachher (Dependency Injection — gut):
+class QuantAgentV2(PollingAgent):
+    def __init__(self, deps: AgentDependencies, symbol: str = "BTC/USDT"):
+        super().__init__(agent_id="quant", deps=deps)
+        self.symbol = symbol
+    
+    async def process(self):
+        await self.deps.redis.publish_message(...)  # Explizit, testbar
+```
+
+### Was das für Tests bedeutet
+
+```python
+# test_quant_agent.py
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+@pytest.fixture
+def mock_deps():
+    deps = MagicMock(spec=AgentDependencies)
+    deps.redis = AsyncMock()
+    deps.redis.publish_message = AsyncMock()
+    deps.redis.set_cache = AsyncMock()
+    deps.config = Settings()
+    return deps
+
+async def test_quant_publishes_signal(mock_deps):
+    agent = QuantAgentV2(deps=mock_deps, symbol="BTC/USDT")
+    agent.prices = [100.0] * 50  # Genug für RSI
+    
+    await agent.process()
+    
+    mock_deps.redis.publish_message.assert_called_once()
+    call_args = mock_deps.redis.publish_message.call_args
+    assert call_args[0][0] == "signals:quant"  # Richtiger Channel
+```
+
+So werden Tests möglich, **ohne** Docker, Redis oder Binance laufen zu haben.
+
+---
+
+## 6. Startup-Sequenz & Orchestrator
+
+### AgentOrchestrator
+
+```python
+# backend/app/agents/orchestrator.py
+
+import asyncio
+import logging
+from typing import Dict, List
+from app.agents.base import BaseAgent
+from app.agents.deps import AgentDependencies
+
+logger = logging.getLogger("orchestrator")
+
+
+class AgentOrchestrator:
+    """
+    Verwaltet den kompletten Lifecycle aller Agenten.
+    
+    Verantwortlichkeiten:
+    1. Gestufte Startup-Reihenfolge (Pipeline-Topologie)
+    2. setup() für jeden Agent aufrufen und Fehler abfangen
+    3. Supervised run() — crashed Agents neu starten
+    4. Graceful Shutdown mit Timeout
+    5. Redis-Kommandos empfangen (restart/stop von API aus)
+    """
+
+    # Die Startup-Reihenfolge bildet die Daten-Pipeline ab:
+    # Ingestion → [Quant, Sentiment] → Risk → Execution
+    STARTUP_STAGES: List[List[str]] = [
+        ["ingestion"],              # Stufe 1: Daten-Feed
+        ["quant", "sentiment"],     # Stufe 2: Analyse (parallel)
+        ["risk"],                   # Stufe 3: Entscheidung
+        ["execution"],              # Stufe 4: Ausführung
+    ]
+
+    def __init__(self, deps: AgentDependencies):
+        self.deps = deps
+        self._agents: Dict[str, BaseAgent] = {}
+        self._tasks: Dict[str, asyncio.Task] = {}
+        self._shutdown_event = asyncio.Event()
+
+    def register(self, agent_id: str, agent: BaseAgent) -> None:
+        """Registriert einen Agent. Muss VOR start_all() passieren."""
+        self._agents[agent_id] = agent
+        logger.info(f"Agent registriert: {agent_id}")
+
+    async def start_all(self) -> None:
+        """
+        Startet alle Agenten in der definierten Reihenfolge.
+        
+        Für jede Stufe:
+        1. setup() aufrufen (kann fehlschlagen → Agent wird übersprungen)
+        2. run() als supervised Task starten
+        3. Kurze Grace-Period, dann nächste Stufe
+        """
+        for stage_index, stage in enumerate(self.STARTUP_STAGES):
+            agent_ids_in_stage = [aid for aid in stage if aid in self._agents]
+            
+            if not agent_ids_in_stage:
+                continue
+
+            logger.info(f"=== Starte Stufe {stage_index + 1}: {agent_ids_in_stage} ===")
+
+            for agent_id in agent_ids_in_stage:
+                agent = self._agents[agent_id]
+                
+                # --- setup() aufrufen ---
+                try:
+                    await asyncio.wait_for(agent.setup(), timeout=30.0)
+                    logger.info(f"  ✅ {agent_id}: setup() erfolgreich")
+                except asyncio.TimeoutError:
+                    logger.error(f"  ❌ {agent_id}: setup() Timeout (30s)")
+                    continue  # Agent wird NICHT gestartet
+                except Exception as e:
+                    logger.error(f"  ❌ {agent_id}: setup() fehlgeschlagen: {e}")
+                    continue  # Agent wird NICHT gestartet
+
+                # --- Supervised run() starten ---
+                task = asyncio.create_task(
+                    self._supervised_run(agent_id, agent),
+                    name=f"agent-{agent_id}"
+                )
+                self._tasks[agent_id] = task
+
+            # Grace-Period zwischen Stufen (z.B. damit der Ingestion Agent
+            # erste Ticks liefern kann bevor der Quant Agent startet)
+            if stage_index < len(self.STARTUP_STAGES) - 1:
+                await asyncio.sleep(3)
+
+        running = [aid for aid, t in self._tasks.items() if not t.done()]
+        logger.info(f"=== Alle Stufen abgeschlossen. {len(running)} Agenten laufen. ===")
+
+    async def _supervised_run(
+        self, agent_id: str, agent: BaseAgent, max_restarts: int = 5
+    ) -> None:
+        """
+        Wrapper der einen Agent überwacht.
+        
+        Bei Crash:
+        1. Fehler loggen
+        2. teardown() aufrufen (Cleanup)
+        3. Warten (exponentieller Backoff)
+        4. setup() erneut aufrufen
+        5. run() erneut starten
+        
+        Nach max_restarts aufgeben und Agent deaktivieren.
+        """
+        restart_count = 0
+
+        while restart_count < max_restarts:
+            try:
+                await agent.run()
+                # Normales Ende (stop() wurde aufgerufen)
+                logger.info(f"{agent_id}: Sauber beendet")
+                break
+            except Exception as e:
+                restart_count += 1
+                logger.error(
+                    f"{agent_id}: Unbehandelte Exception ({restart_count}/{max_restarts}): {e}"
+                )
+                await agent._report_error(e)
+
+                # Cleanup
+                try:
+                    await agent.teardown()
+                except Exception as teardown_err:
+                    logger.warning(f"{agent_id}: teardown() Fehler: {teardown_err}")
+
+                # Backoff
+                wait_time = min(30 * restart_count, 300)
+                logger.info(f"{agent_id}: Neustart in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+
+                # Re-Setup
+                try:
+                    await asyncio.wait_for(agent.setup(), timeout=30.0)
+                    logger.info(f"{agent_id}: Re-Setup erfolgreich, starte neu")
+                except Exception as setup_err:
+                    logger.error(f"{agent_id}: Re-Setup fehlgeschlagen: {setup_err}")
+                    # Zählt als weiterer Fehler, nächster Loop-Durchlauf
+
+        if restart_count >= max_restarts:
+            logger.critical(
+                f"💀 {agent_id}: {max_restarts} Neustarts erschöpft. Agent DEAKTIVIERT."
+            )
+
+    async def stop_all(self, timeout: float = 15.0) -> None:
+        """Stoppt alle Agenten graceful mit Timeout."""
+        logger.info("Stoppe alle Agenten...")
+
+        # 1. Stop-Signal an alle senden
+        for agent_id, agent in self._agents.items():
+            await agent.stop()
+
+        # 2. Auf Beendigung warten (mit Timeout)
+        if self._tasks:
+            done, pending = await asyncio.wait(
+                self._tasks.values(),
+                timeout=timeout,
+                return_when=asyncio.ALL_COMPLETED
+            )
+
+            # 3. Hartnäckige Tasks canceln
+            for task in pending:
+                task.cancel()
+
+        # 4. teardown() für alle aufrufen
+        for agent_id, agent in self._agents.items():
+            try:
+                await agent.teardown()
+            except Exception as e:
+                logger.warning(f"{agent_id}: teardown() Fehler: {e}")
+
+        logger.info("Alle Agenten gestoppt.")
+        self._shutdown_event.set()
+
+    async def restart_agent(self, agent_id: str) -> bool:
+        """
+        Startet einen einzelnen Agent neu.
+        Wird vom API-Container via Redis-Kommando ausgelöst.
+        """
+        if agent_id not in self._agents:
+            return False
+
+        agent = self._agents[agent_id]
+        
+        # Alten Task stoppen
+        await agent.stop()
+        if agent_id in self._tasks:
+            task = self._tasks[agent_id]
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                task.cancel()
+
+        # Cleanup
+        try:
+            await agent.teardown()
+        except Exception:
+            pass
+
+        # Re-Setup + Neustart
+        try:
+            await agent.setup()
+            new_task = asyncio.create_task(
+                self._supervised_run(agent_id, agent),
+                name=f"agent-{agent_id}"
+            )
+            self._tasks[agent_id] = new_task
+            logger.info(f"{agent_id}: Neustart erfolgreich")
+            return True
+        except Exception as e:
+            logger.error(f"{agent_id}: Neustart fehlgeschlagen: {e}")
+            return False
+
+    async def listen_for_commands(self) -> None:
+        """
+        Lauscht auf Redis-Channel 'worker:commands' für Befehle vom API-Container.
+        
+        Unterstützte Kommandos:
+        - {"command": "restart", "agent_id": "quant"}
+        - {"command": "stop", "agent_id": "risk"}
+        - {"command": "shutdown"}
+        """
+        import json
+        
+        pubsub = await self.deps.redis.subscribe_channel("worker:commands")
+        if not pubsub:
+            logger.warning("Konnte worker:commands nicht subscriben")
+            return
+
+        while not self._shutdown_event.is_set():
+            try:
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if message and message['type'] == 'message':
+                    cmd = json.loads(message['data'])
+                    command = cmd.get("command")
+                    agent_id = cmd.get("agent_id")
+
+                    if command == "restart" and agent_id:
+                        await self.restart_agent(agent_id)
+                    elif command == "stop" and agent_id:
+                        agent = self._agents.get(agent_id)
+                        if agent:
+                            await agent.stop()
+                    elif command == "shutdown":
+                        await self.stop_all()
+            except Exception as e:
+                logger.error(f"Command-Listener Fehler: {e}")
+                await asyncio.sleep(1)
+
+    async def wait_for_shutdown(self) -> None:
+        """Blockt bis ein Shutdown-Signal kommt."""
+        await self._shutdown_event.wait()
+```
+
+### Warum der Orchestrator setup() aufruft (und nicht der Agent selbst)
+
+Im alten Plan war `setup()` optional und wurde intern in `run()` aufgerufen:
+
+```python
+# ALT (Status.md Plan):
+async def run(self):
+    try:
+        await self.setup()  # ← Agent ruft sich selbst auf
+    except Exception:
+        return  # ← Und verschwindet still
+
+# NEU:
+# Orchestrator ruft setup() auf → weiß ob es geklappt hat → startet run() nur bei Erfolg
+await asyncio.wait_for(agent.setup(), timeout=30.0)  # ← Mit Timeout!
+task = asyncio.create_task(agent.run())
+```
+
+Der Unterschied: Der Orchestrator **weiß**, ob ein Agent bereit ist. Er kann entscheiden: "Ingestion Agent hat kein Setup geschafft — stoppe den kompletten Worker" vs. "Sentiment Agent konnte Ollama nicht erreichen — starte trotzdem den Rest".
+
+---
+
+## 7. Worker-Entrypoint
+
+```python
+# backend/app/worker.py
+"""
+Bruno Agent Worker — Separater Container für alle Trading-Agenten.
+
+Gestartet via: python -m app.worker
+Docker Command: python -m app.worker
+
+Dieser Prozess:
+1. Wartet auf Infrastruktur (Redis, DB)
+2. Erstellt AgentDependencies
+3. Registriert alle Agenten
+4. Startet Agenten in Pipeline-Reihenfolge
+5. Lauscht auf Kommandos vom API-Container
 """
 
-# Trading-Analyse
-TRADING_PROMPT = """
-Gegeben:
-- Markt-Daten: {market_data}
-- Sentiment-Score: {sentiment_score}
+import asyncio
+import signal
+import sys
+import logging
+from app.core.redis_client import RedisClient
+from app.core.database import AsyncSessionLocal, init_db
+from app.core.llm_client import OllamaClient
+from app.core.config import settings
+from app.agents.deps import AgentDependencies
+from app.agents.orchestrator import AgentOrchestrator
 
-Als Trading-Experte analysiere diese Situation und gib eine klare Empfehlung:
-1. MARKT-AUSLAGE
-2. ENTRY/EXIT-LOGIK
-3. RISK/REWARD
-4. FINALE ENTSCHEIDUNG: BUY/SELL/HOLD
-"""
+# Agent-Importe
+from app.agents.ingestion import IngestionAgentV2
+from app.agents.quant import QuantAgentV2
+from app.agents.sentiment import SentimentAgentV2
+from app.agents.risk import RiskAgentV2
+from app.agents.execution import ExecutionAgentV2
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+)
+logger = logging.getLogger("worker")
+
+
+async def wait_for_redis(redis: RedisClient, max_attempts: int = 30) -> None:
+    """Wartet bis Redis erreichbar ist (max 5 Minuten)."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await redis.connect()
+            logger.info(f"Redis verbunden (Versuch {attempt})")
+            return
+        except Exception as e:
+            logger.warning(f"Redis nicht bereit (Versuch {attempt}/{max_attempts}): {e}")
+            await asyncio.sleep(10)
+    
+    logger.critical("Redis nicht erreichbar nach 5 Minuten. Worker beendet.")
+    sys.exit(1)
+
+
+async def wait_for_db(max_attempts: int = 30) -> None:
+    """Wartet bis PostgreSQL erreichbar ist."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await init_db()
+            logger.info(f"Datenbank verbunden (Versuch {attempt})")
+            return
+        except Exception as e:
+            logger.warning(f"DB nicht bereit (Versuch {attempt}/{max_attempts}): {e}")
+            await asyncio.sleep(10)
+    
+    logger.critical("Datenbank nicht erreichbar nach 5 Minuten. Worker beendet.")
+    sys.exit(1)
+
+
+async def main():
+    logger.info("=" * 60)
+    logger.info("Bruno Worker startet...")
+    logger.info("=" * 60)
+
+    # ===== 1. Infrastruktur prüfen =====
+    redis = RedisClient()
+    ollama = OllamaClient()
+
+    await wait_for_redis(redis)
+    await wait_for_db()
+    
+    # Ollama ist OPTIONAL (Sentiment Agent hat Fallback)
+    ollama_ok = await ollama.health_check()
+    logger.info(f"Ollama: {'✅ erreichbar' if ollama_ok else '⚠️ nicht erreichbar (Fallback aktiv)'}")
+
+    # ===== 2. Dependencies zusammenbauen =====
+    deps = AgentDependencies(
+        redis=redis,
+        config=settings,
+        db_session_factory=AsyncSessionLocal,
+        ollama=ollama
+    )
+
+    # ===== 3. Orchestrator aufsetzen =====
+    orchestrator = AgentOrchestrator(deps)
+
+    # ===== 4. Agenten registrieren =====
+    orchestrator.register("ingestion", IngestionAgentV2(deps))
+    orchestrator.register("quant", QuantAgentV2(deps, symbol="BTC/USDT"))
+    orchestrator.register("sentiment", SentimentAgentV2(deps))
+    orchestrator.register("risk", RiskAgentV2(deps))
+    orchestrator.register("execution", ExecutionAgentV2(deps))
+
+    # ===== 5. Starten in Pipeline-Reihenfolge =====
+    await orchestrator.start_all()
+
+    # ===== 6. Command-Listener starten =====
+    cmd_task = asyncio.create_task(orchestrator.listen_for_commands())
+
+    # ===== 7. Auf Shutdown warten =====
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(orchestrator.stop_all()))
+        except NotImplementedError:
+            pass  # Windows hat kein add_signal_handler
+
+    await orchestrator.wait_for_shutdown()
+
+    # ===== 8. Cleanup =====
+    cmd_task.cancel()
+    await ollama.close()
+    await redis.disconnect()
+    logger.info("Worker beendet.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Docker-Compose Erweiterung
+
+```yaml
+# docker-compose.yml — Neuer Service:
+  bruno-worker:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+    container_name: bruno-worker
+    command: python -m app.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-bruno}
+      - DB_PASS=${DB_PASS:-bruno_secret}
+      - DB_NAME=${DB_NAME:-bruno_trading}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    volumes:
+      - ./backend:/app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+```
+
+**Gleichzeitig** muss aus `bruno-api` (das bestehende `api-backend`) die gesamte Agent-Logik entfernt werden. `main.py` wird zum reinen API-Server reduziert:
+
+```python
+# main.py — NACH Refactoring:
+# KEINE agent-imports mehr
+# KEIN agent_instances dict
+# KEIN asyncio.create_task(agent.start())
+# Nur: FastAPI, Routers, Health-Check
+```
+
+---
+
+## 8. Message Contracts
+
+> **Alle Inter-Agent-Kommunikation folgt strikten Pydantic-Schemas.**
+> Keine losen JSON-Strings, keine `dict`-Typen ohne Schema.
+
+```python
+# backend/app/core/contracts.py
+
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict
+from datetime import datetime
+from enum import Enum
+import uuid
+
+
+class SignalDirection(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+    HOLD = "HOLD"
+
+
+class SignalEnvelope(BaseModel):
+    """Standard-Hülle für JEDES Signal im System."""
+    correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    agent_id: str
+    version: str = "2.0"
+    timestamp: datetime
+    symbol: str
+
+
+class QuantSignalV2(SignalEnvelope):
+    """Quant Agent → Risk Agent"""
+    direction: SignalDirection
+    confidence: float = Field(ge=0.0, le=1.0)
+    indicators: Dict[str, float]  # {"rsi_1m": 28.5, "macd_hist": 0.003, ...}
+    timeframe: str = "1m"
+    reasoning: str  # "RSI oversold + MACD bullish cross"
+
+
+class SentimentSignalV2(SignalEnvelope):
+    """Sentiment Agent → Risk Agent"""
+    direction: SignalDirection
+    confidence: float = Field(ge=0.0, le=1.0)
+    score: float = Field(ge=-1.0, le=1.0)
+    sources: List[str]  # ["CryptoPanic", "RSS:coindesk"]
+    reasoning: str
+    article_count: int
+
+
+class RiskDecision(SignalEnvelope):
+    """Risk Agent → Execution Agent"""
+    action: SignalDirection
+    approved: bool
+    position_size_usd: float
+    stop_loss_price: float
+    take_profit_price: float
+    risk_reward_ratio: float
+    reasoning: str
+    # Eingangssignale (für Transparenz)
+    quant_signal: Optional[QuantSignalV2] = None
+    sentiment_signal: Optional[SentimentSignalV2] = None
+
+
+class TradeExecution(SignalEnvelope):
+    """Execution Agent → Dashboard/Telegram"""
+    action: str  # "BUY" / "SELL"
+    entry_price: float
+    quantity: float
+    position_size_usd: float
+    stop_loss: float
+    take_profit: float
+    risk_decision: RiskDecision
+    execution_status: str  # "FILLED" / "FAILED" / "PAPER"
+    order_id: Optional[str] = None
+```
+
+### Migration der alten Schemas
+
+| Alt (`schemas/agents.py`) | Neu (`core/contracts.py`) | Änderungen |
+|---|---|---|
+| `QuantSignal.signal: int` | `QuantSignalV2.direction: SignalDirection` | Enum statt int |
+| `QuantSignal.timestamp: str` | `QuantSignalV2.timestamp: datetime` | Richtiger Typ |
+| — | `QuantSignalV2.correlation_id` | **NEU** — Tracing |
+| — | `QuantSignalV2.reasoning` | **NEU** — Transparenz |
+| `SentimentSignal.reasoning: str` | `SentimentSignalV2.reasoning: str` | Beibehalten |
+| `ExecutionOrder` | `RiskDecision` + `TradeExecution` | **Aufgespalten** |
+
+---
+
+## 9. Redis Channel-Architektur
+
+| Channel | Publisher | Subscriber | Payload | Typ |
+|---|---|---|---|---|
+| `market:ticks:{symbol}` | Ingestion | Quant, Dashboard | Tick-Daten | Stream (XADD) |
+| `signals:quant` | Quant | Risk | `QuantSignalV2` | Pub/Sub |
+| `signals:sentiment` | Sentiment | Risk | `SentimentSignalV2` | Pub/Sub |
+| `risk:decisions` | Risk | Execution, Dashboard | `RiskDecision` | Pub/Sub |
+| `trades:executed` | Execution | Dashboard, Telegram | `TradeExecution` | Pub/Sub |
+| `heartbeat:{agent_id}` | Alle Agenten | Dashboard, API | Heartbeat JSON | Cache (TTL 60s) |
+| `alerts:agent_error` | BaseAgent | Dashboard, Telegram | Error Details | Pub/Sub |
+| `worker:commands` | API | Worker | Restart/Stop/Shutdown | Pub/Sub |
+| `logs:live` | LogManager | Dashboard | Log Entries | Pub/Sub |
+
+### Wichtig: Pub/Sub vs. Stream
+
+- **Pub/Sub** für Signale, Entscheidungen, Alerts: Wird nur in Echtzeit konsumiert, keine Historie nötig.
+- **Stream (XADD)** für Ticks: Kann mit `XRANGE` abgefragt werden, hat ID-basierte Consumer-Groups für spätere Erweiterung.
+- **Cache (SET mit TTL)** für Heartbeats: Einfachster Mechanismus — wenn der Key expired, ist der Agent tot.
+
+---
+
+## 10. Agent-Spezifikationen (Ist → Soll)
+
+### Ingestion Agent
+
+| Eigenschaft | Ist | Soll |
+|---|---|---|
+| **Basisklasse** | Keine | `StreamingAgent` |
+| **Interface** | `start()` / `stop()` | `setup()` / `run_stream()` / `teardown()` |
+| **Dependencies** | Globaler Import | `AgentDependencies` |
+| **Reconnect** | Expo Backoff (eigene Impl.) | Via `StreamingAgent.run()` |
+| **Daten-Target** | Nur Redis Stream | Redis Stream + TimescaleDB (Phase 2) |
+| **Multi-Asset** | Hardcoded `btcusdt` | Konfigurierbar via `symbol` Parameter |
+
+### Quant Agent
+
+| Eigenschaft | Ist | Soll |
+|---|---|---|
+| **Basisklasse** | Keine | `PollingAgent` |
+| **Interface** | `run_analysis_loop()` / `close()` ⚠️ | `setup()` / `process()` / `teardown()` |
+| **Warmup** | In `run_analysis_loop()` | In `setup()` (Pflicht) |
+| **Indikatoren** | Nur RSI(14) | RSI + MACD + BB (Phase 3) |
+| **Signal-Format** | `QuantSignal` (int signal) | `QuantSignalV2` (Enum, reasoning) |
+| **Exchange-Cleanup** | `close()` (falscher Name) | `teardown()` → `exchange.close()` |
+| **Intervall** | 30s | `get_interval() -> 30` |
+
+### Sentiment Agent
+
+| Eigenschaft | Ist | Soll |
+|---|---|---|
+| **Basisklasse** | Keine | `PollingAgent` |
+| **News-Quelle** | Hardcoded Dummy-String ❌ | CryptoPanic API + RSS (Phase 3) |
+| **LLM** | Immer aufgerufen (crasht wenn Ollama aus) | Ollama mit Keyword-Fallback |
+| **Deduplizierung** | Keine | Artikel-IDs in Redis tracken (Phase 3) |
+| **Signal-Format** | `SentimentSignal` | `SentimentSignalV2` |
+| **Intervall** | 300s | `get_interval() -> 300` |
+
+### Risk Agent
+
+| Eigenschaft | Ist | Soll |
+|---|---|---|
+| **Basisklasse** | Keine | `StreamingAgent` |
+| **Logik** | `if quant == sentiment` ❌ | Konfluenz-Score + Position Sizing + Stop-Loss + Daily Limit (Phase 3) |
+| **Signal-Format** | `ExecutionOrder` | `RiskDecision` |
+| **Pub/Sub** | `signals:*` (Pattern-Match) | `signals:quant` + `signals:sentiment` (explizit) |
+
+### Execution Agent
+
+| Eigenschaft | Ist | Soll |
+|---|---|---|
+| **Basisklasse** | Keine | `StreamingAgent` |
+| **Preis** | `price = 0.0` ❌ | Echter Preis von Binance API |
+| **Pub/Sub** | `execution:orders` | `risk:decisions` |
+| **Signal-Format** | Loses `dict` | `RiskDecision` → `TradeExecution` |
+| **DB-Zugriff** | `AsyncSessionLocal()` direkt | Via `deps.db_session_factory` |
+
+---
+
+## 11. Status-Monitoring & Heartbeat
+
+### Wie das Frontend Agent-Status abfragt
+
+**Heute** (`routers/agents_status.py`): 568 Zeilen Boilerplate mit 5 separaten `check_*_agent()`-Funktionen die über `from app.main import active_agent_tasks` den Task-Status raten.
+
+**Zukünftig**: Ein einziger Endpoint, der die Heartbeat-Keys aus Redis liest:
+
+```python
+# routers/agents_status.py — VEREINFACHT
+
+@router.get("/status")
+async def get_agents_status():
+    """Liest Heartbeat-Keys aus Redis. TTL-basiert: Kein Heartbeat = tot."""
+    agent_ids = ["ingestion", "quant", "sentiment", "risk", "execution"]
+    agents = []
+    
+    for agent_id in agent_ids:
+        heartbeat = await redis_client.get_cache(f"heartbeat:{agent_id}")
+        if heartbeat:
+            agents.append({
+                **heartbeat,
+                "status": heartbeat.get("status", "unknown")
+            })
+        else:
+            # Key expired → Agent ist tot oder nie gestartet
+            agents.append({
+                "agent_id": agent_id,
+                "status": "dead",
+                "uptime_seconds": 0,
+                "processed_count": 0,
+                "error_count": 0
+            })
+    
+    running = [a for a in agents if a["status"] == "running"]
+    return {
+        "agents": agents,
+        "total_agents": len(agents),
+        "running_agents": len(running),
+        "last_check": datetime.now(timezone.utc).isoformat()
+    }
+```
+
+**Vorteil:** Kein `from app.main import` Hack. Der API-Container muss nichts über den Worker-Container wissen außer die Redis-Keys. Funktioniert auch über Container-Grenzen hinweg.
+
+### Agent-Restart via API
+
+```python
+@router.post("/restart/{agent_id}")
+async def restart_agent(agent_id: str):
+    """Sendet Restart-Kommando an Worker via Redis."""
+    await redis_client.publish_message(
+        "worker:commands",
+        json.dumps({"command": "restart", "agent_id": agent_id})
+    )
+    return {"status": "sent", "message": f"Restart-Kommando für {agent_id} gesendet"}
+```
+
+Kein `TODO` mehr — das funktioniert über Redis Pub/Sub zum Worker-Container.
+
+---
+
+## 12. Dateisystem-Übersicht (Zielzustand)
+
+```
+backend/
+├── app/
+│   ├── __init__.py
+│   ├── main.py                 # [REFACTORED] Nur FastAPI, KEINE Agenten
+│   ├── worker.py               # [NEU] Agent Orchestrator Entrypoint
+│   │
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── base.py             # [NEU] BaseAgent, PollingAgent, StreamingAgent
+│   │   ├── deps.py             # [NEU] AgentDependencies
+│   │   ├── orchestrator.py     # [NEU] AgentOrchestrator
+│   │   ├── ingestion.py        # [REFACTORED] → IngestionAgentV2(StreamingAgent)
+│   │   ├── quant.py            # [REFACTORED] → QuantAgentV2(PollingAgent)
+│   │   ├── quant_new.py        # [LÖSCHEN] Tote Datei
+│   │   ├── sentiment.py        # [REFACTORED] → SentimentAgentV2(PollingAgent)
+│   │   ├── risk.py             # [REFACTORED] → RiskAgentV2(StreamingAgent)
+│   │   └── execution.py        # [REFACTORED] → ExecutionAgentV2(StreamingAgent)
+│   │
+│   ├── core/
+│   │   ├── config.py           # Unverändert
+│   │   ├── database.py         # Unverändert
+│   │   ├── redis_client.py     # Unverändert (aber jetzt per DI genutzt)
+│   │   ├── llm_client.py       # Unverändert
+│   │   ├── log_manager.py      # Unverändert
+│   │   ├── scheduler.py        # Unverändert
+│   │   └── contracts.py        # [NEU] Message Schemas (Pydantic)
+│   │
+│   ├── routers/
+│   │   ├── agents_status.py    # [REFACTORED] Heartbeat-basiert statt Task-Inspect
+│   │   └── ...                 # Rest unverändert
+│   │
+│   └── schemas/
+│       ├── agents.py           # [DEPRECATED] → Wird durch contracts.py ersetzt
+│       └── models.py           # Unverändert (DB-Models)
+│
+├── docker-compose.yml          # [ERWEITERT] + bruno-worker Service
+└── docker/
+    └── Dockerfile.backend      # Unverändert (gleiche Codebase, anderer Command)
+```
+
+---
+
+## 13. Implementierungsreihenfolge
+
+> **Die Reihenfolge ist entscheidend.** Jeder Schritt baut auf dem vorherigen auf.
+
+### Schritt 1: Aufräumen (sofort)
+- [ ] `quant_new.py` löschen
+- [ ] `quant.py`: `run_analysis_loop()` in `start()` umbenennen + `close()` in `stop()` umbenennen (Interims-Fix, bis V2 kommt)
+
+### Schritt 2: Infrastruktur-Layer (Phase 1.1)
+- [ ] `agents/base.py` erstellen (BaseAgent, PollingAgent, StreamingAgent)
+- [ ] `agents/deps.py` erstellen (AgentDependencies)
+- [ ] `core/contracts.py` erstellen (SignalEnvelope, QuantSignalV2, etc.)
+- [ ] Tests für base.py schreiben (Mock-Dependencies)
+
+### Schritt 3: Orchestrator (Phase 1.2)
+- [ ] `agents/orchestrator.py` erstellen
+- [ ] `worker.py` Entrypoint erstellen
+- [ ] Docker-Compose um `bruno-worker` Service erweitern
+
+### Schritt 4: Agenten migrieren (Phase 1.3)
+- [ ] `ingestion.py` → `IngestionAgentV2(StreamingAgent)` 
+- [ ] `quant.py` → `QuantAgentV2(PollingAgent)`
+- [ ] `sentiment.py` → `SentimentAgentV2(PollingAgent)`
+- [ ] `risk.py` → `RiskAgentV2(StreamingAgent)`
+- [ ] `execution.py` → `ExecutionAgentV2(StreamingAgent)`
+
+### Schritt 5: API bereinigen (Phase 1.4)
+- [ ] Agent-Imports aus `main.py` entfernen
+- [ ] `agent_instances` dict entfernen
+- [ ] Startup/Shutdown Events auf API-only reduzieren
+- [ ] `agents_status.py` auf Heartbeat-basiert umschreiben
+
+### Schritt 6: Verifizierung (Phase 1.5)
+- [ ] `docker compose up -d` startet api + worker + db + redis
+- [ ] Worker startet Agenten in definierter Reihenfolge (Logs prüfen)
+- [ ] Heartbeats in Redis sichtbar
+- [ ] Agent-Restart via API-Endpoint funktioniert
+- [ ] Agent-Crash wird aufgefangen, Agent wird neugestartet
+
+---
+
+## 14. Verifizierung
+
+### Automatische Tests
+
+```bash
+# Unit-Tests (ohne Docker)
+pytest tests/agents/test_base.py          # BaseAgent, PollingAgent, StreamingAgent
+pytest tests/agents/test_orchestrator.py  # Startup-Sequenz, Crash-Recovery
+pytest tests/agents/test_quant.py         # RSI-Berechnung, Signal-Erzeugung
+
+# Integration-Tests (mit Docker)
+docker compose up -d postgres redis
+pytest tests/integration/test_agent_pipeline.py  # Signal von Quant → Risk → Execution
+```
+
+### Manuelle Verifizierung
+
+```
+1. docker compose up -d
+2. Logs prüfen:
+   docker logs bruno-worker -f
+   → Erwartete Ausgabe:
+   === Starte Stufe 1: ['ingestion'] ===
+     ✅ ingestion: setup() erfolgreich
+   === Starte Stufe 2: ['quant', 'sentiment'] ===
+     ✅ quant: setup() erfolgreich
+     ✅ sentiment: setup() erfolgreich
+   === Starte Stufe 3: ['risk'] ===
+     ✅ risk: setup() erfolgreich
+   === Starte Stufe 4: ['execution'] ===
+     ✅ execution: setup() erfolgreich
+   === Alle Stufen abgeschlossen. 5 Agenten laufen. ===
+
+3. Heartbeats prüfen:
+   docker exec bruno-redis redis-cli GET heartbeat:quant
+   → JSON mit status, uptime, processed_count
+
+4. Agent-Restart testen:
+   Invoke-RestMethod -Method POST http://localhost:8000/api/v1/agents/restart/quant
+   → Worker-Logs zeigen Restart
+
+5. Crash-Recovery testen:
+   docker exec bruno-worker kill -USR1 <agent-pid>  # Simuliert Crash
+   → Worker-Logs zeigen Neustart nach Backoff
 ```
 
 ---
@@ -191,88 +1367,13 @@ Als Trading-Experte analysiere diese Situation und gib eine klare Empfehlung:
 
 | Metrik | Ziel |
 |--------|------|
-| End-to-End Latenz | < 2 Sekunden (Signal → Order) |
+| End-to-End Latenz | < 2 Sekunden (Signal → Decision) |
 | LLM-Inferenz | < 500ms (14B-Modelle) |
 | Daten-Aktualität | < 100ms (WebSocket) |
-| Agenten-Durchsatz | > 1000 Nachrichten/Sekunde |
+| Agent-Setup | < 10s pro Agent |
+| Crash-Recovery | < 60s (erster Neustart) |
+| Heartbeat-Frequenz | Alle Process-Zyklen (~30s) |
 
 ---
 
-## Implementierungs-Status
-
-### ✅ Phase 2 & 3 Abgeschlossen - System Produktivbereit
-
-| Komponente | Status | Implementierung |
-|------------|--------|-----------------|
-| **OllamaClient** | ✅ Implementiert | httpx async, qwen2.5/deepseek-r1 |
-| **Redis Streams** | ✅ Implementiert | Singleton Pattern, Connection Pool |
-| **Prompt Templates** | ✅ Implementiert | Sentiment, Trading-Analyse |
-| **Agenten-Kommunikation** | ✅ Implementiert | Pub/Sub, WebSocket Channels |
-| **Frontend Dashboard** | ✅ Implementiert | Next.js, Lightweight Charts, WebSocket Client |
-| **Agenten-Monitor** | ✅ Implementiert | Echtzeit-Status aller Agenten |
-| **Quant Agent** | ✅ Implementiert | RSI(14), NumPy, Warmup, Threading, Redis Pub/Sub |
-
-## 🎯 Phase 4 Abgeschlossen - Vollständige Agenten-Implementierung
-
-### ✅ Alle 5 Agenten Live & Trading (Paper)
-
-| Agent | Status | Technologie | Live-Output |
-|-------|--------|------------|-------------|
-| **📡 Ingestion** | ✅ RUNNING | Binance WebSocket, Exponential Backoff | 42,451+ Live-Ticks |
-| **📊 Quant** | ✅ RUNNING | NumPy RSI(14), AsyncIO Threading | BUY Signal (RSI: 18.85) |
-| **🧠 Sentiment** | ✅ RUNNING | Ollama LLM, Fallback Logic | Neutral (Fallback) |
-| **⚖️ Risk** | ✅ RUNNING | Konfluenz-Check, Redis Pub/Sub | Bereit für Validation |
-| **💰 Execution** | ✅ RUNNING | AsyncSessionLocal, Paper-Trading | Bereit für Orders |
-
-### 🔄 Live Trading Flow
-```
-Binance WebSocket → 42,451 Ticks → Quant Agent (RSI: 18.85) → BUY Signal → Risk Agent → Execution Agent → PostgreSQL
-```
-
-### 📊 System Performance (2026-03-26)
-- **BTC/USDT Preis:** 68,912 USD
-- **Quant Signal:** BUY (RSI: 18.85, Confidence: 0.37)
-- **Sentiment:** Neutral (Fallback-Modus)
-- **Ingestion:** 42,451+ Ticks verarbeitet
-- **Datenbank:** 9 Tabellen aktiv
-- **Redis:** Pub/Sub + Streams aktiv
-
-### 🔧 Technische Implementierungen
-
-#### **Ingestion Agent**
-- **WebSocket:** `wss://fstream.binance.com/ws/btcusdt@aggTrade`
-- **Backoff:** Exponential 1-60s bei Verbindungsproblemen
-- **Stream:** Redis `market:ticks:BTC/USDT`
-- **Volume:** 42,451+ Ticks empfangen
-
-#### **Quant Agent (Neu)**
-- **RSI Berechnung:** Manuell mit NumPy (statt pandas-ta)
-- **Signal-Logik:** RSI < 30 → BUY, RSI > 70 → SELL
-- **Threading:** `asyncio.to_thread()` für non-blocking
-- **Output:** Redis `signals:quant` + Cache `status:agent:quant`
-
-#### **Sentiment Agent**
-- **LLM:** Ollama qwen2.5 (mit Fallback)
-- **News-Quelle:** CryptoPanic API (Demo)
-- **Output:** Redis `signals:sentiment`
-- **Fallback:** Neutral bei LLM-Problemen
-
-#### **Risk Agent**
-- **Input:** Quant + Sentiment Signale
-- **Konfluenz:** Threshold-basierte Validierung
-- **Output:** Redis `execution:orders`
-
-#### **Execution Agent**
-- **DB:** AsyncSessionLocal für Background Tasks
-- **Logging:** PostgreSQL `trade_audit_logs`
-- **Mode:** Paper-Trading (audit only)
-
-### 🌐 Frontend Integration
-- **Agenten Dashboard:** http://localhost:3000/agenten
-- **Live-Status:** 5/5 Agenten aktiv
-- **Auto-Refresh:** Alle 30 Sekunden
-- **Agent-Typen:** 📡 Data, 📊 Analysis, ⚖️ Risk, 💰 Execution
-
----
-
-*Letzte Aktualisierung: 2026-03-26 - Phase 4 Vollständig Implementiert - 5 Agenten Live Trading*
+*Letzte Aktualisierung: 2026-03-26 — Vollständiger Agenten-Implementierungsplan nach Architektur-Review*

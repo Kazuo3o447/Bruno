@@ -55,11 +55,11 @@ open http://localhost:3000/dashboard
 
 | Agent | Aufgabe | Status |
 |-------|--------|--------|
-| **Ingestion** | Binance WebSocket Daten | Geplant |
-| **Quant** | Technische Analyse & Signale | Geplant |
-| **Sentiment** | LLM-basierte News-Analyse | Geplant |
-| **Risk** | Risiko-Bewertung & Veto | Geplant |
-| **Execution** | Paper-Trading Ausführung | Geplant |
+| **Ingestion** | Binance WebSocket Daten | ✅ V2 Online |
+| **Quant** | Technische Analyse & Signale | ✅ V2 Online |
+| **Sentiment** | LLM-basierte News-Analyse | ✅ V2 Online |
+| **Risk** | Risiko-Bewertung & Veto | ✅ V2 Online |
+| **Execution** | Paper-Trading Ausführung | ✅ V2 Online |
 
 ---
 
@@ -108,14 +108,15 @@ open http://localhost:3000/dashboard
 
 ## 🎯 Aktuelle Phase
 
-**Phase 3: Frontend "Bruno" - ABGESCHLOSSEN**
+**Phase 4: Agenten-Zentrale & UI-Oversight - ABGESCHLOSSEN**
 
-✅ Dashboard mit Live-Charts  
-✅ WebSocket Client Integration  
-✅ Agenten-Status-Monitor  
-✅ System-Health-Monitor  
+✅ Harmonisiertes Premium Layout  
+✅ WebSocket Log-Terminal mit Filterung  
+✅ Agenten-Steuerungs-Panel (Start/Stop/Reset)  
+✅ Interaktiver Agent-Chat & Transparenz-Modals  
+✅ Lightweight Charts v5 Fix  
 
-**Nächste Phase: Agenten-Implementierung**
+**Nächste Phase: Live-Testing & Performance-Audit**
 
 ---
 

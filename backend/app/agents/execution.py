@@ -1,61 +1,124 @@
-"""
-Execution Agent
-
-Hört auf execution:orders und schreibt Paper-Trades via SQLAlchemy in die DB.
-Verwendet isolierte AsyncSessionLocal für Background Tasks.
-"""
-
 import asyncio
-import logging
 import json
-from datetime import datetime, timezone
-import uuid
-from app.core.redis_client import redis_client
-from app.core.database import AsyncSessionLocal
+from app.agents.base import StreamingAgent
+from app.agents.deps import AgentDependencies
+from app.core.contracts import RiskDecision, TradeExecution, SignalDirection
 from app.schemas.models import TradeAuditLog
+from datetime import datetime, timezone
 
-logger = logging.getLogger(__name__)
+class ExecutionAgentV2(StreamingAgent):
+    """
+    Phase 3: Execution Agent
+    Führt Trades basierend auf RiskDecision durch (Paper-Mode).
+    Speichert den vollen Audit Trail in der PostgreSQL Datenbank.
+    """
+    def __init__(self, deps: AgentDependencies):
+        super().__init__("execution", deps)
 
-class ExecutionAgent:
-    def __init__(self):
-        self._running = False
+    async def setup(self) -> None:
+        self.logger.info("ExecutionAgent setup abgeschlossen.")
+        await self.log_manager.info(
+            category="AGENT",
+            source=self.agent_id,
+            message="Execution Agent bereit für Paper Trading."
+        )
 
-    async def start(self):
-        self._running = True
-        pubsub = await redis_client.subscribe_channel("execution:orders")
-        if not pubsub:
+    async def _execute_paper_trade(self, decision: RiskDecision) -> None:
+        if not decision.approved or decision.action == SignalDirection.HOLD:
+            self.logger.info(f"Ignoriere abgelehnte/HOLD Entscheidung für {decision.symbol}")
             return
 
-        logger.info("ExecutionAgent: Bereit für Paper-Trading...")
-        while self._running:
-            try:
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if message and message['type'] == 'message':
-                    order = json.loads(message['data'])
-                    logger.info(f"💰 EXECUTION: Führe Paper-Trade aus -> {order['action']} {order['symbol']}")
-                    
-                    # Schreibe in DB (Isolierte Session für Background Task!)
-                    async with AsyncSessionLocal() as db:
-                        trade_log = TradeAuditLog(
-                            id=str(uuid.uuid4()),
-                            timestamp=datetime.fromisoformat(order['timestamp']),
-                            symbol=order['symbol'],
-                            action=order['action'],
-                            price=0.0, # Dummy Preis
-                            quantity=0.1,
-                            total=0.0,
-                            quant_score=order['quant_confidence'],
-                            sentiment_score=order['sentiment_confidence'],
-                            llm_reasoning=order['reason'],
-                            status="filled",
-                            filled_at=datetime.now(timezone.utc)
-                        )
-                        db.add(trade_log)
-                        await db.commit()
-                        logger.info("✅ Paper-Trade in DB gespeichert.")
-            except Exception as e:
-                logger.error(f"ExecutionAgent Error: {e}")
-                await asyncio.sleep(1)
+        # Letzten Preis abrufen (Fallback auf RiskDecision Preis)
+        price = decision.quant_signal.indicators.get("price", 0.0) if decision.quant_signal else 0.0
+        
+        # Menge berechnen
+        quantity = decision.position_size_usd / price if price > 0 else 0.0
+        if quantity <= 0.0:
+            self.logger.warning("Trade Position ist <= 0, breche ab.")
+            return
 
-    async def stop(self):
-        self._running = False
+        trade_status = "filled" # In Paper immer filled
+        
+        # Audit Log in DB
+        async with self.deps.db_session_factory() as session:
+            try:
+                # Quant und Sentiment scores extrahieren
+                q_score = decision.quant_signal.confidence if decision.quant_signal else 0.0
+                s_score = decision.sentiment_signal.score if decision.sentiment_signal else 0.0
+                r_score = decision.risk_reward_ratio
+
+                log = TradeAuditLog(
+                    id=decision.correlation_id,
+                    timestamp=datetime.now(timezone.utc),
+                    symbol=decision.symbol,
+                    action=decision.action.value.lower(),
+                    price=price,
+                    quantity=quantity,
+                    total=decision.position_size_usd,
+                    quant_score=q_score,
+                    sentiment_score=s_score,
+                    risk_score=r_score,
+                    llm_reasoning=decision.reasoning,
+                    llm_model=self.deps.ollama.reasoning_model,
+                    status=trade_status,
+                    filled_at=datetime.now(timezone.utc)
+                )
+                
+                session.add(log)
+                await session.commit()
+                
+                self.state.health = "healthy"
+                await self.log_manager.info(
+                    category="TRADE",
+                    source=self.agent_id,
+                    message=f"PAPER TRADE FILLED: {log.action.upper()} {log.quantity:.4f} {log.symbol} @ ${log.price:.2f}",
+                    details={"order_id": str(log.id), "total_usd": log.total}
+                )
+                self.logger.info(f"✅ PAPER TRADE FILLED: {log.action.upper()} {log.quantity:.4f} {log.symbol} @ ${log.price:.2f}")
+
+                # Trade Event veröffentlichen (z.B. für Frontend/Notifications)
+                execution_event = TradeExecution(
+                    correlation_id=decision.correlation_id,
+                    agent_id=self.agent_id,
+                    symbol=decision.symbol,
+                    action=log.action.upper(),
+                    entry_price=log.price,
+                    quantity=log.quantity,
+                    position_size_usd=log.total,
+                    stop_loss=decision.stop_loss_price,
+                    take_profit=decision.take_profit_price,
+                    risk_decision=decision,
+                    execution_status="PAPER",
+                    order_id=log.id
+                )
+                
+                await self.deps.redis.publish_message("trades:executions", execution_event.model_dump_json())
+
+            except Exception as e:
+                self.state.health = "error"
+                await self.log_manager.error(
+                    category="DATABASE",
+                    source=self.agent_id,
+                    message=f"Fehler bei Paper Trade Ausführung: {e}",
+                    stack_trace=str(e)
+                )
+                self.logger.error(f"Fehler bei Paper Trade Ausführung: {e}")
+                await session.rollback()
+
+    async def run_stream(self) -> None:
+        pubsub = await self.deps.redis.subscribe_channel("risk:decisions")
+        if not pubsub:
+            return
+            
+        while self.state.running:
+            try:
+                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if msg and msg['type'] == 'message':
+                    payload = json.loads(msg['data'])
+                    decision = RiskDecision(**payload)
+                    await self._execute_paper_trade(decision)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Fehler im Execution-Stream: {e}")
+                await asyncio.sleep(1)

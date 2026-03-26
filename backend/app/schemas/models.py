@@ -26,6 +26,49 @@ class MarketCandle(Base):
         Index('idx_market_candles_time', 'time'),
     )
 
+class OrderbookSnapshot(Base):
+    """Tiefe des Orderbuchs für Liquiditätsanalysen (Hypertable)."""
+    __tablename__ = "orderbook_snapshots"
+    
+    time = Column(DateTime(timezone=True), primary_key=True, default=lambda: datetime.now(timezone.utc))
+    symbol = Column(String(20), primary_key=True)
+    bids_volume_usdt = Column(Float, nullable=False) # Total USDT volume in top 20 bids
+    asks_volume_usdt = Column(Float, nullable=False) # Total USDT volume in top 20 asks
+    imbalance_ratio = Column(Float, nullable=False)  # bids / asks
+    
+    __table_args__ = (
+        Index('idx_ob_snapshots_symbol_time', 'symbol', 'time'),
+    )
+
+class Liquidation(Base):
+    """Zwangsliquidierungen (Hypertable)."""
+    __tablename__ = "liquidations"
+    
+    time = Column(DateTime(timezone=True), primary_key=True, default=lambda: datetime.now(timezone.utc))
+    symbol = Column(String(20), primary_key=True)
+    side = Column(String(10), nullable=False)        # BUY (short liquidation) / SELL (long liquidation)
+    price = Column(Float, nullable=False)
+    quantity = Column(Float, nullable=False)
+    total_usdt = Column(Float, nullable=False)
+    
+    __table_args__ = (
+        Index('idx_liquidations_symbol_time', 'symbol', 'time'),
+    )
+
+class FundingRate(Base):
+    """Funding Rates von Perpetual Futures (Hypertable)."""
+    __tablename__ = "funding_rates"
+    
+    time = Column(DateTime(timezone=True), primary_key=True, default=lambda: datetime.now(timezone.utc))
+    symbol = Column(String(20), primary_key=True)
+    rate = Column(Float, nullable=False)
+    mark_price = Column(Float, nullable=False)
+    
+    __table_args__ = (
+        Index('idx_funding_rates_symbol_time', 'symbol', 'time'),
+    )
+
+
 
 class TradeAuditLog(Base):
     """Audit-Log für alle Trades."""

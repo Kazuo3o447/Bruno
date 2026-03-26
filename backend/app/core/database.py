@@ -6,7 +6,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Async URL Format für asyncpg
-DATABASE_URL = f"postgresql+asyncpg://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.POSTGRES_DB}"
+DATABASE_URL = f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASS}@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
 
 # Async Engine mit optimierten Einstellungen für TimescaleDB
 engine = create_async_engine(
