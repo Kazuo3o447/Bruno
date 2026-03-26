@@ -105,6 +105,13 @@
 - [/] Execution Agent — kein echter Preis
 - [x] Frontend Agenten-Dashboard
 
+### Phase 4.1: Dashboard Fixes ✅ ABGESCHLOSSEN
+- [x] Dashboard Live-Preis - ✅ Binance 24h Ticker API (69,166 USD)
+- [x] ChartWidget Historische Daten - ✅ Binance Klines API (100 Kerzen)
+- [x] WebSocket Echtzeitdaten - ✅ Orderbook + Ticker Support
+- [x] Systemtest API Fixes - ✅ Database Connection, Backend API 404 → 200
+- [x] Frontend Error Handling - ✅ Robuste WebSocket Verbindungen
+
 ---
 
 ## Designprinzipien

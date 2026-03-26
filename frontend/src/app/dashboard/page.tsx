@@ -22,7 +22,14 @@ export default function TradingPage() {
     marketWs.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data);
-        if (payload.type === "ticker") {
+        if (payload.type === "orderbook") {
+          // Extract price from orderbook data
+          const orderbook = payload.data;
+          setMetrics({
+            price: 0, // Will be updated from API
+            change24h: orderbook.imbalance_ratio || 0,
+          });
+        } else if (payload.type === "ticker") {
           setMetrics({
             price: payload.data.last_price,
             change24h: payload.data.price_change_percent,
@@ -44,13 +51,26 @@ export default function TradingPage() {
       } catch {}
     };
 
-    // System Status Polling
+    // System Status & Price Polling
     const checkHealth = async () => {
       try {
         const res = await fetch("http://localhost:8000/health");
         const data = await res.json();
         setSystemHealth(data.status);
-      } catch {
+        
+        // Get live price from Binance API
+        try {
+          const priceRes = await fetch("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT");
+          const priceData = await priceRes.json();
+          setMetrics(prev => ({
+            ...prev,
+            price: parseFloat(priceData.lastPrice),
+            change24h: parseFloat(priceData.priceChangePercent)
+          }));
+        } catch (e) {
+          console.error("Price API Error:", e);
+        }
+      } catch (e) {
         setSystemHealth("error");
       }
     };

@@ -148,12 +148,6 @@ In `docker-compose.yml`:
 ```yaml
   redis:
     image: redis/redis-stack-server:latest
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-```
-
----
-
 ### 2026-03-26 | Redis RDB Version Mismatch
 
 **Fehler-Beschreibung:**

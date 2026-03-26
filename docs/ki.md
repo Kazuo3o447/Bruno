@@ -1365,15 +1365,3 @@ pytest tests/integration/test_agent_pipeline.py  # Signal von Quant → Risk →
 
 ## Performance-Ziele
 
-| Metrik | Ziel |
-|--------|------|
-| End-to-End Latenz | < 2 Sekunden (Signal → Decision) |
-| LLM-Inferenz | < 500ms (14B-Modelle) |
-| Daten-Aktualität | < 100ms (WebSocket) |
-| Agent-Setup | < 10s pro Agent |
-| Crash-Recovery | < 60s (erster Neustart) |
-| Heartbeat-Frequenz | Alle Process-Zyklen (~30s) |
-
----
-
-*Letzte Aktualisierung: 2026-03-26 — Vollständiger Agenten-Implementierungsplan nach Architektur-Review*

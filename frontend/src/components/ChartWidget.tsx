@@ -67,6 +67,31 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
   useEffect(() => {
     if (!seriesRef.current) return;
 
+    // Load historical candle data
+    const loadHistoricalData = async () => {
+      try {
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1m&limit=100`);
+        if (!res.ok) return;
+        const klines = await res.json();
+        
+        const candles = klines.map((k: any[]) => ({
+          time: parseInt(k[0]) / 1000,
+          open: parseFloat(k[1]),
+          high: parseFloat(k[2]),
+          low: parseFloat(k[3]),
+          close: parseFloat(k[4]),
+        }));
+        
+        if (seriesRef.current) {
+          seriesRef.current.setData(candles);
+        }
+      } catch (e) {
+        console.error("Fehler beim Laden der historischen Daten:", e);
+      }
+    };
+
+    loadHistoricalData();
+
     // Trade-Historie abrufen für Marker
     const fetchTradeMarkers = async () => {
       try {
