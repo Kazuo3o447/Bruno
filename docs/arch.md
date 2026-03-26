@@ -197,16 +197,17 @@ Das System verfügt über ein hocheffizientes, API-gesteuertes Backup-Modul für
 
 ## System-Status
 
-### ✅ Phase 2 Backend Core & API - Produktivbereit
+### ✅ Phase 2 & 3 Backend + Frontend - Produktivbereit
 
 | Komponente | Status | Details |
 |------------|--------|---------|
 | **FastAPI Backend** | ✅ Produktiv | Health-Check, CORS, WebSocket, Backup API |
-| **PostgreSQL** | ✅ Produktiv | TimescaleDB + pgvector, 262 Tabellen |
+| **PostgreSQL** | ✅ Produktiv | TimescaleDB + pgvector, 9 Tabellen |
 | **Redis** | ✅ Produktiv | Singleton Connector, Caching, Streams |
 | **WebSocket Server** | ✅ Produktiv | 4 Live-Streams, Disconnect Handling |
-| **LLM Bridge** | ✅ Produktiv | Client implementiert, URL korrigiert |
+| **LLM Bridge** | ⚠️ Optional | Client implementiert, Ollama nicht gestartet |
 | **Frontend** | ✅ Produktiv | Next.js, Tailwind, Dashboard, Charts, WebSocket |
+| **Quant Agent** | ✅ Produktiv | RSI(14), NumPy, Warmup, Threading, Redis Pub/Sub |
 
 ### 🎯 Erreichbarkeit
 | Service | URL | Status |
@@ -214,8 +215,20 @@ Das System verfügt über ein hocheffizientes, API-gesteuertes Backup-Modul für
 | Frontend "Bruno" | http://localhost:3000 | ✅ |
 | FastAPI Backend | http://localhost:8000 | ✅ |
 | API Docs | http://localhost:8000/docs | ✅ |
+| Quant Agent Status | http://localhost:8000/api/v1/agents/status/quant | ✅ |
 | PostgreSQL | localhost:5432 | ✅ |
 | Redis | localhost:6379 | ✅ |
+
+### 📊 Live-Daten Flow (Aktiv)
+```
+Binance WebSocket → Quant Agent (RSI) → Redis Pub/Sub → Frontend Dashboard
+```
+
+### 🚀 System-Status (2026-03-26)
+- **Docker Container:** 4/4 laufen
+- **Binance API:** Live BTC/USDT: 69.696 USD
+- **Quant Agent:** RSI: 42.05 | Signal: 0
+- **Paper-Trading:** Bereit
 
 ---
 

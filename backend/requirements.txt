@@ -9,3 +9,4 @@ alembic
 pydantic-settings
 httpx
 pgvector
+numpy
