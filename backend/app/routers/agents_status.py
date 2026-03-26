@@ -48,58 +48,58 @@ AGENT_DEFINITIONS = {
 
 @router.get("/status", response_model=AgentsResponse)
 async def get_agents_status():
-    agents = []
-    running = 0
-    errors = 0
-
-    for agent_id, info in AGENT_DEFINITIONS.items():
-        try:
-            hb_data = await redis_client.get_cache(f"heartbeat:{agent_id}")
-            if hb_data:
-                status_str = hb_data.get("status", "unknown")
-                if status_str == "running":
-                    running += 1
-                elif status_str == "error":
-                    errors += 1
-
-                agents.append(AgentStatus(
-                    id=agent_id,
-                    name=info["name"],
-                    type=info["type"],
-                    description=info["desc"],
-                    status=status_str,
-                    last_activity=hb_data.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                    uptime_seconds=hb_data.get("uptime_seconds", 0.0),
-                    processed_count=hb_data.get("processed_count", 0),
-                    error_count=hb_data.get("error_count", 0),
-                    consecutive_errors=hb_data.get("consecutive_errors", 0),
-                    last_error=hb_data.get("last_error"),
-                    health=hb_data.get("health", "healthy")
-                ))
-            else:
-                # Kein Heartbeat -> Tot oder Offline
-                agents.append(AgentStatus(
-                    id=agent_id,
-                    name=info["name"],
-                    type=info["type"],
-                    description=info["desc"],
-                    status="dead",
-                    last_activity=datetime.now(timezone.utc).isoformat(),
-                ))
-        except Exception as e:
-            logger.error(f"Fehler bei Status für {agent_id}: {e}")
-
-    total = len(AGENT_DEFINITIONS)
-    overall = "success" if running == total else ("warning" if running > 0 else "error")
-
-    return AgentsResponse(
-        agents=agents,
-        overall_status=overall,
-        last_check=datetime.now(timezone.utc).isoformat(),
-        total_agents=total,
-        running_agents=running,
-        error_agents=errors
-    )
+    """
+    Holt den Status aller Agenten.
+    """
+    try:
+        # Alle Agenten-Status parallel prüfen
+        agent_statuses = await asyncio.gather(
+            check_ingestion_agent(),
+            check_quant_agent(),
+            check_sentiment_agent(),
+            check_risk_agent(),
+            check_execution_agent(),
+            return_exceptions=True
+        )
+        
+        # Ergebnisse verarbeiten
+        agents = []
+        for status in agent_statuses:
+            if isinstance(status, Exception):
+                logger.error(f"Agent-Check fehlgeschlagen: {status}")
+                continue
+            agents.append(status)
+        
+        # Gesamtstatus berechnen
+        total = len(agents)
+        running = len([a for a in agents if a.status == "running"])
+        error = len([a for a in agents if a.status == "error"])
+        
+        if error == 0:
+            overall = "success" if running > 0 else "idle"
+        elif error < total / 2:
+            overall = "warning"
+        else:
+            overall = "error"
+        
+        response = AgentsResponse(
+            agents=agents,
+            overall_status=overall,
+            last_check=datetime.now(timezone.utc).isoformat(),
+            total_agents=total,
+            running_agents=running,
+            error_agents=error
+        )
+        
+        # In Redis speichern
+        await redis_client.redis.set(AGENT_STATUS_KEY, response.json())
+        await redis_client.redis.set(LAST_AGENT_CHECK_KEY, datetime.now(timezone.utc).isoformat())
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Fehler beim Abrufen der Agenten-Status: {e}")
+        raise HTTPException(status_code=500, detail=f"Fehler: {str(e)}")
 
 @router.post("/restart/{agent_id}")
 async def restart_agent(agent_id: str):

@@ -102,24 +102,7 @@ class IngestionAgentV2(StreamingAgent):
 
     async def _route_event(self, stream: str, data: Dict[str, Any]):
         if "@kline" in stream:
-            k = data["k"]
-            if k["x"]: # Nur abgeschlossene Kerzen in die DB
-                symbol = data["s"]
-                candle_data = {
-                    "time": datetime.fromtimestamp(k["t"]/1000.0, tz=timezone.utc),
-                    "symbol": symbol,
-                    "open": float(k["o"]),
-                    "high": float(k["h"]),
-                    "low": float(k["l"]),
-                    "close": float(k["c"]),
-                    "volume": float(k["v"])
-                }
-                self.candle_buffer.append(candle_data)
-                # Redis-Live Update
-                redis_data = dict(candle_data)
-                redis_data["time"] = redis_data["time"].isoformat()
-                await self.deps.redis.publish_stream(f"market:kline:{symbol}", redis_data)
-        
+            await self._handle_kline(data)
         elif "@depth20" in stream:
             bids = data["b"]
             asks = data["a"]
@@ -169,6 +152,36 @@ class IngestionAgentV2(StreamingAgent):
             redis_fund["time"] = redis_fund["time"].isoformat()
             await self.deps.redis.set_cache(f"market:funding:{data['s']}", redis_fund, ttl=60)
 
+    async def _handle_kline(self, data: Dict[str, Any]) -> None:
+        """Verarbeitet 1m K-Line."""
+        try:
+            kline = data["k"]
+            candle = MarketCandle(
+                time=datetime.fromtimestamp(kline["t"] / 1000, tz=timezone.utc),
+                symbol=kline["s"],
+                open=float(kline["o"]),
+                high=float(kline["h"]),
+                low=float(kline["l"]),
+                close=float(kline["c"]),
+                volume=float(kline["v"])
+            )
+            self.candle_buffer.append(candle)
+            
+            # Ticker Daten für Dashboard
+            if candle.symbol == "BTCUSDT":
+                ticker_data = {
+                    "symbol": candle.symbol,
+                    "last_price": candle.close,
+                    "price_change_percent": 0.0, # Wird später berechnet
+                    "timestamp": candle.time.isoformat()
+                }
+                await self.deps.redis.set_cache(f"market:ticker:{candle.symbol.replace('/', '')}", ticker_data)
+            
+            if len(self.candle_buffer) >= 10:
+                await self._flush_buffers()
+        except Exception as e:
+            self.logger.error(f"Fehler bei K-Line Verarbeitung: {e}")
+
     async def _flush_buffers(self):
         """Schreibt alle gesammelten Daten via Bulk-Insert in PostgreSQL."""
         if not self.candle_buffer and not self.ob_buffer and not self.liq_buffer and not self.funding_buffer:
@@ -177,7 +190,19 @@ class IngestionAgentV2(StreamingAgent):
         async with self.deps.db_session_factory() as session:
             try:
                 if self.candle_buffer:
-                    stmt = insert(MarketCandle).values(self.candle_buffer)
+                    candle_dicts = [
+                        {
+                            "time": candle.time,
+                            "symbol": candle.symbol,
+                            "open": candle.open,
+                            "high": candle.high,
+                            "low": candle.low,
+                            "close": candle.close,
+                            "volume": candle.volume
+                        }
+                        for candle in self.candle_buffer
+                    ]
+                    stmt = insert(MarketCandle).values(candle_dicts)
                     stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'symbol'])
                     await session.execute(stmt)
                     self.candle_buffer.clear()
@@ -202,6 +227,18 @@ class IngestionAgentV2(StreamingAgent):
                     
                 await session.commit()
                 self.state.health = "healthy"
+                
+                # Update Redis with latest ticker data
+                if self.candle_buffer:
+                    latest_candle = self.candle_buffer[-1]
+                    ticker_data = {
+                        "symbol": latest_candle.symbol,
+                        "last_price": latest_candle.close,
+                        "price_change_percent": 0.0, # Will be calculated later
+                        "timestamp": latest_candle.time.isoformat()
+                    }
+                    await self.deps.redis.set_cache(f"market:ticker:{latest_candle.symbol.replace('/', '')}", ticker_data)
+                    
             except Exception as e:
                 self.state.health = "degraded"
                 await self.log_manager.error(

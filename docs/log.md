@@ -112,7 +112,20 @@ Dies stellt die reibungslose Kommunikation zum WSL2-Docker-Daemon wieder her.
 
 ---
 
-## 2026-03-26 | Phase 1: Architecture Refactoring Abgeschlossen
+## 2026-03-26: Live Marktdaten & News Integration
+
+| Feld | Beschreibung |
+|------|--------------|
+| **Datum** | 2026-03-26 |
+| **Fehler-Beschreibung** | Dashboard zeigt keine Live-Preise, News sind Mock-Daten, Agenten haben keine echten Marktdaten |
+| **Ursache** | 1. Ingestion Agent veröffentlicht keine Ticker-Daten<br>2. Sentiment Agent hat keine fetch_news Methode<br>3. Database Insert Fehler mit MarketCandle Objects<br>4. RSS Feeds nicht integriert |
+| **Lösung** | 1. Ingestion: _handle_kline Methode mit Redis Ticker Publishing<br>2. Sentiment: Vollständige RSS Integration mit Keyword-Analyse<br>3. Database: MarketCandle Objects → Dicts Konvertierung<br>4. RSS Feeds: Cointelegraph & Coindesk Integration |
+| **Status** | ✅ BEHOBEN |
+| **Testergebnis** | Dashboard zeigt BTC/USDT 68,975 USD mit echten RSS-News |
+
+---
+
+### 2026-03-26 | Phase 1: Architecture Refactoring Abgeschlossen
 
 **Fehler-Beschreibung (Initial-Zustand):**
 Alle 5 Agenten liefen als asynchrone Tasks im selben FastAPI-Webserver (`main.py`). Ein Crash im Quant-Agenten konnte den Webserver blockieren, was zu massiven Architektur-Risiken führte.
