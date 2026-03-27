@@ -11,10 +11,10 @@ class AgentOrchestrator:
     """Verwaltet den Startup, Shutdown und Restart der Agenten (Supervision Tree)."""
 
     # Definierte Start-Reihenfolge zur Einhaltung der Daten-Pipeline Topologie
-    # Ingestion liefert Daten -> Quant berechnet daraus Indikatoren ...
+    # Ingestion liefert Daten -> Quant/Context/Sentiment berechnen daraus Indikatoren -> Risk prüft -> Execution führt aus
     STARTUP_STAGES: List[List[str]] = [
         ["ingestion"],
-        ["quant", "context"],
+        ["quant", "context", "sentiment"],
         ["risk"],
         ["execution"],
     ]

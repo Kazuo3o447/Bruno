@@ -42,6 +42,7 @@ class AgentsResponse(BaseModel):
 AGENT_DEFINITIONS = {
     "ingestion": {"name": "Ingestion Agent", "type": "data", "desc": "Live-Marktdaten Sammler"},
     "quant": {"name": "Quant Agent", "type": "analysis", "desc": "Trading-Analyse-Agent"},
+    "context": {"name": "Context Agent", "type": "context", "desc": "Makro & Sentiment Bias"},
     "sentiment": {"name": "Sentiment Agent", "type": "analysis", "desc": "News-Sentiment Analyse"},
     "risk": {"name": "Risk Agent", "type": "risk", "desc": "Risiko-Management & Consent"},
     "execution": {"name": "Execution Agent", "type": "execution", "desc": "Trade-Ausführung"}
