@@ -30,7 +30,7 @@
 - [x] **Offline Optimizer**: PnL-Mathematik inkl. Gebühren & Profit Factor Guard (PF > 1.5)
 - [x] Docker Compose (PostgreSQL, Redis, FastAPI, Next.js, Worker)
 - [x] Log Manager (Redis-basiert, 24h Persistenz + Pub/Sub)
-- [x] Sentiment Agent — nutzt CryptoPanic API + RSS (aktiv & aggregiert)
+- [x] **Sentiment Agent** — Voll implementiert, registriert & steuerbar via Agenten-Zentrale
 - [x] Multi-Timeframe Candles (Continuous Aggregates 5m, 15m, 1h)
 - [x] Alembic Migrations & Smart Backup System
 - [x] Ingestion Agent — Binance WebSocket mit Exponential Backoff (funktioniert)
@@ -50,7 +50,6 @@
 
 ### ⚠️ Was existiert aber kaputt/unvollständig ist
 - [/] Quant Agent — `quant_new.py` existiert noch, `quant.py` hat falsches Interface (`run_analysis_loop`/`close`)
-- [x] Sentiment Agent — nutzt CryptoPanic API + RSS (aktiv & aggregiert)
 - [/] Risk Agent — prüft nur `quant == sentiment`, kein echtes Risk-Management
 - [/] Execution Agent — loggt Trades mit `price = 0.0` (Dummy-Preis)
 - [x] Redis Image — Upgrade auf `redis/redis-stack` abgeschlossen

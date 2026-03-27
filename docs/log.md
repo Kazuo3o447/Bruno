@@ -40,6 +40,31 @@ Entscheidung für **Windows-Hybrid-Architektur**:
 
 ---
 
+### 2026-03-27 | Sentiment Agent konnte nicht gestartet werden
+
+**Fehler-Beschreibung:**
+Im Frontend unter "Agenten" konnte der Sentiment Agent nicht gestartet werden. Der API-Call gab zwar "success" zurück, aber der Agent blieb im Status "stopped".
+
+**Ursache:**
+ID-Diskrepanz zwischen `agents_status.py` (API) und `worker.py` (Orchestrator):
+- `AGENT_DEFINITIONS` in `agents_status.py` enthielt den Eintrag `"sentiment"`
+- Der Worker in `worker.py` registrierte aber nur: `ingestion`, `quant`, `context`, `risk`, `execution`
+- Der `SentimentAgent` war nie implementiert worden (leere `sentiment.py`)
+
+Wenn der Orchestrator das "start"-Kommando empfing, prüfte er `if agent_id not in self._agents` → `sentiment` war nicht in `_agents` → stilles `return False` ohne Fehlermeldung.
+
+**Lösung:**
+1. `SentimentAgent`-Klasse erstellt (`app/agents/sentiment.py`) basierend auf `PollingAgent`
+2. Nutzt bestehenden `SentimentAnalyzer` Service (FinBERT, CryptoBERT, Zero-Shot)
+3. Import in `worker.py` hinzugefügt: `from app.agents.sentiment import SentimentAgent`
+4. Registrierung im Orchestrator: `orchestrator.register("sentiment", SentimentAgent(deps))`
+
+**Dateien geändert:**
+- `backend/app/agents/sentiment.py` (neu)
+- `backend/app/worker.py` (Import + Registrierung)
+
+---
+
 ### 2026-03-26 | GPU-Passthrough in Docker unter Windows
 
 **Fehler-Beschreibung:**

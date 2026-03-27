@@ -18,6 +18,7 @@ from app.agents.quant import QuantAgent
 from app.agents.context import ContextAgent
 from app.agents.risk import RiskAgent
 from app.agents.execution import ExecutionAgentV3
+from app.agents.sentiment import SentimentAgent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,6 +81,7 @@ async def main():
     orchestrator.register("ingestion", IngestionAgentV2(deps))
     orchestrator.register("quant", QuantAgent(deps, symbol="BTCUSDT"))
     orchestrator.register("context", ContextAgent(deps))
+    orchestrator.register("sentiment", SentimentAgent(deps))
     orchestrator.register("risk", RiskAgent(deps))
     orchestrator.register("execution", ExecutionAgentV3(deps))
     
