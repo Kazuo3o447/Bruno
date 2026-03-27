@@ -60,159 +60,71 @@ Binance/CryptoPanic WebSocket (ccxt)
 - **PostgreSQL**: Persistente Marktdaten, Trades, Logs
 - **FastAPI WebSocket**: Frontend-Updates
 
-### 3. Agenten-Integration
-| Agent | Input | Output |
-|-------|-------|--------|
-| Ingestion | WebSocket APIs | Redis Streams |
-| Quant | Redis + TimescaleDB | Redis Signals |
-| Sentiment | News + LLM | Sentiment-Score |
-| Risk | Alle Agent-Signals | Veto/Approval |
-| Execution | Risk-Clearance | Order-APIs |
+| Agent | Input | Output | Zweck |
+|-------|-------|--------|-------|
+| **Ingestion** | WebSocket & RSS APIs | Redis Streams | Rohdaten-Aggregation & Normalisierung |
+| **Context** | 8 RSS Feeds + GDELT + Makro | Redis `bruno:context:grss` | **Makro-Bias**: GRSS Score, Geopolitik & Sentiment |
+| **Quant** | Redis + PublicExchange | Redis `bruno:pubsub:signals` | **HFT-Signale**: OFI/CVD Mikro-Struktur Signale |
+| **Risk** | Alle Agent-Signals | Redis `bruno:pubsub:veto` | **0ms Veto-Matrix**: Hard-Veto RAM-State |
+| **Execution** | Risk (RAM) + Signals | Exchange APIs | **Zero-Latency Core**: Direkte Order-Ausführung |
+
+---
+
+## Die Multi-Agenten-Kaskade (Phase 7.5 - Shadow Trading & MLOps)
+
+Das System nutzt eine dreistufige Entscheidungs-Kaskade zur Absicherung institutioneller Qualität:
+
+1. **ContextAgent (Strategischer Bias)**: Analysiert das "Warum". Berechnet den **Global Risk Sentiment Score (GRSS)**.
+2. **QuantAgent (Taktisches Signal)**: Analysiert die "Wahrheit". Generiert HFT-Signale basierend auf Mikro-Struktur (OFI/CVD).
+3. **ExecutionAgent (Ausführer)**: Reagiert in Millisekunden. Nutzt einen **0ms RAM-Veto-Check**. Bei aktivem `DRY_RUN` wird ein Shadow-Trade mit exakter Gebühren-Simulation (0.04% Taker-Fee) durchgeführt.
+
+---
+
+## MLOps & Telemetry Monitoring
+
+### 1. Das Cockpit (Next.js)
+Ein dediziertes Monitoring-Dashboard bietet native Visualisierungen ohne iFrames:
+- **Live-Telemetrie**: Execution-Latenz und Risk-Veto Status in Echtzeit.
+- **Slippage-Analyse**: Scatter-Plots vergleichen Signal-Preis mit Fill-Preis.
+- **Veto-Distribution**: Analyse der Blockade-Gründe des Risk-Agents.
+
+### 2. Parameter Hub (Strict MLOps)
+Vergleich von produktiven (`config.json`) und optimierten (`optimized_params.json`) Parametern. 
+- **Eiserne Regel**: Das Dashboard ist **Read-Only**. Parameter-Updates erfolgen ausschließlich offline über Code-Commits/Neustarts zum Schutz vor Manipulation.
+
+---
+
+## Sicherheits-Isolation (Trading Keys)
+
+Um die Sicherheit der Plattform zu gewährleisten, sind die Trading-Keys (BINANCE_SECRET) strikt isoliert:
+
+- **PublicExchangeClient**: Wird von Quant- und Context-Agenten genutzt. Erfordert keine API-Keys.
+- **AuthenticatedExchangeClient**: Exklusiv für den ExecutionAgent. Nur dieser Client lädt die API-Keys.
+- **DRY_RUN Protection**: Ein hardware-naher Software-Block in der Execution-Engine verhindert physische Orders, wenn die Simulation aktiv ist.
 
 ---
 
 ## Technische Spezifikationen
 
-### Zeitreihen-Datenbank
-- **TimescaleDB** für hypertable-optimierte Kursdaten
-- **pgvector** für Sentiment-Embeddings
-- Automatische Partitionierung nach Zeit
-
-### Caching & Messaging
-- **Redis Streams** für Event-Sourcing
-- **RedisJSON** für strukturierte Daten
-- **RediSearch** für Volltext-Suche (Logs)
-
-### API Layer
-- **FastAPI** mit Pydantic-Validierung
-- **WebSocket** für Echtzeit-Frontend-Updates
-- **CORS** für Next.js-Integration
-- **Backup-API** für API-gesteuerte PostgreSQL-Backups (pg_dump -Z 9)
-
----
-
-## Smart Backup System
-
-### Überblick
-Das System verfügt über ein hocheffizientes, API-gesteuertes Backup-Modul für die PostgreSQL-Datenbank:
-
-| Feature | Implementierung |
-|---------|-----------------|
-| **Kompression** | pg_dump `-Z 9` (maximale Kompression) |
-| **Format** | Custom Format (`-Fc`) für schnelle Wiederherstellung |
-| **Ausführung** | Asynchron via FastAPI BackgroundTasks |
-| **Speicherort** | `./backups` (gemountet in Container) |
-| **UI** | Next.js Admin-Panel unter `/backup` |
-
-### API-Endpunkte
-| Methode | Endpoint | Beschreibung |
-|---------|----------|--------------|
-| `GET` | `/api/v1/backups` | Liste aller Backups |
-| `POST` | `/api/v1/backups/create` | Backup asynchron starten |
-| `DELETE` | `/api/v1/backups/{filename}` | Backup löschen |
-| `GET` | `/api/v1/backups/download/{filename}` | Backup herunterladen |
-| `POST` | `/api/v1/backups/cleanup?max_age_days=14` | Alte Backups aufräumen |
-
-### Sicherheitsmerkmale
-- **Path Traversal Protection**: Nur Dateien im `/app/backups` Verzeichnis
-- **Async Execution**: Keine Timeouts bei großen Datenbanken
-- **Automatische Bereinigung**: Löschung von Backups älter als 14 Tage
-
----
-
-## Backend Core & API-Fundament
-
-### Architektur-Komponenten
-| Komponente | Technologie | Zweck |
-|------------|-------------|-------|
-| **FastAPI** | Python ASGI | REST API, WebSocket Server |
-| **SQLAlchemy 2.0** | async ORM | Datenbank-Models, Migrationen |
-| **Redis** | async Client | Caching, Streams, Pub/Sub |
-| **httpx** | async HTTP | Ollama-Client (Windows-Brücke) |
-| **WebSockets** | FastAPI | Live-Daten Streaming |
-
-### Datenbank-Schema
-| Tabelle | Zweck | Besonderheiten |
-|---------|-------|----------------|
-| `market_candles` | TimescaleDB Hypertable | Zeitserien-Daten, Primär-Key: (time, symbol) |
-| `orderbook_snapshots`| TimescaleDB Hypertable | Tiefe des Orderbuchs, Volumen-Spreads und Imbalance Ratio |
-| `liquidations` | TimescaleDB Hypertable | Binance Force-Orders, Long/Short Kaskaden |
-| `funding_rates` | TimescaleDB Hypertable | Mark-Price und Funding Rates für Derivate |
-| `trade_audit_logs` | Trade-Historie | Agent-Scores, LLM-Reasoning |
-| `news_embeddings` | pgvector Vektoren | 1536-Dimension Embeddings |
-| `agent_status` | Agenten-Monitoring | Heartbeat, Performance-Metriken |
-| `system_metrics` | System-Überwachung | API-Latenz, WebSocket-Connections |
-| `alerts` | Benachrichtigungen | Priority, Read/Resolved Status |
-
-### WebSocket-Streams
-| Endpoint | Daten | Update-Intervall |
-|----------|-------|-----------------|
-| `/ws/market/{symbol}` | Orderbook, Ticker, Candle | 1 Sekunde |
-| `/ws/agents` | Agenten-Status | 2 Sekunden |
-| `/ws/system` | System-Metriken | 5 Sekunden |
-| `/ws/alerts` | Alerts & Notifications | 3 Sekunden |
-
-### LLM-Integration
-| Feature | Modell | Anwendungsfall |
-|---------|--------|---------------|
-| **Primary** | `qwen2.5:14b` | Sentiment-Analyse, schnelle Reasoning |
-| **Reasoning** | `deepseek-r1:14b` | Trading-Analyse, strategische Planung |
-| **Bridge** | `host.docker.internal:11434` | Windows-Hybrid GPU-Zugriff |
-
-### Redis-Datenflüsse
-| Pattern | Zweck | Beispiel |
-|---------|-------|---------|
-| **Cache** | Temporäre Daten | `market:ticker:BTCUSDT` |
-| **Streams** | Event-Sourcing | `raw:market:data` |
-| **Pub/Sub** | Agenten-Kommunikation | `signals:quant` |
-| **Singleton** | Connection Pooling | `redis_client` |
-
----
-
-## Netzwerk-Topologie
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Windows Host                       │
-│  ┌─────────────────────────────────────────────────┐   │
-│  │              Docker Desktop (WSL2)               │   │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐        │   │
-│  │  │  Redis   │ │ PostgreSQL│ │ FastAPI  │        │   │
-│  │  │  :6379   │ │  :5432   │ │  :8000   │        │   │
-│  │  └──────────┘ └──────────┘ └──────────┘        │   │
-│  └─────────────────────────────────────────────────┘   │
-│         ↑                              │               │
-│         │ host.docker.internal:11434   │               │
-│  ┌──────┴──────────────────────────────▼──────┐       │
-│  │          Ollama (native Windows)             │       │
-│  │          http://localhost:11434              │       │
-│  │              AMD RX 7900 XT                  │       │
-│  └─────────────────────────────────────────────┘       │
-│                                                         │
-│  ┌─────────────────────────────────────────────┐        │
-│  │         Next.js Frontend (Bruno)            │        │
-│  │            http://localhost:3000             │        │
-│  └─────────────────────────────────────────────┘        │
-└─────────────────────────────────────────────────────────┘
-```
+### Datenbank-Schema (Phase 7.5 Audit)
+| Tabelle | Feld | Zweck |
+|---------|------|-------|
+| `trade_audit_logs` | `simulated_fee_usdt` | Exakte Simulation der 0.04% Taker-Fee |
+| `trade_audit_logs` | `slippage_bps` | Slippage-Erfassung in Basis-Punkten |
+| `trade_audit_logs` | `latency_ms` | Zeit vom Signal bis zum Fill |
 
 ---
 
 ## System-Status
 
-### ✅ Phase 1 Abgeschlossen - Architekturtrennung
-
+### ✅ Phase 7.5 Abgeschlossen - MLOps & Shadow Trading
 | Komponente | Status | Details |
 |------------|--------|---------|
-| **FastAPI Backend** | ✅ API Only | Läuft exklusiv als API, ohne Agenten-Code |
-| **Worker Orchestrator**| ✅ Neu | Agenten laufen entkoppelt im `bruno-worker` Container |
-| **Agenten Basis** | ✅ Refactored | `BaseAgent`, `PollingAgent` und `StreamingAgent` implementiert |
-| **Message Contracts** | ✅ Pydantic | Strikte Redis-Signale, Telemetrie, Logging & Fehlererkennung |
-
-### 🎯 Ziel Phase 2: Data Foundation & Rich Context
-- **Vorgabe:** Maximierung der Datenqualität (Free-Tier API) gemäß `data.md`.
-- **Inhalt:** Orderbuch-Tiefe, Liquidations, Funding-Rates, Fear & Greed Index in TimescaleDB.
+| **Execution Engine** | ✅ High-Perf | Lokaler RAM-Check, 0ms Veto-Latenz, Shadow-Modus |
+| **Slippage Audit** | ✅ Exakt | 0.04% Fee-Simulation & BPS-Tracking |
+| **Monitoring Hub** | ✅ Dashboard | Native Recharts-Integration, Read-Only MLOps |
+| **Offline Optimizer**| ✅ PF > 1.5 | Strenges Profit-Factor-Enforcement |
 
 ---
 
-*Letzte Aktualisierung: 2026-03-26 - Phase 1 Migration abgeschlossen*
+*Letzte Aktualisierung: 2026-03-27 - Phase 7.5 MLOps & Telemetry Integration abgeschlossen*

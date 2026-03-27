@@ -10,24 +10,29 @@
 
 | Attribut | Wert |
 |----------|------|
-| **Version** | `0.3.0` |
-| **Codename** | Bruno UI Modernization |
-| **Status** | Phase 4.6 abgeschlossen — Log-System & Transparenz stabilisiert |
-| **Letztes Update** | 2026-03-26 |
+| **Version** | `0.4.0` |
+| **Codename** | The Cockpit Update |
+| **Status** | Phase 7.5 abgeschlossen — MLOps, Telemetry & Macro-Fix stabilisiert |
+| **Letztes Update** | 2026-03-27 |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
 
 ---
 
-## Ehrlicher Ist-Stand (vor Cleanup)
+## Ehrlicher Ist-Stand (The Cockpit Edition)
 
-> Was tatsächlich steht vs. was die alte Dokumentation behauptet hat.
+> Was tatsächlich steht vs. was die Architektur fordert.
 
 ### ✅ Was wirklich funktioniert
-- [x] Docker Compose mit 4 Containern (PostgreSQL, Redis, FastAPI, Next.js)
-- [x] FastAPI Backend mit Health-Check, CORS, WebSocket-Endpoints, Backup-API
-- [x] PostgreSQL/TimescaleDB + pgvector — Schema angelegt (6 Models, 9 Tabellen)
-- [x] Redis Singleton Client mit Connection Pool, Pub/Sub, Caching
-- [x] Ollama Client Wrapper (httpx async, qwen2.5/deepseek-r1)
+- [x] **Zero-Latency Core**: ExecutionAgent mit RAM-Veto-Check (0ms Latenz)
+- [x] **Shadow-Trading**: Exakte 0.04% Fee-Simulation & Slippage-BPS Tracking
+- [x] **MLOps Dashboard**: Natives Cockpit für Telemetrie, Veto-Distribution & Parameter-Hub
+- [x] **Strict Security**: DRY_RUN Kapitalschutz & isolierte Trading-Keys
+- [x] **Offline Optimizer**: PnL-Mathematik inkl. Gebühren & Profit Factor Guard (PF > 1.5)
+- [x] Docker Compose (PostgreSQL, Redis, FastAPI, Next.js, Worker)
+- [x] Log Manager (Redis-basiert, 24h Persistenz + Pub/Sub)
+- [x] Sentiment Agent — nutzt CryptoPanic API + RSS (aktiv & aggregiert)
+- [x] Multi-Timeframe Candles (Continuous Aggregates 5m, 15m, 1h)
+- [x] Alembic Migrations & Smart Backup System
 - [x] Ingestion Agent — Binance WebSocket mit Exponential Backoff (funktioniert)
 - [x] Quant Agent — RSI(14) mit NumPy, publiziert auf Redis (bereinigt & aktiv)
 - [x] Next.js Frontend mit harmonisiertem Sidebar-Layout (RootLayout)
@@ -35,12 +40,13 @@
 - [x] Modernes Log-Terminal mit WebSocket-Streaming & Filtern
 - [x] Lightweight Charts Integration (v5 API fix)
 - [x] Real-time WebSocket Client im Frontend (Ticker & Logs)
-- [x] Alembic Migrations
+- [x] Alembic Migrations & Database Telemetry Schema
 - [x] Smart Backup System (pg_dump -Z 9, Frontend-UI)
 - [x] Log Manager (Redis-basiert, 24h Persistenz + Pub/Sub)
 - [x] System-Health Monitoring (Healthy/Degraded/Error Status)
 - [x] Trade-Marker auf dem Chart
 - [x] Systemtest Scheduler (inkl. CryptoPanic Healthcheck)
+- [x] **Combat Ready MLOps Cockpit**: Live-Veto Tracking & Slippage Analytics
 
 ### ⚠️ Was existiert aber kaputt/unvollständig ist
 - [/] Quant Agent — `quant_new.py` existiert noch, `quant.py` hat falsches Interface (`run_analysis_loop`/`close`)
@@ -126,6 +132,18 @@
 - [x] TimescaleDB Aggregates - ✅ `liquidations_1h` Materialized View für Alpha-Daten
 - [x] Risk Context Injection - ✅ Risk Agent nutzt reale DB-Aggregate für LLM Reasoning
 - [x] Pydantic V2 Migration - ✅ Alle Signale nutzen strikte Kontrakte (contracts.py)
+
+### Phase 7: Zero-Latency Execution ✅ ABGESCHLOSSEN
+- [x] RAM-basiertes Veto-System - ✅ 0ms Latenz Check vor Order-Firing
+- [x] Security Layer Isolation - ✅ Trennung von Public & Authentifizierten Clients
+- [x] Pub/Sub Hub Standardisierung - ✅ Einheitliche Kommunikations-Kontrakte
+
+### Phase 7.5: MLOps & Telemetry Dashboard ✅ ABGESCHLOSSEN
+- [x] Native Recharts Integration - ✅ KPI Matrix & Slippage Analytik
+- [x] Shadow-Trading Audit - ✅ Exakte 0.04% Fee-Simulation & BPS-Tracking
+- [x] Strict MLOps Hub - ✅ Read-Only Konfiguration & Offline Optimizer (PF > 1.5)
+- [x] Execution Agent Security - ✅ Hardware-nahe DRY_RUN Protection
+- [x] **Robust Macro Fetching** - ✅ Yahoo 429 Fix (15m Caching + Browser Headers)
 
 ---
 
@@ -1229,4 +1247,28 @@ Foundation ist stabil. Jetzt trennen wir API und Worker für echte Crash-Isolati
 
 ---
 
-*Letzte Aktualisierung: 2026-03-26 — Phase 0 erfolgreich abgeschlossen, Transition zu Phase 1*
+## Phase 7: Zero-Latency Execution & HFT Audit
+
+> **Ziel**: Minimierung der Ausführungslatenz auf <1ms und absolute Sicherheitsisolation der Keys.
+
+### 7.1 Zero-Latency Core
+- [x] **RAM-Veto Check**: Einführung von `self._local_veto_active` im ExecutionAgent.
+- [x] **Background Listeners**: Getrennte Tasks für Veto-Updates und Signals via `asyncio.gather`.
+- [x] **Standardisiertes Pub/Sub**: Umstellung auf `bruno:pubsub:veto` und `bruno:pubsub:signals`.
+- [x] **Non-Blocking Audit**: Auslagerung von DB-Logs und Analytics nach dem Order-Firing via `asyncio.create_task`.
+
+### 7.2 Sicherheits-Isolation
+- [x] **Exchange Client Split**: Trennung in `PublicExchangeClient` (Daten) und `AuthenticatedExchangeClient` (Trading).
+- [x] **Access Control**: Nur der ExecutionAgent hat Zugriff auf `BINANCE_SECRET`.
+
+### Phase 7 — Verifizierung
+```
+- [x] Risk-Veto führt in 0ms zum Abbruch im ExecutionAgent (RAM-Check)
+- [x] Quant-Signale werden über den neuen Channel korrekt empfangen
+- [x] Keine ccxt-Imports in Risk/Quant/Context Agenten vorhanden
+- [x] Order-Firing erfolgt ohne vorgeschaltete DB-Latenz
+```
+
+---
+
+*Letzte Aktualisierung: 2026-03-27 — Phase 7 Zero-Latency Migration erfolgreich abgeschlossen*

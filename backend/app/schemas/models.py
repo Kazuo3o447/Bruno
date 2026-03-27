@@ -96,6 +96,15 @@ class TradeAuditLog(Base):
     filled_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
     
+    # HFT Metrics & Telemetry (Phase 7.5 Audit)
+    latency_exec_ms = Column(Float)
+    signal_price = Column(Float)
+    simulated_fill_price = Column(Float)
+    slippage_bps = Column(Float)
+    simulated_fee_usdt = Column(Float)
+    latency_ms = Column(Float)
+    veto_reason = Column(String(255))
+    
     # Indexe
     __table_args__ = (
         Index('idx_trade_audit_symbol_time', 'symbol', 'timestamp'),

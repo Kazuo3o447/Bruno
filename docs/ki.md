@@ -69,39 +69,23 @@ Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
 
 ---
 
-## 2. Ehrlicher Ist-Stand der Agenten
+## 2. Aktueller Status (Phase 7.5 - MLOps & Audit)
 
-> **Bevor wir den Soll-Zustand planen, muss klar sein was heute wirklich steht.**
+> **Das System verfügt über institutional-grade Monitoring und exakte Shadow-Trading Analytik.**
 
-### Kritische Probleme im aktuellen Code
+### ✅ Gelöste Probleme (Audit März 2026)
 
-#### Problem 1: Kein einheitliches Interface
+- **Execution Latenz:** Der `ExecutionAgent` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.
+- **Schatten-Handel (Audit):** Implementierung einer exakten **0.04% Taker-Fee** Simulation und BPS-Slippage Tracking.
+- **Monitoring Hub:** Natives Monitoring für Telemetrie, Veto-Distribution und MLOps-Parameter.
+- **Strict MLOps Security:** Das Dashboard ist **Read-Only**; Parameter-Updates erfolgen ausschließlich offline.
+- **Offline Optimizer:** Erzwingt die Realität (PnL inkl. Gebühren & PF > 1.5).
 
-| Agent | Start-Methode | Stop-Methode | Cleanup |
-|-------|---------------|--------------|---------|
-| Ingestion | `start()` | `stop()` | ❌ Keins |
-| Quant | `run_analysis_loop()` ⚠️ | `close()` ⚠️ | `exchange.close()` |
-| Sentiment | `start()` | `stop()` | ❌ Keins |
-| Risk | `start()` | `stop()` | ❌ Keins |
-| Execution | `start()` | `stop()` | ❌ Keins |
-
-**`main.py` ruft `agent.start()` für alle Agenten auf**, aber `QuantAgent` hat `run_analysis_loop()` statt `start()`. Das Shutdown in `main.py` ruft `agent.stop()` auf, aber `QuantAgent` hat `close()`. → **Stiller Fehler beim Starten und beim Shutdown.**
-
-#### Problem 2: `quant_new.py` existiert noch
-
-Die Datei liegt noch im Repo, obwohl Status.md behauptet, sie sei gelöscht. Es gibt zwei `QuantAgent`-Klassen. `main.py` importiert aus `quant.py` (der mit `run_analysis_loop()`), nicht aus `quant_new.py` (der mit `start()`).
-
-#### Problem 3: Keine Crash-Isolation
-
-Alle 5 Agenten laufen als `asyncio.create_task()` im **selben FastAPI-Prozess**. Wenn ein Agent eine unbehandelte Exception wirft, verschwindet sein Task lautlos. Kein Monitoring, kein Neustart, kein Alarm.
-
-#### Problem 4: Keine Abhängigkeits-Ordnung
-
-Alle Agenten starten gleichzeitig. Der Risk Agent subscribt auf `signals:*` bevor irgendein Producer jemals publiziert hat. Das funktioniert zufällig, weil Redis Pub/Sub keine Historie hat — aber es gibt kein definiertes "der Daten-Feed muss zuerst stehen".
-
-#### Problem 5: Globale Singletons statt Dependency Injection
-
-Jeder Agent importiert `redis_client` direkt aus `app.core.redis_client`. Kein Agent bekommt seine Dependencies explizit übergeben. Das macht Tests ohne Mocking-Frameworks unmöglich und verhindert, dass zwei Agenten mit verschiedenen Konfigurationen laufen könnten.
+- **Einheitliches Interface:** Alle Agenten erben von `BaseAgent` / `PollingAgent` / `StreamingAgent`.
+- **HFT-Performance:** Der `ExecutionAgent` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.
+- **Sicherheits-Isolation:** `PublicExchangeClient` vs `AuthenticatedExchangeClient` Trennung.
+- **Fehler-Handling:** Supervised Neustarts durch den `AgentOrchestrator` im Worker-Container.
+- **Standardisierung:** Alle Pub/Sub Kanäle folgen dem `bruno:pubsub:*` Schema.
 
 ---
 
@@ -1088,15 +1072,15 @@ class TradeExecution(SignalEnvelope):
 
 ---
 
-## 9. Redis Channel-Architektur
+## 9. Redis Channel-Architektur (Standardisiert)
 
 | Channel | Publisher | Subscriber | Payload | Typ |
 |---|---|---|---|---|
-| `market:ticks:{symbol}` | Ingestion | Quant, Dashboard | Tick-Daten | Stream (XADD) |
-| `signals:quant` | Quant | Risk | `QuantSignalV2` | Pub/Sub |
-| `signals:sentiment` | Sentiment | Risk | `SentimentSignalV2` | Pub/Sub |
-| `risk:decisions` | Risk | Execution, Dashboard | `RiskDecision` | Pub/Sub |
-| `trades:executed` | Execution | Dashboard, Telegram | `TradeExecution` | Pub/Sub |
+| `bruno:pubsub:signals` | Quant | Execution | `TradeSignal` | Pub/Sub |
+| `bruno:pubsub:veto` | Risk | Execution | `VetoState` | Pub/Sub |
+| `bruno:context:grss` | Context | Risk | `MacroContext` | Pub/Sub |
+| `bruno:quant:micro` | Quant | Risk | `HFTMetrics` | Pub/Sub |
+| `bruno:veto:state` | Risk | - | Veto RAM-Cache | Cache |
 | `heartbeat:{agent_id}` | Alle Agenten | Dashboard, API | Heartbeat JSON | Cache (TTL 60s) |
 | `alerts:agent_error` | BaseAgent | Dashboard, Telegram | Error Details | Pub/Sub |
 | `worker:commands` | API | Worker | Restart/Stop/Shutdown | Pub/Sub |
@@ -1110,60 +1094,37 @@ class TradeExecution(SignalEnvelope):
 
 ---
 
-## 10. Agent-Spezifikationen (Ist → Soll)
+## 10. Agent-Spezifikationen (Phase 7 - Zero Latency)
 
 ### Ingestion Agent
+- **Basisklasse:** `StreamingAgent`
+- **Ziel:** Stabile Echtzeit-Datenversorgung (Multi-Stream).
+- **Daten-Target:** Redis Stream + TimescaleDB Hypertables.
 
-| Eigenschaft | Ist | Soll |
-|---|---|---|
-| **Basisklasse** | Keine | `StreamingAgent` |
-| **Interface** | `start()` / `stop()` | `setup()` / `run_stream()` / `teardown()` |
-| **Dependencies** | Globaler Import | `AgentDependencies` |
-| **Reconnect** | Expo Backoff (eigene Impl.) | Via `StreamingAgent.run()` |
-| **Daten-Target** | Nur Redis Stream | Redis Stream + TimescaleDB (Phase 2) |
-| **Multi-Asset** | Hardcoded `btcusdt` | Konfigurierbar via `symbol` Parameter |
-
-### Quant Agent
-
-| Eigenschaft | Ist | Soll |
-|---|---|---|
-| **Basisklasse** | Keine | `PollingAgent` |
-| **Interface** | `run_analysis_loop()` / `close()` ⚠️ | `setup()` / `process()` / `teardown()` |
-| **Warmup** | In `run_analysis_loop()` | In `setup()` (Pflicht) |
-| **Indikatoren** | Nur RSI(14) | RSI + MACD + BB (Phase 3) |
-| **Signal-Format** | `QuantSignal` (int signal) | `QuantSignalV2` (Enum, reasoning) |
-| **Exchange-Cleanup** | `close()` (falscher Name) | `teardown()` → `exchange.close()` |
-| **Intervall** | 30s | `get_interval() -> 30` |
+### Quant Agent (HFT Engine)
+- **Basisklasse:** `PollingAgent` (Interval: 1.0s)
+- **Ziel:** HFT-Signale basierend auf Mikro-Struktur (OFI, CVD).
+- **Security:** Nutzt `PublicExchangeClient` (keine Keys erforderlich).
+- **Output:** Publiziert an `bruno:pubsub:signals`.
 
 ### Sentiment Agent
+- **Basisklasse:** `PollingAgent` (Interval: 300s)
+- **Ziel:** Makro-Bias & News-Sentiment Analysis via Ollama.
+- **Output:** Publiziert an `bruno:context:grss`.
 
-| Eigenschaft | Ist | Soll |
-|---|---|---|
-| **Basisklasse** | Keine | `PollingAgent` |
-| **News-Quelle** | Hardcoded Dummy-String ❌ | CryptoPanic API + RSS (Phase 3) |
-| **LLM** | Immer aufgerufen (crasht wenn Ollama aus) | Ollama mit Keyword-Fallback |
-| **Deduplizierung** | Keine | Artikel-IDs in Redis tracken (Phase 3) |
-| **Signal-Format** | `SentimentSignal` | `SentimentSignalV2` |
-| **Intervall** | 300s | `get_interval() -> 300` |
+### Risk AgentV2 (Veto Guard)
+- **Basisklasse:** `PollingAgent` (Interval: 2.0s)
+- **Ziel:** Hard-Veto Matrix & Konsolidierung aller Signale.
+- **Latenz:** Direkte Redis-Calls (`set`, `publish`) für minimale Verzögerung.
+- **Output:** Publiziert an `bruno:pubsub:veto`.
 
-### Risk Agent
+### Execution AgentV3 (Zero-Latency Core)
+- **Basisklasse:** `StreamingAgent`
+- **RAM-Cache:** Spiegelt den Veto-State im lokalen RAM (0ms Latenz).
+- **Latency-Check:** Bei Signal-Eingang erfolgt ein sofortiger RAM-Check.
+- **Security:** Einziger Agent mit `AuthenticatedExchangeClient` (API-Keys).
+- **Execution:** 0ms RAM-Check → Order Fire → Async Audit.
 
-| Eigenschaft | Ist | Soll |
-|---|---|---|
-| **Basisklasse** | Keine | `StreamingAgent` |
-| **Logik** | `if quant == sentiment` ❌ | Konfluenz-Score + Position Sizing + Stop-Loss + Daily Limit (Phase 3) |
-| **Signal-Format** | `ExecutionOrder` | `RiskDecision` |
-| **Pub/Sub** | `signals:*` (Pattern-Match) | `signals:quant` + `signals:sentiment` (explizit) |
-
-### Execution Agent
-
-| Eigenschaft | Ist | Soll |
-|---|---|---|
-| **Basisklasse** | Keine | `StreamingAgent` |
-| **Preis** | `price = 0.0` ❌ | Echter Preis von Binance API |
-| **Pub/Sub** | `execution:orders` | `risk:decisions` |
-| **Signal-Format** | Loses `dict` | `RiskDecision` → `TradeExecution` |
-| **DB-Zugriff** | `AsyncSessionLocal()` direkt | Via `deps.db_session_factory` |
 
 ---
 

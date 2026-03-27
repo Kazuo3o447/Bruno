@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 import httpx
 import asyncio
 from app.core.redis_client import redis_client
+from app.agents.deps import AgentDependencies
+from app.core.log_manager import log_manager
 from app.core.config import settings
 from app.core.scheduler import scheduler
 import json
@@ -221,6 +223,58 @@ async def test_news_feeds() -> TestResult:
             timestamp=datetime.now(timezone.utc).isoformat()
         )
 
+async def test_sentiment_feeds() -> TestResult:
+    """Testet die Erreichbarkeit der Makro- und Krypto-News-Feeds."""
+    from app.agents.context import ContextAgent
+    from app.core.llm_client import ollama_client
+    from app.core.database import SessionLocal
+    
+    start_time = datetime.now(timezone.utc)
+    try:
+        deps = AgentDependencies(
+            redis=redis_client,
+            config=settings,
+            db_session_factory=SessionLocal,
+            ollama=ollama_client,
+            log_manager=log_manager
+        )
+        agent = ContextAgent(deps)
+        
+        # Teste Erreichbarkeit von jeweils einem Feed pro Kategorie
+        macro_test = await agent._fetch_rss(agent.macro_feeds[0])
+        crypto_test = await agent._fetch_rss(agent.crypto_feeds[0])
+        
+        response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        
+        status = "success" if macro_test and crypto_test else "warning"
+        message = "Feeds erreichbar" if status == "success" else "Einige Feeds konnten nicht geladen werden"
+        
+        return TestResult(
+            name="Sentiment Feeds (BERT)",
+            category="News Feed",
+            status=status,
+            response_time_ms=response_time,
+            message=message,
+            details={
+                "macro_sample": len(macro_test),
+                "crypto_sample": len(crypto_test),
+                "macro_url": agent.macro_feeds[0],
+                "crypto_url": agent.crypto_feeds[0]
+            },
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
+    except Exception as e:
+        response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        return TestResult(
+            name="Sentiment Feeds (BERT)",
+            category="News Feed",
+            status="error",
+            response_time_ms=response_time,
+            message=f"Fehler bei Feed-Abfrage: {str(e)}",
+            details={"error": str(e)},
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
+
 async def test_postgres_connection() -> TestResult:
     """Testet PostgreSQL Verbindung"""
     start_time = datetime.now(timezone.utc)
@@ -271,6 +325,7 @@ async def run_systemtest():
         test_postgres_connection(),
         test_binance_api(),
         test_news_feeds(),
+        test_sentiment_feeds(),
         return_exceptions=True
     )
     
@@ -432,3 +487,13 @@ async def update_scheduler_interval(interval_minutes: int):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Fehler: {str(e)}")
+@router.get("/health/sources")
+async def get_source_health():
+    """Holt den detaillierten Health-Status aller externen Datenquellen inkl. Latenz."""
+    try:
+        data = await redis_client.get_cache("bruno:health:sources")
+        if data:
+            return data
+        return {}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

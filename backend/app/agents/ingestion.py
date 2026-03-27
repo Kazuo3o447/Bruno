@@ -8,6 +8,7 @@ from app.agents.base import StreamingAgent
 from app.agents.deps import AgentDependencies
 from app.schemas.models import MarketCandle, OrderbookSnapshot, Liquidation, FundingRate
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import text
 
 class IngestionAgentV2(StreamingAgent):
     """
@@ -43,8 +44,9 @@ class IngestionAgentV2(StreamingAgent):
             source=self.agent_id,
             message="Ingestion Agent gestartet. Verbinde zu Binance..."
         )
-        # Background-Task für Alternative.me F&G Index (Polling)
+        # Background-Tasks
         asyncio.create_task(self._poll_fg_index())
+        asyncio.create_task(self._cleanup_old_data())
 
     async def _poll_fg_index(self):
         """Pollen des Fear & Greed Index 1x am Tag"""
@@ -67,6 +69,20 @@ class IngestionAgentV2(StreamingAgent):
                 self.logger.warning(f"Fehler beim F&G Polling: {e}")
             
             await asyncio.sleep(86400) # 24 Stunden
+    async def _cleanup_old_data(self):
+        """Löscht alle 24h Daten, die älter als 24h sind, um die DB effizient zu halten."""
+        while self.state.running:
+            try:
+                self.logger.info("Starte Liquidation-Cleanup (24h TTL)...")
+                query = text("DELETE FROM liquidations WHERE time < NOW() - INTERVAL '24 hours'")
+                async with self.deps.db_session_factory() as session:
+                    await session.execute(query)
+                    await session.commit()
+                self.logger.info("Liquidation-Cleanup erfolgreich abgeschlossen.")
+            except Exception as e:
+                self.logger.error(f"Fehler beim Liquidation-Cleanup: {e}")
+            
+            await asyncio.sleep(86400) # Alle 24 Stunden
 
     async def run_stream(self) -> None:
         async with websockets.connect(self.ws_url) as ws:

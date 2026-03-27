@@ -52,6 +52,23 @@ interface SchedulerStatus {
   is_paused: boolean;
 }
 
+interface NewsHealthData {
+  summary: {
+    timestamp: string;
+    standard_new: number;
+    macro_new: number;
+    crypto_new: number;
+    total_feeds: number;
+  };
+  feeds: Record<string, {
+    url: string;
+    status: string;
+    last_update: string;
+    article_count: number;
+    error: string | null;
+  }>;
+}
+
 export default function EinstellungenPage() {
   const [activeTab, setActiveTab] = useState<"systemtest" | "flows">("systemtest");
   const [testData, setTestData] = useState<SystemTestData | null>(null);
@@ -61,6 +78,7 @@ export default function EinstellungenPage() {
   const [flowsLoading, setFlowsLoading] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   const [schedulerLoading, setSchedulerLoading] = useState(false);
+  const [newsHealth, setNewsHealth] = useState<NewsHealthData | null>(null);
 
   const runSystemTest = async () => {
     setTestLoading(true);
@@ -103,6 +121,16 @@ export default function EinstellungenPage() {
       console.error("Scheduler Status laden fehlgeschlagen:", error);
     } finally {
       setSchedulerLoading(false);
+    }
+  };
+
+  const loadNewsHealth = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/api/v1/systemtest/news_health");
+      const data = await response.json();
+      setNewsHealth(data);
+    } catch (error) {
+      console.error("News Health laden fehlgeschlagen:", error);
     }
   };
 
@@ -154,6 +182,7 @@ export default function EinstellungenPage() {
     }
     if (activeTab === "systemtest") {
       loadSchedulerStatus();
+      loadNewsHealth();
     }
   }, [activeTab]);
 
@@ -367,6 +396,79 @@ export default function EinstellungenPage() {
                   </div>
                 </>
               )}
+              {/* News Feed Monitor */}
+              <div className="bg-[#1a1a2e] rounded-xl border border-[#2d2d44] overflow-hidden mt-6">
+                <div className="p-6 border-b border-[#2d2d44] flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">News Feed Monitor</h3>
+                    <p className="text-sm text-gray-400">Status der BERT-spezialisierten Nachrichtenquellen</p>
+                  </div>
+                  <button 
+                    onClick={loadNewsHealth}
+                    className="p-2 hover:bg-[#2d2d44] rounded-lg transition-colors text-gray-400"
+                    title="Aktualisieren"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-[#0f0f1e] text-[10px] font-bold text-gray-500 uppercase tracking-wider font-mono">
+                        <th className="px-6 py-3 border-b border-[#2d2d44]">Quelle (ID)</th>
+                        <th className="px-6 py-3 border-b border-[#2d2d44]">Status</th>
+                        <th className="px-6 py-3 border-b border-[#2d2d44] text-center">Artikel</th>
+                        <th className="px-6 py-3 border-b border-[#2d2d44] text-right">Letztes Update</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#2d2d44]">
+                      {newsHealth && newsHealth.feeds && Object.keys(newsHealth.feeds).length > 0 ? (
+                        Object.entries(newsHealth.feeds).map(([key, feed]: [string, any]) => (
+                          <tr key={key} className="hover:bg-[#252538] transition-colors group">
+                            <td className="px-6 py-4">
+                              <div className="text-sm font-medium text-white truncate max-w-[240px]" title={feed.url}>
+                                {key}
+                              </div>
+                              <div className="text-[10px] text-gray-600 truncate max-w-[240px] font-mono group-hover:text-gray-400 transition-colors">
+                                {feed.url}
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                feed.status === "success" 
+                                  ? "text-green-400 bg-green-400/5 border-green-400/20" 
+                                  : "text-red-400 bg-red-400/5 border-red-400/20"
+                              }`}>
+                                {feed.status.toUpperCase()}
+                              </span>
+                              {feed.error && (
+                                <p className="text-[9px] text-red-500 mt-1 max-w-[150px] truncate">{feed.error}</p>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-center text-sm font-mono text-gray-300">
+                              {feed.article_count}
+                            </td>
+                            <td className="px-6 py-4 text-right text-[11px] text-gray-500 font-mono">
+                              {new Date(feed.last_update).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
+                            <svg className="w-8 h-8 mx-auto mb-2 text-gray-700 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                            </svg>
+                            Keine Feed-Daten verfügbar. Warte auf Hintergrund-Job...
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
           )}
 

@@ -43,8 +43,12 @@ export default function HomePage() {
   const [change24h, setChange24h] = useState(0);
   const [health, setHealth] = useState<HealthData>({ api: false, db: false, redis: false, ollama: false });
   const [agents, setAgents] = useState<AgentBrief[]>([]);
+  const [newsHealth, setNewsHealth] = useState<{ active: number, total: number } | null>(null);
+  const [contextData, setContextData] = useState<any>(null);
+  const [microData, setMicroData] = useState<any>(null);
   const [time, setTime] = useState(new Date());
   const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
+  const [sourceHealth, setSourceHealth] = useState<any>({});
   const wsLogRef = useRef<WebSocket | null>(null);
 
   // Realtime price via WS
@@ -56,6 +60,10 @@ export default function HomePage() {
         if (p.type === "ticker") {
           setPrice(p.data.last_price);
           setChange24h(p.data.price_change_percent);
+        } else if (p.type === "context_update") {
+          setContextData(p.data);
+        } else if (p.type === "micro_update") {
+          setMicroData(p.data);
         }
       } catch {}
     };
@@ -98,6 +106,39 @@ export default function HomePage() {
     };
     load();
     const iv = setInterval(load, 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // News Health
+  useEffect(() => {
+    const loadHealth = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/systemtest/news_health");
+        if (res.ok) {
+          const d = await res.json();
+          const feeds = Object.values(d.feeds || {});
+          const active = feeds.filter((f: any) => f.status === "success").length;
+          setNewsHealth({ active, total: feeds.length });
+        }
+      } catch {}
+    };
+    loadHealth();
+    const iv = setInterval(loadHealth, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Data Source Health & Latency
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("http://localhost:8000/api/v1/systemtest/health/sources");
+        if (res.ok) {
+          setSourceHealth(await res.json());
+        }
+      } catch {}
+    };
+    load();
+    const iv = setInterval(load, 10000);
     return () => clearInterval(iv);
   }, []);
 
@@ -149,7 +190,14 @@ export default function HomePage() {
           <Wifi className="w-3.5 h-3.5 text-emerald-500" />
           <span className="font-mono">{time.toLocaleTimeString("de-DE", { hour12: false })}</span>
           <span className="text-slate-700">|</span>
-          <span>{runningAgents}/{agents.length} Agenten aktiv</span>
+          <div className="flex items-center gap-2">
+            {contextData?.GRSS_Score === 0 && (
+              <span className="text-red-500 font-bold animate-pulse px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded-md uppercase text-[10px]">
+                [CRITICAL] Data Silence - Trading Halted
+              </span>
+            )}
+            <span>{runningAgents}/{agents.length} Agenten aktiv</span>
+          </div>
           <span className="text-slate-700">|</span>
           <span>Paper Trading</span>
         </div>
@@ -166,7 +214,7 @@ export default function HomePage() {
                 Binance Futures
               </span>
             </div>
-            <div className="flex items-end gap-4 mb-4">
+            <div className="flex items-end gap-4 mb-2">
               <span className="text-5xl font-extrabold text-white font-mono tracking-tight">
                 ${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
@@ -174,6 +222,25 @@ export default function HomePage() {
                 {isUp ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
                 {isUp ? "+" : ""}{change24h.toFixed(2)}%
               </span>
+            </div>
+            {/* Live Telemetry (Phase 6) */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#111122] border border-[#1a1a2e]">
+                <span className="text-[10px] text-slate-500 font-bold uppercase">Source</span>
+                <span className="text-[10px] text-indigo-400 font-mono font-bold">{microData?.Source || "BINANCE"}</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#111122] border border-[#1a1a2e]">
+                <span className="text-[10px] text-slate-500 font-bold uppercase">Latency</span>
+                <span className={`text-[10px] font-mono font-bold ${microData?.latency_ms < 200 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                   {microData?.latency_ms ? `${Math.round(microData.latency_ms)}ms` : "--"}
+                </span>
+              </div>
+              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#111122] border border-[#1a1a2e] ${contextData?.Stress_Score > 80 ? 'animate-pulse' : ''}`}>
+                <span className="text-[10px] text-slate-500 font-bold uppercase">Stress</span>
+                <span className={`text-[10px] font-mono font-bold ${contextData?.Stress_Score > 70 ? 'text-red-400' : contextData?.Stress_Score > 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                   {contextData?.Stress_Score ?? "--"}
+                </span>
+              </div>
             </div>
             {/* Mini stats */}
             <div className="flex flex-wrap gap-3">
@@ -194,6 +261,21 @@ export default function HomePage() {
       {/* Main Grid: Health + Agents + Market + Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
 
+        {/* Data Sources Health (Phase 6) */}
+        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6 shadow-glow-emerald/5">
+          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
+            <Wifi className="w-4 h-4 text-emerald-400" />
+            Data Sources
+          </h2>
+          <div className="space-y-3">
+            <SourceHealthRow label="FRED Yields (DGS10)" data={sourceHealth?.FRED_Yields} />
+            <SourceHealthRow label="yFinance Nasdaq" data={sourceHealth?.yFinance_NDX} />
+            <SourceHealthRow label="yFinance VIX" data={sourceHealth?.yFinance_VIX} />
+            <SourceHealthRow label="Binance OB Feed" data={sourceHealth?.Binance_OB} />
+            <SourceHealthRow label="SQL Clusters" data={sourceHealth?.Liquidation_Cluster_SQL} />
+          </div>
+        </div>
+
         {/* System Health */}
         <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
           <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
@@ -205,6 +287,18 @@ export default function HomePage() {
             <HealthRow label="PostgreSQL" ok={health.db} />
             <HealthRow label="Redis" ok={health.redis} />
             <HealthRow label="Ollama LLM" ok={health.ollama} warn />
+            <div className="pt-2 mt-2 border-t border-[#1a1a2e]">
+              <div className="flex items-center justify-between py-1">
+                <span className="text-sm text-slate-400">News-Quellen</span>
+                {newsHealth ? (
+                  <span className={`flex items-center gap-1.5 text-xs font-medium ${newsHealth.active === newsHealth.total ? "text-emerald-400" : "text-amber-400"}`}>
+                     {newsHealth.active}/{newsHealth.total} Aktiv
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-600">Initialisiere…</span>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -258,17 +352,151 @@ export default function HomePage() {
           </div>
         </div>
 
-        {/* Market Indicators */}
+        {/* Market Indicators / Sentiment & Macro Card */}
         <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
           <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
             <BarChart3 className="w-4 h-4 text-indigo-400" />
-            Markt-Indikatoren
+            Sentiment & Macro Bias
           </h2>
           <div className="space-y-4">
-            <IndicatorRow label="Fear & Greed Index" value="50" badge="Neutral" badgeColor="text-slate-400 bg-slate-800 border-slate-700" />
-            <IndicatorRow label="Funding Rate" value="0.012%" badge="Longs zahlen" badgeColor="text-amber-400 bg-amber-500/10 border-amber-500/20" />
-            <IndicatorRow label="Open Interest" value="—" badge="Lade..." badgeColor="text-slate-500 bg-slate-800 border-slate-700" />
-            <IndicatorRow label="Liquidations (1h)" value="—" badge="Lade..." badgeColor="text-slate-500 bg-slate-800 border-slate-700" />
+            {/* GRSS Score Section */}
+            <div className="mb-4">
+              <div className="flex justify-between items-end mb-1.5">
+                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">GRSS Score</span>
+                <span className={`text-lg font-mono font-bold ${
+                  !contextData ? "text-slate-600" :
+                  contextData.GRSS_Score < 40 ? "text-red-400" :
+                  contextData.GRSS_Score < 70 ? "text-amber-400" : "text-emerald-400"
+                }`}>
+                  {contextData?.GRSS_Score ?? "—"}
+                </span>
+              </div>
+              <div className="h-1.5 w-full bg-[#1a1a2e] rounded-full overflow-hidden">
+                <div 
+                  className={`h-full transition-all duration-1000 ${
+                    !contextData ? "bg-slate-800" :
+                    contextData.GRSS_Score < 40 ? "bg-red-500" :
+                    contextData.GRSS_Score < 70 ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${contextData?.GRSS_Score ?? 0}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Market Stress Meter Section (Phase 6) */}
+            <div className="mb-6">
+              <div className="flex justify-between items-end mb-1.5">
+                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Market Stress Meter</span>
+                <span className={`text-xs font-mono font-bold ${
+                  !contextData ? "text-slate-600" :
+                  contextData.Stress_Score > 70 ? "text-red-400" :
+                  contextData.Stress_Score > 40 ? "text-amber-400" : "text-emerald-400"
+                }`}>
+                  {contextData?.Stress_Score ? (
+                    contextData.Stress_Score > 80 ? "EXTREME" :
+                    contextData.Stress_Score > 60 ? "HIGH" :
+                    contextData.Stress_Score > 30 ? "MEDIUM" : "LOW"
+                  ) : "—"}
+                </span>
+              </div>
+              <div className="h-2 w-full bg-[#1a1a2e] rounded-full overflow-hidden flex gap-1 p-0.5">
+                  {[...Array(10)].map((_, i) => {
+                    const isActive = contextData?.Stress_Score >= (i + 1) * 10;
+                    const color = i < 4 ? "bg-emerald-500" : i < 7 ? "bg-amber-500" : "bg-red-500";
+                    return (
+                      <div key={i} className={`h-full flex-1 rounded-sm transition-all duration-500 ${isActive ? color : "bg-slate-800/30"}`} />
+                    );
+                  })}
+              </div>
+            </div>
+            
+            <div className="space-y-3 pt-2">
+              <BiasBar label="F-BERT (Macro)" value={contextData?.Bias_Breakdown?.Macro} />
+              <BiasBar label="C-BERT (Crypto)" value={contextData?.Bias_Breakdown?.Crypto} />
+              
+              <div className="pt-2 grid grid-cols-2 gap-3">
+                <div className="bg-[#06060f] p-2.5 rounded-xl border border-[#1a1a2e]">
+                  <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">DXY 24h</p>
+                  <p className={`text-xs font-mono font-bold ${contextData?.DXY_Change_24h > 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    {contextData?.DXY_Change_24h > 0 ? "+" : ""}{contextData?.DXY_Change_24h ?? "0.0"}%
+                  </p>
+                  {contextData?.Bias_Breakdown?.DXY_Decoupling && (
+                    <span className="text-[8px] text-indigo-400 font-bold animate-pulse mt-1 block">DECOUPLING!</span>
+                  )}
+                </div>
+                <div className="bg-[#06060f] p-2.5 rounded-xl border border-[#1a1a2e]">
+                  <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">ETF Flow (3d)</p>
+                  <p className={`text-xs font-mono font-bold ${contextData?.ETF_Flows_3d_M > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {contextData?.ETF_Flows_3d_M > 0 ? "+" : ""}{contextData?.ETF_Flows_3d_M ?? "0"}M
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {contextData?.Veto_Active && (
+              <div className="mt-4 p-2.5 bg-red-500/5 border border-red-500/10 rounded-xl">
+                 <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold">
+                        <ShieldAlert className="w-3 h-3" /> HARD VETO ACTIVE
+                    </div>
+                    {contextData?.Macro_Status === "BEARISH" && (
+                        <span className="text-[8px] bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded font-bold">NASDAQ {"<"} SMA200</span>
+                    )}
+                 </div>
+                 <p className="text-xs text-slate-500 font-mono leading-snug">{contextData.Reason}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Micro-Structure Card */}
+        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
+          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-yellow-400" />
+            OB Micro-Structure
+          </h2>
+          <div className="space-y-4">
+             <div className="grid grid-cols-2 gap-4">
+                <div className="bg-[#06060f] p-3 rounded-xl border border-[#1a1a2e]">
+                   <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">OFI (Imbalance)</p>
+                   <p className={`text-lg font-mono font-bold ${microData?.OFI > 0 ? "text-emerald-400" : microData?.OFI < 0 ? "text-red-400" : "text-slate-400"}`}>
+                      {microData?.OFI > 0 ? "+" : ""}{microData?.OFI ?? "—"}
+                   </p>
+                </div>
+                <div className="bg-[#06060f] p-3 rounded-xl border border-[#1a1a2e]">
+                   <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">VAMP vs Price</p>
+                   <p className="text-sm font-mono text-slate-300">
+                      {microData?.VAMP ? `$${microData.VAMP.toLocaleString()}` : "—"}
+                   </p>
+                </div>
+             </div>
+
+             <div className="pt-2">
+                <div className="flex justify-between items-center mb-1.5">
+                   <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-500 font-bold uppercase">CVD Trend</span>
+                      {contextData?.Veto_Active && contextData.Reason.includes("CVD") && (
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-pulse" title="Divergenz erkannt!" />
+                      )}
+                   </div>
+                   <span className={`text-xs font-mono font-bold ${microData?.CVD >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {microData?.CVD > 0 ? "+" : ""}{microData?.CVD?.toFixed(2) ?? "—"}
+                   </span>
+                </div>
+                <div className="h-1.5 w-full bg-[#1a1a2e] rounded-full overflow-hidden">
+                   <div 
+                      className={`h-full transition-all duration-500 ${microData?.CVD >= 0 ? "bg-emerald-500" : "bg-red-500"}`}
+                      style={{ width: `${Math.min(100, Math.abs((microData?.CVD ?? 0) / 100) * 100)}%` }}
+                   />
+                </div>
+             </div>
+
+             <IndicatorRow 
+                label="Funding APR" 
+                value={microData?.Funding_APR ? `${microData.Funding_APR}%` : "—"} 
+                badge={microData?.Funding_APR > 15 ? "Overheated" : "Stable"}
+                badgeColor={microData?.Funding_APR > 15 ? "text-red-400 bg-red-400/10 border-red-400/20" : "text-slate-500 bg-slate-800 border-slate-700"}
+             />
           </div>
         </div>
 
@@ -349,6 +577,27 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
   );
 }
 
+function SourceHealthRow({ label, data }: { label: string; data: any }) {
+  const status = data?.status || "offline";
+  const latency = data?.latency_ms || 0;
+  
+  const latencyColor = latency < 200 ? "text-emerald-500" : latency < 1000 ? "text-amber-500" : "text-red-500";
+  
+  return (
+    <div className="flex items-center justify-between py-1">
+      <span className="text-sm text-slate-400">{label}</span>
+      <div className="flex items-center gap-2">
+        {status === "online" && latency > 0 && (
+           <span className={`text-[10px] font-mono ${latencyColor}`}>
+              {Math.round(latency)}ms
+           </span>
+        )}
+        <span className={`w-2 h-2 rounded-full ${status === "online" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-red-500"}`} />
+      </div>
+    </div>
+  );
+}
+
 function HealthRow({ label, ok, warn }: { label: string; ok: boolean; warn?: boolean }) {
   return (
     <div className="flex items-center justify-between py-1">
@@ -372,31 +621,56 @@ function HealthRow({ label, ok, warn }: { label: string; ok: boolean; warn?: boo
 
 function IndicatorRow({ label, value, badge, badgeColor }: { label: string; value: string; badge: string; badgeColor: string }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between group">
       <div>
-        <p className="text-sm text-slate-300 font-medium">{label}</p>
-        <p className="text-lg font-bold text-white font-mono">{value}</p>
+        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider mb-0.5">{label}</p>
+        <p className="text-sm font-bold text-white font-mono">{value}</p>
       </div>
-      <span className={`text-[10px] px-2.5 py-1 rounded-lg font-bold border ${badgeColor}`}>{badge}</span>
+      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-wider ${badgeColor}`}>
+        {badge}
+      </span>
     </div>
   );
 }
 
-function KPIRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function BiasBar({ label, value }: { label: string; value: number | undefined }) {
+  const normValue = value !== undefined ? (value + 1) / 2 : 0.5; // -1..1 to 0..1
+  const colorClass = value === undefined ? "bg-slate-800" :
+                    value > 0.3 ? "bg-emerald-500" :
+                    value < -0.3 ? "bg-red-500" : "bg-indigo-500/60";
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <span className="text-[10px] text-slate-500 font-medium">{label}</span>
+        <span className={`text-[10px] font-mono ${value && value > 0 ? "text-emerald-400" : value && value < 0 ? "text-red-400" : "text-slate-500"}`}>
+          {value !== undefined ? (value > 0 ? "+" : "") + value.toFixed(2) : "—"}
+        </span>
+      </div>
+      <div className="h-1 w-full bg-[#1a1a2e] rounded-full overflow-hidden">
+        <div 
+          className={`h-full transition-all duration-700 ${colorClass}`}
+          style={{ width: `${normValue * 100}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function KPIRow({ icon, label, value }: { icon: any; label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-3">
         {icon}
-        <span className="text-sm text-slate-400">{label}</span>
+        <span className="text-sm text-slate-300">{label}</span>
       </div>
       <span className="text-sm font-bold text-white font-mono">{value}</span>
     </div>
   );
 }
 
-function formatUptime(seconds: number) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m ${seconds % 60}s`;
+function formatUptime(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }

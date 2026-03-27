@@ -1,0 +1,11 @@
+{
+    "GRSS_Threshold": 45,
+    "Liq_Distance": 0.006,
+    "OFI_Threshold": 550,
+    "Simulation_Metrics": {
+        "net_pnl": 236.6,
+        "profit_factor": 2.5,
+        "total_fees": 48.4,
+        "total_slippage_loss": 15.0
+    }
+}

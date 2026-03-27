@@ -1,7 +1,24 @@
 # Daten-Architektur & Market Context
 
 > **Das LLM ist das Gehirn, die Daten sind die Sinne.**
-> Ein Modell wie DeepSeek-R1 (14B Parameter) verhungert, wenn man ihm nur "Der RSI ist 30" als Kontext gibt. Dieses Dokument definiert, wie wir aus **100% kostenlosen (Free-Tier)** APIs das absolute Maximum an Daten-Masse und Daten-Qualität extrahieren, um dem Bot einen unfairen Vorteil zu verschaffen.
+> Ein Modell wie DeepSeek-R1 (14B Parameter) verhungert, wenn man ihm nur "Der RSI ist 30" als Kontext gibt. Dieses Dokument definiert,## 🏁 Phase 5: Institutional Macro/Micro Context & Risk System (März 2026)
+**Status: ✅ COMPLETED**
+
+- [x] **ContextAgent**: Integration von 8 RSS-Feeds & Makro-Metriken (VIX, Yields).
+- [x] **HFT-Quant**: Implementierung von OFI, VAMP und CVD-Trend.
+- [x] **HuggingFace Pipeline**: BERT-Integration (FinBERT/CryptoBERT) mit non-blocking Threads.
+- [x] **Zero-Shot Filtering**: BART-MNLI Modell zur Trennung von "Opinion" und "Facts".
+- [x] **Risk Veto Matrix**: Implementierung von Hard-Vetos (News Silence, Divergenz, Geopolitik).
+- [x] **Dashboard V2**: Visualisierung von GRSS, Bias und HFT-Metriken in Echtzeit.
+
+---
+
+## 🚀 Phase 6: Live-Execution & Linux-Stabilitäts-Härtung (Next)
+**Ziele:**
+1. Migration der Worker auf dedizierte Linux-Hosts (Native Performance).
+2. Implementierung von Order-Execution-Sicherungen (Fat-Finger-Schutz).
+3. Live-Backtesting gegen historische Slippage-Daten.
+wie wir aus **100% kostenlosen (Free-Tier)** APIs das absolute Maximum an Daten-Masse und Daten-Qualität extrahieren, um dem Bot einen unfairen Vorteil zu verschaffen.
 
 **Jede Implementierung in Phase 2 und 3 MUSS sich zwingend an diesen Vorgaben orientieren.**
 
@@ -42,9 +59,38 @@ Neben den Rohdaten der Börse brauchen wir den menschlichen Faktor:
 | `alternative.me` | Täglich | **Fear & Greed Index** (0-100). Erlaubt dem Quant, Strategien an extreme Panik oder Gier anzupassen. (Kein API-Key nötig). |
 | `CryptoPanic API` | 5 Minuten | Breaking News Aggregator. (Free-Tier: 5 Requests/Minute, reicht völlig aus). |
 
+### 2.3 Spezialisierte News Feeds & BERT Modelle (Phase 5)
+Um den "menschlichen Faktor" noch tiefer zu analysieren, integrieren wir spezialisierte News-Feeds und NLP-Modelle.
+
+| Kategorie | Quelle | Zweck | Status |
+|-----------|---------|-------|--------|
+| **Makro (FinBERT)** | federalreserve.gov/feeds/press_all.xml | Zinspolitik & FOMC | ✅ Aktiv |
+| **Makro (FinBERT)** | reuters.com/business/feed | Globale Wirtschaftsnachrichten | ✅ Aktiv |
+| **Makro (FinBERT)** | investing.com/rss/news.rss | Markt-Metriken & Analysen | ✅ Aktiv |
+| **Makro (FinBERT)** | marketwatch.com/rss/marketupdate | Intraday Markt-Trends | ✅ Aktiv |
+| **Krypto (CryptoBERT)** | coindesk.com/arc/outboundfeeds/rss | Primäre Krypto-News | ✅ Aktiv |
+| **Krypto (CryptoBERT)** | decrypt.co/feed | Web3 & Tech Fokus | ✅ Aktiv |
+| **Krypto (CryptoBERT)** | cryptoslate.com/feed | Markt-Daten & On-Chain News | ✅ Aktiv |
+| **Krypto (CryptoBERT)** | cointelegraph.com/rss | Globale Krypto-Trends | ✅ Aktiv |
+
 ---
 
-## 3. Datenbank-Struktur (TimescaleDB)
+## 3. NLP-Modelle & Sentiment-Analytik (Phase 5)
+
+Das System nutzt eine dreistufige NLP-Pipeline zur Klassifizierung und Bewertung von Markt-Nachrichten:
+
+| Modell | Zweck | Details |
+|--------|-------|---------|
+| **BART-Large-MNLI** | Noise-Filter | Zero-Shot Klassifizierung in Regulatory, Macro, Infrastructure oder Opinion. |
+| **FinBERT (ProsusAI)** | Finanz-Sentiment | Spezialisiert auf die Tonalität von Wirtschaftsnachrichten (Macro-Flow). |
+| **CryptoBERT (ElKulako)**| Krypto-Sentiment | Optimiert für die spezifische Sprache der Krypto-Märkte (Crypto-Pulse). |
+| **DeepSeek-R1 / Qwen** | Strategisches Reasoning| Letzte Instanz im Risk-Agent zur Konsolidierung aller Faktoren. |
+
+**Logik-Regel:** Nachrichten mit dem Label `Opinion and Rumor` werden verworfen, wenn der absolute Sentiment-Score < 0.75 ist. Dies eliminiert Rauschen und fokussiert das System auf harte Marktfakten.
+
+---
+
+## 4. Datenbank-Struktur (TimescaleDB)
 
 Die einfache `market_candles` Tabelle reicht für diese Informationsflut nicht. Wir strukturieren unsere PostgreSQL/TimescaleDB komplett neu:
 
@@ -105,17 +151,32 @@ Es kann dann Korrelationen herstellen wie:
 
 ---
 
-## 5. Agenten-Verantwortlichkeiten
+## 5. Agenten-Verantwortlichkeiten (Phase 7.5 - Shadow Trading)
 
-Damit dieser Datenfluss funktioniert, haben die Agenten klare Aufgaben (umzusetzen in Phase 2 und 3):
+Damit dieser Datenfluss funktioniert, haben die Agenten klare, entkoppelte Aufgaben:
 
-- **📡 Ingestion Agent:** Handhabt die 5 WebSocket-Streams synchron und stabil. Sammelt die Daten und flusht sie minütlich in die TimescaleDB-Hypertables.
-- **📊 Quant Agent:** Fragt die TimescaleDB ab. Nutzt die Continuous Aggregates, um nicht nur den 1m-Trend, sondern das Makro-Bild (4H) und Mikrostruktur (Orderbuch-Imbalance) in den "Context" zu gießen. Holt täglich den F&G Index.
-- **🧠 Sentiment Agent:** Konzentriert sich rein auf Krypto-News (CryptoPanic) und wandelt sie via Ollama in einen numerischen `news_sentiment` Score um.
-- **⚖️ Risk Agent (State Builder):** Dies ist der Chef-Architekt. Er nimmt die Rohdaten vom Quant (Preis, Liquidations, Funding, Orderbuch) und Sentiment (News) und **baut das JSON-Context-Objekt** zusammen. Dieses reicht er an das LLM für die Deep-Reasoning-Analyse weiter, bevor eine Buy/Sell Order an Execution geht.
+- **📡 Ingestion Agent:** Handhabt 5-10 WebSocket-Streams. Sammelt Rohdaten und flusht sie in TimescaleDB-Hypertables sowie Redis-Ticker-Caches.
+- **📊 Quant Agent:** Nutzt den `PublicExchangeClient`. Berechnet HFT-Metriken (OFI, CVD, VAMP) und publiziert Signale an `bruno:pubsub:signals`.
+- **🧠 Sentiment Agent:** Aggregiert News (8 Feeds) und generiert via Ollama (FinBERT/DeepSeek) einen Bias-Score.
+- **🛡️ Risk Agent:** Der Wächter. Konsolidiert alle Signale und Makro-Daten. Publiziert den aktuellen Sicherheitsstatus (Veto-State) an `bruno:pubsub:veto`.
+- **⚡ Execution Agent:** Das Herzstück. Hält den Veto-Status im RAM (0ms Latenz) und führt Signale von `bruno:pubsub:signals` über den `AuthenticatedExchangeClient` sofort aus. Bei aktivem `DRY_RUN` erfolgt ein Shadow-Trade mit exakter 0.04% Fee-Simulation und Slippage-Logging in `trade_audit_logs`.
+
+---
+
+## 6. Audit-Trail & Telemetrie (Phase 7.5)
+
+Das System erfasst für jeden (simulierten) Trade einen hochpräzisen Datensatz für das MLOps Dashboard:
+
+| Datenpunkt | Feldname | Zweck |
+|------------|----------|-------|
+| **Signal-Preis** | `signal_price` | Preis exakt im Moment der Signalgenerierung. |
+| **Fill-Preis** | `simulated_fill_price` | Tatsächlicher/Simulierter Preis inkl. Latenz-Nachbildung. |
+| **Slippage** | `slippage_bps` | Differenz in Basis-Punkten (Audit-Metrik). |
+| **Gebühren** | `simulated_fee_usdt` | Exakte 0.04% Taker-Fee Simulation (Lead Architect Rule). |
+| **Latenz** | `latency_ms` | Zeit vom Signal-Empfang bis zum Abschluss der Simulation. |
 
 ---
 
 > [!CAUTION]
-> **Wer auch immer Code für Phase 2 oder Phase 3 schreibt:** 
-> Ein simples Setup, das nur den Preis anschaut, wird rigoros abgelehnt. Der Code MUSS Orderbuch-Tiefe, Liquidations und Funding-Rates berücksichtigen, um dem KI-Gehirn die nötige "Sehkraft" zu geben.
+> **Performance-Vorgabe:** In Phase 7.5 ist die Simulation der Gebühren (0.04%) zwingend einzuhalten. Shadow-Trades ohne Fees gelten als ungültig und verzerren die MLOps-Optimierung.
+

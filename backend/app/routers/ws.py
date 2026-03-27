@@ -127,6 +127,26 @@ async def websocket_market_data(websocket: WebSocket, symbol: str):
                         "data": candle_data,
                         "timestamp": datetime.utcnow().isoformat()
                     })
+                
+                # Context (GRSS / Bias)
+                context = await redis_client.get_cache("bruno:context:grss")
+                if context:
+                    await manager.send_personal_message(websocket, {
+                        "type": "context_update",
+                        "symbol": symbol,
+                        "data": context,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+                
+                # Quant Micro (OFI / CVD / VAMP)
+                micro = await redis_client.get_cache("bruno:quant:micro")
+                if micro:
+                    await manager.send_personal_message(websocket, {
+                        "type": "micro_update",
+                        "symbol": symbol,
+                        "data": micro,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
             
             await asyncio.sleep(1.0)  # 1 Sekunde Update-Intervall
             

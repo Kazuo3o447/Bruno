@@ -1,280 +1,140 @@
 import asyncio
 import json
-import re
+import logging
+import time
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
-from app.agents.base import StreamingAgent
-from app.agents.deps import AgentDependencies
-from app.core.contracts import RiskDecision, SignalDirection, QuantSignalV2, SentimentSignalV2
 from sqlalchemy import text
+from typing import Dict, Any, List, Optional
+from app.agents.base import PollingAgent
+from app.agents.deps import AgentDependencies
+from app.core.contracts import SignalDirection
 
-class RiskAgentV2(StreamingAgent):
+class RiskAgent(PollingAgent):
     """
-    Phase 3 Architektur: The Consensus & Risk Master.
-    Baut das MarketContext JSON fürs DeepSeek-R1 LLM und wickelt das Money Management ab.
+    Phase 6: Risk Agent (Veto-Matrix).
+    Guard-Vetos (News Silence, CVD Divergences, Liquidation Clusters).
+    Refined: Cluster-Buster ±0.25% & Health/Latency Telemetry.
     """
     def __init__(self, deps: AgentDependencies):
         super().__init__("risk", deps)
-        self.latest_quant: Optional[QuantSignalV2] = None
-        self.latest_sentiment: Optional[SentimentSignalV2] = None
-        
-        self.max_daily_loss_pct = 5.0
-        self.portfolio_value_usd = 1000.0  # Test Capital
-        self.symbol = "BTCUSDT"
-        
+        self.last_price = 0.0
+        self.last_cvd = 0.0
+
+    def get_interval(self) -> float:
+        """RiskAgent Polling: alle 10 Sekunden."""
+        return 10.0
+
     async def setup(self) -> None:
-        self.logger.info("RiskAgent setup abgeschlossen.")
-        await self.log_manager.info(
-            category="AGENT",
-            source=self.agent_id,
-            message="Risk Agent initialisiert. Konsens-Modus aktiv."
-        )
-        
-    async def _fetch_context(self, symbol: str) -> Dict[str, Any]:
-        """Sammelt alle fehlenden Puzzleteile für den Market Context (Liquidations, Funding Rates)."""
-        # 1. Macro F&G
-        fg_data = await self.deps.redis.get_cache("macro:fear_and_greed")
-        fg_index = fg_data.get("value", 50) if fg_data else 50
-        
-        # 2. Funding Rate
-        fund_data = await self.deps.redis.get_cache(f"market:funding:{symbol}")
-        funding_rate = fund_data.get("rate", 0.0) if fund_data else 0.0
-        
-        # 3. Orderbook (wurde z.T. vom Quant genutzt, aber hier fürs LLM)
-        ob_data = await self.deps.redis.get_cache(f"market:orderbook:{symbol}")
-        ob_imbalance = ob_data.get("imbalance_ratio", 1.0) if ob_data else 1.0
-        
-        # 4. Liquidations der letzten Stunde aus der DB aggregieren
-        liquidations = await self._fetch_liquidations(symbol)
-        
+        """Initialisierung der Risiko-Matrix."""
+        self.logger.info("RiskAgent gestartet. Veto-Matrix aktiv.")
+        self.last_price = 0.0
+        self.last_cvd = 0.0
+
+    async def _report_health(self, source: str, status: str, latency: float):
+        """Meldet Status und Latenz an den globalen Redis-Health-Hub."""
+        health_data = {
+            "status": status,
+            "latency_ms": round(latency, 1),
+            "last_update": datetime.now(timezone.utc).isoformat()
+        }
+        current_map = await self.deps.redis.get_cache("bruno:health:sources") or {}
+        current_map[source] = health_data
+        await self.deps.redis.set_cache("bruno:health:sources", current_map)
+
+    async def _check_liquidation_zones(self, current_price: float, walls: List[Dict]) -> Optional[str]:
+        """Prüft die Distanz zu den vom QuantAgent gemeldeten Liquidation Walls."""
+        for wall in walls:
+            zone_price = wall.get("zone", 0.0)
+            amount = wall.get("amount", 0.0)
+            if zone_price > 0 and abs(zone_price - current_price) / current_price <= 0.005:
+                return f"VETO: Death Zone! Wall von {amount:,.0f} USDT bei {zone_price} (0.5% Range)."
+        return None
+
+    async def _fetch_all_signals(self) -> Dict[str, Any]:
         return {
-            "macro_context": {
-                "fear_and_greed_index": fg_index
-            },
-            "derivatives_pressure": {
-                "funding_rate_pct": round(funding_rate * 100, 4),
-                "orderbook_imbalance": round(ob_imbalance, 2),
-                "liquidations_info": liquidations
-            }
+            "context": await self.deps.redis.get_cache("bruno:context:grss") or {},
+            "micro": await self.deps.redis.get_cache("bruno:quant:micro") or {}
         }
 
-    async def _fetch_liquidations(self, symbol: str) -> str:
-        """Holt aggregierte Liquidations-Daten der letzten Stunde aus dem TimescaleDB Aggregate."""
-        query = text("""
-            SELECT side, sum(total_liquidation_usdt) as total
-            FROM liquidations_1h
-            WHERE symbol = :symbol AND time >= (now() - INTERVAL '3 hours')
-            GROUP BY side
-        """)
+    async def process(self) -> None:
         try:
-            async with self.deps.db_session_factory() as session:
-                result = await session.execute(query, {"symbol": symbol})
-                rows = result.fetchall()
-                if not rows:
-                    return "Keine signifikanten Liquidationen in den letzten 3 Stunden."
-                
-                parts = []
-                for row in rows:
-                    side_label = "Longs" if row.side == "SELL" else "Shorts"
-                    parts.append(f"{side_label}: ${row.total:,.0f} USDT")
-                
-                return "Recent Liquidations: " + " | ".join(parts)
-        except Exception as e:
-            self.logger.warning(f"Fehler beim Laden der Liquidations-Aggregate: {e}")
-            return "Liquidationen aktuell unbekannt."
-        
-    async def _evaluate_risk(self) -> None:
-        if not self.latest_quant or not self.latest_sentiment:
-            return
+            # 1. Signale sammeln
+            signals = await self._fetch_all_signals()
+            context = signals["context"]
+            micro = signals["micro"]
             
-        quant = self.latest_quant
-        sentiment = self.latest_sentiment
-        symbol = quant.symbol
-        
-        # Kontext anreichern
-        extra_ctx = await self._fetch_context(symbol)
-        
-        market_context = {
-            "asset": symbol,
-            "macro_context": extra_ctx["macro_context"],
-            "price_action": {
-                "current_price": quant.indicators.get("price", 0.0),
-                "trend": quant.market_state.get("trend", "neutral"),
-                "rsi_1h": round(quant.indicators.get("rsi_1h", 50.0), 2)
-            },
-            "derivatives_pressure": extra_ctx["derivatives_pressure"],
-            "news_sentiment": {
-                "score": round(sentiment.score, 2),
-                "insight": sentiment.reasoning
-            },
-            "quant_recommendation": {
-                "direction": quant.direction,
-                "confidence": round(quant.confidence, 2),
-                "reasoning": quant.reasoning
-            }
-        }
-        
-        # LLM Prompt (Reasoning Model - z.B. DeepSeek-R1)
-        self.logger.info("Frage Reasoning Model (Risk Analysis)...")
-        prompt = f"""
-Du bist ein profitabler, kaltschnäuziger Quant-Trader. 
-Gegeben ist folgender reeller Market Context für {symbol}:
-{json.dumps(market_context, indent=2)}
-
-Analysiere diesen Kontext strikt und professionell. Ignoriere Emotionen.
-Ist ein Trade gerechtfertigt? 
-(Tipp: Ist der Quant auf SELL, aber Sentiment extrem bullish und Imbalance stark Bids = VETO/HOLD.
-Sind Quant, Sentiment und Derivate aligniert = APPROVED).
-
-Antworte exakt als valides JSON mit diesem Schema (KEIN ANDERER TEXT, NUR JSON):
-{{
-  "action": "BUY" oder "SELL" oder "HOLD",
-  "approved": true/false (true = order ausführen, false = veto),
-  "reasoning": "Warum? Max 3 Sätze.",
-  "risk_reward_ratio": Zahl (mindestens 1.5, bei HOLD 0.0)
-}}
-"""
-        # Health Check für Reasoning Model
-        ollama_ok = await self.deps.ollama.health_check()
-        if not ollama_ok:
-            self.state.health = "degraded"
-            await self.log_manager.warning(
-                category="AGENT",
-                source=self.agent_id,
-                message="DeepSeek-R1 Reasoning nicht verfügbar. Nutze Risiko-Heuristiken."
-            )
-        else:
-            self.state.health = "healthy"
-
-        response_text = await self.deps.ollama.generate_response(
-            prompt, 
-            use_reasoning=True, 
-            temperature=0.1 # Very deterministic
-        )
-        
-        # Fallback if Ollama fails (e.g. Model not found 404)
-        if response_text.startswith("Error:"):
-            self.logger.warning(f"Ollama Reasoning fehlgeschlagen: {response_text}. Nutze regelbasierten Fallback.")
-            # Einfacher Fallback: Wenn Quant und Sentiment gleichgerichtet sind, approven
-            if quant.direction == sentiment.direction and quant.direction != SignalDirection.HOLD:
-                llm_response = {
-                    "action": quant.direction.value,
-                    "approved": True,
-                    "reasoning": f"Fallback: Quant({quant.direction.value}) und Sentiment({sentiment.direction.value}) aligniert.",
-                    "risk_reward_ratio": 2.0
-                }
+            # Veto-Initialisierung
+            veto = False
+            reason = "Monitoring..."
+            leverage = 1.0 
+            
+            if not context or not micro:
+                veto, reason, leverage = True, "DATA GAP: Missing input signals.", 0.0
             else:
-                llm_response = {
-                    "action": "HOLD",
-                    "approved": False,
-                    "reasoning": "Fallback: Keine eindeutige Konfluenz ohne LLM Analyse.",
-                    "risk_reward_ratio": 0.0
-                }
-        else:
-            # Parse JSON from actual LLM response
-            try:
-                # Versuch DeepSeek's <think> block zu ignorieren: Wir suchen nach { ... }
-                json_str = response_text
-                match = re.search(r'(\{.*\})', response_text.replace('\n', ' '), re.MULTILINE | re.DOTALL)
-                if match:
-                    json_str = match.group(1)
+                # 2. News Silence Watchdog (Harter Checkout 3600s)
+                last_update_str = context.get("last_update")
+                if last_update_str:
+                    last_update = datetime.fromisoformat(last_update_str)
+                    age = (datetime.now(timezone.utc) - last_update).total_seconds()
+                    if age > 3600:
+                        veto, reason, leverage = True, "VETO: News Silence > 3600s. Bot in Standby.", 0.0
+
+                # 3. Market Metrics & GRSS
+                grss = context.get("GRSS_Score", 0.0)
+                vix = context.get("VIX", 0.0)
+                yields = context.get("Yields_10Y", 0.0)
                 
-                llm_response = json.loads(json_str)
-            except Exception as e:
-                self.logger.error(f"Konnte LLM JSON nicht verarbeiten: {e}\nResponse: {response_text[:200]}")
-                llm_response = {"action": "HOLD", "approved": False, "reasoning": "Parsing Error", "risk_reward_ratio": 0.0}
+                if grss < 40:
+                    veto, reason, leverage = True, f"VETO: Low GRSS ({grss}). Risk-Off Mode.", 0.0
+                elif vix > 25:
+                    veto, reason, leverage = True, f"VETO: Market Stress High (VIX: {vix}).", 0.0
+                elif yields > 4.5:
+                    veto, reason, leverage = True, f"VETO: Yields High (10Y: {yields}%).", 0.0
                 
-        action_str = llm_response.get("action", "HOLD").upper()
-        action = SignalDirection(action_str)
-        approved = bool(llm_response.get("approved", False))
-        reasoning = llm_response.get("reasoning", "LLM Reasoning missing.")
-        rr_ratio = float(llm_response.get("risk_reward_ratio", 0.0))
+                # 4. Nasdaq SMA200 Hard Veto (Longs ONLY)
+                macro_status = context.get("Macro_Status", "BULLISH")
+                
+                # 5. Todeszonen-Filter (<0.5% Distanz zu Liq-Wall)
+                price = micro.get("price", 0.0)
+                walls = micro.get("Liquidation_Walls", [])
+                liq_veto = await self._check_liquidation_zones(price, walls)
+                if liq_veto:
+                    veto, reason, leverage = True, liq_veto, 0.0
 
-        if action == SignalDirection.HOLD:
-            approved = False
+                # 6. CVD Divergence Check
+                cvd = micro.get("CVD", 0.0)
+                if self.last_price > 0:
+                    price_dir = 1 if price > self.last_price else -1 if price < self.last_price else 0
+                    cvd_dir = 1 if cvd > self.last_cvd else -1 if cvd < self.last_cvd else 0
+                    if price_dir == 1 and cvd_dir == -1:
+                        # CVD Veto ist weicher (Abwertung statt Sperre)
+                        leverage *= 0.5
+                
+                self.last_price, self.last_cvd = price, cvd
 
-        # Math SL/TP
-        price = quant.indicators.get("price", 0.0)
-        atr = quant.indicators.get("atr_1h", price * 0.01) # fallback 1%
-        if atr <= 0:
-            atr = price * 0.01
+            # 7. Finale Entscheidung mit Nasdaq Filter-Check (Institutional 2026)
+            long_veto = veto or (macro_status == "BEARISH")
+            short_veto = veto # Shorts bleiben erlaubt bei Nasdaq Bear-State
             
-        if action == SignalDirection.BUY:
-            sl = price - (atr * 1.5)
-            tp = price + (atr * 1.5 * max(rr_ratio, 1.5))
-        else:
-            sl = price + (atr * 1.5)
-            tp = price - (atr * 1.5 * max(rr_ratio, 1.5))
+            # 7. Finale Entscheidung
+            final_decision = {
+                "Veto_Active": veto,
+                "Long_Veto_Active": long_veto,
+                "Short_Veto_Active": short_veto,
+                "Reason": reason if veto else ("Nasdaq BEARISH: Longs blocked." if long_veto else "All clear."),
+                "Max_Leverage": leverage if not long_veto else (leverage * 0.5 if not veto else 0.0),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
             
-        # Fixed fractional 2% of PTF
-        risk_amt = self.portfolio_value_usd * 0.02
-        # Position Size in Base (BTC) = Risk_USD / Risk_Per_Unit
-        distance_to_sl = abs(price - sl)
-        pos_size_btc = (risk_amt / distance_to_sl) if distance_to_sl > 0 else 0.0
-        pos_size_usd = pos_size_btc * price
-        
-        # Sanity Check
-        if pos_size_usd > (self.portfolio_value_usd * 0.5):
-            pos_size_usd = self.portfolio_value_usd * 0.5 # Max 50% leverage
-        
-        dec = RiskDecision(
-            agent_id=self.agent_id,
-            symbol=symbol,
-            action=action,
-            approved=approved,
-            position_size_usd=round(pos_size_usd, 2),
-            stop_loss_price=round(sl, 2),
-            take_profit_price=round(tp, 2),
-            risk_reward_ratio=round(rr_ratio, 2),
-            market_context=market_context,
-            reasoning=f"LLM: {reasoning}",
-            quant_signal=quant,
-            sentiment_signal=sentiment
-        )
-        
-        
-        await self.deps.redis.publish_message("risk:decisions", dec.model_dump_json())
-        
-        await self.log_manager.info(
-            category="AGENT",
-            source=self.agent_id,
-            message=f"Risk Entscheidung: {action.value} (Approved: {approved})",
-            details={"pos_size_usd": round(pos_size_usd, 2), "rr_ratio": round(rr_ratio, 2)}
-        )
-        self.logger.info(f"Risk Entscheidung: {action} (Approved: {approved}) | Size: ${pos_size_usd:.2f}")
-        
-        # Set state back so we wait for new fresh signals
-        self.latest_quant = None
-        self.latest_sentiment = None
+            # DIRECT REDIS CALLS FOR ZERO LATENCY
+            # Wir nutzen das interne redis-Objekt für maximale Performance
+            decision_json = json.dumps(final_decision)
+            await self.deps.redis.redis.set("bruno:veto:state", decision_json)
+            await self.deps.redis.redis.publish("bruno:pubsub:veto", decision_json)
 
-    async def run_stream(self) -> None:
-        pubsub = await self.deps.redis.subscribe_channel("signals:quant")
-        if not pubsub:
-            return
-            
-        await pubsub.subscribe("signals:sentiment")
-        self.logger.info("RiskAgent lauscht auf quant und sentiment.")
-        
-        while self.state.running:
-            try:
-                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                if msg and msg['type'] == 'message':
-                    channel = msg['channel']
-                    payload = json.loads(msg['data'])
-                    
-                    if channel == "signals:quant":
-                        self.latest_quant = QuantSignalV2(**payload)
-                        self.logger.debug("RiskAgent hat Quant Signal empfangen.")
-                    elif channel == "signals:sentiment":
-                        self.latest_sentiment = SentimentSignalV2(**payload)
-                        self.logger.debug("RiskAgent hat Sentiment Signal empfangen.")
-                        
-                    # Evaluate if we have both signals!
-                    if self.latest_quant and self.latest_sentiment:
-                        await self._evaluate_risk()
-                        
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                self.logger.error(f"Fehler im Risk-Stream: {e}")
-                await asyncio.sleep(1)
+            if veto:
+                self.logger.warning(f"VETO AKTIVIERT: {reason}")
+
+        except Exception as e:
+            self.logger.error(f"RiskAgent Fehler: {e}")
+

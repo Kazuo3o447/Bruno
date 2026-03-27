@@ -48,26 +48,21 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 
 ## Aktueller Entwicklungsstand
 
-Wir haben **Phase 3 (Agent Pipeline v2)** erfolgreich abgeschlossen!
-Das System besteht nun aus einer vollwertigen, entkoppelten Multi-Agenten-Architektur, die auf einer massiven TimescaleDB-Datenbasis (Phase 2) operiert.
+Wir haben **Phase 7.5 (Shadow Trading & MLOps)** erfolgreich abgeschlossen!
+Das System verfügt nun über ein professionelles Monitoring und einen exakten Audit-Trail.
 
-### ✅ Was wirklich steht (Stand Phase 4.2)
-- **Infrastruktur:** Trennung von `bruno-backend` (FastAPI) und `bruno-worker` (Agent Orchestrator) in Docker.
-- **Data Foundation:** TimescaleDB Hypertables für 1m-Candles, Orderbook-Snapshots, Liquidations und Funding Rates.
-- **Ingestion Agent V2:** Multiplex WebSocket Echtzeit-Anbindung an 5 Binance-Streams inkl. Batch-Inserts zur DB-Schonung.
-- **Quant Agent V2:** Multi-Timeframe Analyse (5m, 1h) mittels nativem `pandas`/`numpy` (RSI, ATR, MACD) direkt aus aggregierten TimescaleDB Views.
-- **Sentiment Agent V2:** News-Deduplizierung via Redis und Ollama-Inferenz.
-- **Risk Agent V2:** DeepSeek-R1 gestützte Entscheidungsfindung mit Kelly Criterion Position-Sizing.
-- **Agenten-Zentrale (UI):** Premium Dashboard zur Steuerung und Überwachung.
-    - **Chat-Interface:** Direkte Interaktion mit jedem Agenten für Transparenz.
-    - **Control-Center:** Manuelles Starten, Stoppen und Resetten einzelner Agenten.
-    - **Metric-Overview:** Echtzeit-Status, Fehlerzähler und Uptime.
-    - **Info-Modal:** Vollständige Erklärung der Agenten-Logik und Datenquellen.
+### ✅ Was wirklich steht (Stand Phase 7.5)
+- **Zero-Latency Core:** Der ExecutionAgent nutzt einen lokalen RAM-Veto-Check (0ms Latenz).
+- **Shadow-Trading Audit:** Exakte 0.04% Fee-Simulation & Slippage-Tracking in BPS.
+- **Monitoring Hub:** Natives Next.js Dashboard mit Recharts (Live-Telemetrie & MLOps).
+- **MLOps Hub:** Read-Only Parameter-Vergleich (Strict MLOps Security).
+- **Offline Optimizer:** PnL-Formel nach Lead Architect Standard (PF > 1.5).
+- **Security Isolation:** Strikte Trennung zwischen Public & Authenticated Clients + DRY_RUN Block.
 
-### 🎯 Nächster Schritt: Phase 4.3 (Finalisierung & Lasttest)
-**WICHTIGSTE AUFGABE:** Durchführung eines Paper-Trading-Lasttests unter Echtzeit-Bedingungen. Validierung der UI-Performance bei hoher Log-Dichte im neuen Terminal.
-
+### 🎯 Nächster Schritt: Phase 8 (Stresstest & Refinement)
+**WICHTIGSTE AUFGABE:** Durchführung von Lasttests unter Echtzeit-Bedingungen. Validierung der Slippage-Präzision im Dashboard bei hoher Volatilität.
 
 ---
 
-*Letzte Aktualisierung: 2026-03-26 - Honest State Update nach Phase 3*
+*Letzte Aktualisierung: 2026-03-27 - Status Update nach Phase 7.5 Dashboard & Audit Integration*
+

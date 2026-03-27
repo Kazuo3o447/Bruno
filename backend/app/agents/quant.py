@@ -1,194 +1,152 @@
 import asyncio
-import pandas as pd
-import numpy as np
-from sqlalchemy import text
-from typing import Dict, Any, Tuple
+import json
+import logging
+import time
 from datetime import datetime, timezone
+from sqlalchemy import text
+from typing import Dict, Any, Optional, List
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
-from app.core.contracts import QuantSignalV2, SignalDirection
+from app.core.exchange_manager import PublicExchangeClient
 
-def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    tr1 = high - low
-    tr2 = (high - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.rolling(window=period).mean()
-    return atr
-
-def calculate_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
-    ema_fast = close.ewm(span=fast, adjust=False).mean()
-    ema_slow = close.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    macd_hist = macd_line - signal_line
-    return macd_line, signal_line, macd_hist
-
-class QuantAgentV2(PollingAgent):
+class QuantAgent(PollingAgent):
     """
-    Phase 3: Multi-Timeframe Quant Logic
-    Berechnet RSI, MACD, ATR auf 5m und 1h Basis und zieht das Orderbuch ein.
+    Phase 6: HFT-Quant Agent (Mikro-Struktur).
+    Berechnet OFI, VAMP und CVD auf Basis echter Exchange-Daten.
+    Refined: PublicExchangeClient Isolation & Signal Generation.
     """
     def __init__(self, deps: AgentDependencies, symbol: str = "BTCUSDT"):
         super().__init__("quant", deps)
         self.symbol = symbol
-
+        self.cvd_cumulative = 0.0
+        self.exm = PublicExchangeClient(redis=deps.redis)
+        self.prev_ob = None
+        self.ofi_threshold = 500.0 # Schwellenwert für Signale
+        
     async def setup(self) -> None:
-        self.logger.info("QuantAgent setup abgeschlossen.")
-        await self.log_manager.info(
-            category="AGENT",
-            source=self.agent_id,
-            message="Quant Agent initialisiert. Überwache BTCUSDT."
-        )
+        self.logger.info(f"QuantAgent für {self.symbol} gestartet. Public-Only Mode.")
+        self.cvd_cumulative = 0.0
+        self.prev_ob = None
 
     def get_interval(self) -> float:
-        return 60.0  # Alle 60 Sekunden evaluieren wir den Markt neu
+        """HFT Polling-Intervall: alle 5 Sekunden."""
+        return 5.0
 
-    async def _fetch_candles(self, view_name: str, limit: int = 50) -> pd.DataFrame:
-        """Holt Kerzen aus einer spezifischen View (z.B. candles_5m, candles_1h)."""
-        query = text(f"""
-            SELECT time, open, high, low, close, volume 
-            FROM {view_name} 
-            WHERE symbol = :symbol 
-            ORDER BY time DESC 
-            LIMIT :limit
-        """)
-        async with self.deps.db_session_factory() as session:
-            result = await session.execute(query, {"symbol": self.symbol, "limit": limit})
-            rows = result.fetchall()
-            if not rows:
-                return pd.DataFrame()
-            # Umkehren für chronologische Berechnung
-            df = pd.DataFrame(rows, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-            df = df.iloc[::-1].reset_index(drop=True)
-            return df
+    async def teardown(self) -> None:
+        await self.exm.close()
+        await super().teardown()
 
-    def _analyze_timeframe(self, df: pd.DataFrame) -> Dict[str, float]:
-        """Berechnet Indikatoren via NumPy/Pandas in Threads."""
-        if len(df) < 14:
-            return {}
-            
-        close = df['close']
-        high = df['high']
-        low = df['low']
-        
-        rsi = calculate_rsi(close, 14).iloc[-1]
-        atr = calculate_atr(high, low, close, 14).iloc[-1]
-        macd_line, signal_line, macd_hist = calculate_macd(close)
-        
-        # Sicherstellen, dass keine NaN Werte zurückgegeben werden (z.B. am Anfang)
-        if np.isnan(rsi) or np.isnan(atr) or np.isnan(macd_hist.iloc[-1]):
-            self.logger.warning(f"Indikatoren unvollständig (NaN). Warte auf mehr Daten.")
-            return {}
-            
-        return {
-            "close": float(close.iloc[-1]),
-            "rsi": float(rsi),
-            "atr": float(atr),
-            "macd_hist": float(macd_hist.iloc[-1])
+    async def _report_health(self, source: str, status: str, latency: float):
+        """Meldet Status und Latenz an den globalen Redis-Hub."""
+        health_data = {
+            "status": status,
+            "latency_ms": round(latency, 1),
+            "last_update": datetime.now(timezone.utc).isoformat()
         }
+        current_map = await self.deps.redis.get_cache("bruno:health:sources") or {}
+        current_map[source] = health_data
+        await self.deps.redis.set_cache("bruno:health:sources", current_map)
 
-    async def _get_orderbook_imbalance(self) -> float:
-        ob_data = await self.deps.redis.get_cache(f"market:orderbook:{self.symbol}")
-        if ob_data and "imbalance_ratio" in ob_data:
-            return ob_data["imbalance_ratio"]
-        return 1.0
+    def _calculate_ofi(self, current_ob: Dict) -> float:
+        """Berechnet den Order Flow Imbalance (OFI) basierend auf dem Vorzustand."""
+        if not self.prev_ob:
+            self.prev_ob = current_ob
+            return 0.0
+        
+        # Best Bid
+        p_b, v_b = current_ob['bids'][0][0], current_ob['bids'][0][1]
+        p_b_prev, v_b_prev = self.prev_ob['bids'][0][0], self.prev_ob['bids'][0][1]
+        
+        wif_b = v_b if p_b > p_b_prev else (v_b - v_b_prev if p_b == p_b_prev else -v_b_prev)
+        
+        # Best Ask
+        p_a, v_a = current_ob['asks'][0][0], current_ob['asks'][0][1]
+        p_a_prev, v_a_prev = self.prev_ob['asks'][0][0], self.prev_ob['asks'][0][1]
+        
+        wif_a = -v_a if p_a < p_a_prev else (v_a_prev - v_a if p_a == p_a_prev else v_a_prev)
+        
+        ofi = wif_b - wif_a
+        self.prev_ob = current_ob
+        return ofi
 
-    def _evaluate_signals(self, metrics_5m: dict, metrics_1h: dict, imbalance: float) -> Tuple[SignalDirection, float, str, str]:
-        # Sehr primitive Beispiel-Logik:
-        # Wenn 1h RSI < 45 und 5m RSI < 30 und Buy-Überhang im Orderbuch -> Long (Reversal Scalp)
-        # Wenn 1h RSI > 55 und 5m RSI > 70 und Sell-Überhang -> Short
-        
-        rsi_1h = metrics_1h.get("rsi", 50)
-        rsi_5m = metrics_5m.get("rsi", 50)
-        
-        market_state = "neutral"
-        direction = SignalDirection.HOLD
-        confidence = 0.5
-        reasoning = f"Märkte sind neutral. RSI_1h={rsi_1h:.1f}, RSI_5m={rsi_5m:.1f}"
-
-        if rsi_1h < 45 and rsi_5m < 35 and imbalance >= 1.5:
-            market_state = "oversold + bid_wall"
-            direction = SignalDirection.BUY
-            confidence = 0.75
-            reasoning = f"Makro leicht bearish, aber 5m stark oversold ({rsi_5m:.1f}) + OB zeigt massive Buy-Absicht ({imbalance:.1f}x bids)."
-        
-        elif rsi_1h > 55 and rsi_5m > 65 and imbalance <= 0.8:
-            market_state = "overbought + ask_wall"
-            direction = SignalDirection.SELL
-            confidence = 0.75
-            reasoning = f"Makro leicht bullish, aber 5m overbought ({rsi_5m:.1f}) + OB zeigt Verkaufsdruck ({imbalance:.1f}x imbalance)."
-            
-        return direction, confidence, reasoning, market_state
+    async def _get_liquidation_walls(self) -> List[Dict]:
+        """Aggregiert Liquidations-Cluster via SQL (Rounding -2)."""
+        start = time.perf_counter()
+        query = text("""
+            SELECT ROUND(price, -2) as zone, SUM(total_usdt) as amount 
+            FROM liquidations 
+            WHERE symbol = :symbol AND time > NOW() - INTERVAL '24 hours' 
+            GROUP BY zone 
+            HAVING SUM(total_usdt) > 100000
+            ORDER BY amount DESC
+        """)
+        try:
+            async with self.deps.db_session_factory() as session:
+                result = await session.execute(query, {"symbol": self.symbol})
+                latency = (time.perf_counter() - start) * 1000
+                await self._report_health("Liquidation_Cluster_SQL", "online", latency)
+                return [{"zone": float(row[0]), "amount": float(row[1])} for row in result.fetchall()]
+        except Exception:
+            latency = (time.perf_counter() - start) * 1000
+            await self._report_health("Liquidation_Cluster_SQL", "offline", latency)
+            return []
 
     async def process(self) -> None:
         try:
-            # Daten sammeln
-            df_5m = await self._fetch_candles("candles_5m", 100)
-            df_1h = await self._fetch_candles("candles_1h", 100)
-            
-            if df_5m.empty or df_1h.empty:
-                self.state.health = "degraded"
-                await self.log_manager.warning(
-                    category="AGENT",
-                    source=self.agent_id,
-                    message="Warte auf Marktdaten (Datenbank-Views sind noch leer)."
-                )
+            # 1. Redundantes L2-Orderbuch (Public)
+            ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
+            if not ob or not ob.get('bids') or not ob.get('asks'):
                 return
-            else:
-                self.state.health = "healthy"
+
+            best_bid_p, best_bid_v = ob['bids'][0][0], ob['bids'][0][1]
+            best_ask_p, best_ask_v = ob['asks'][0][0], ob['asks'][0][1]
+
+            # 2. HFT Metriken
+            vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
+            ofi = self._calculate_ofi(ob)
             
-            # Indikatoren im Thread berechnen
-            metrics_5m = await asyncio.to_thread(self._analyze_timeframe, df_5m)
-            metrics_1h = await asyncio.to_thread(self._analyze_timeframe, df_1h)
-            
-            if not metrics_5m or not metrics_1h:
-                self.logger.warning("Nicht genug Kerzen-Daten für Quant-Analyse.")
-                return
-                
-            imbalance = await self._get_orderbook_imbalance()
-            
-            # Logik ausführen
-            direction, confidence, reasoning, state = self._evaluate_signals(metrics_5m, metrics_1h, imbalance)
-            
-            # Indicators Map bauen
-            indicators = {
-                "price": metrics_1h["close"],
-                "rsi_5m": metrics_5m["rsi"],
-                "rsi_1h": metrics_1h["rsi"],
-                "macd_hist_5m": metrics_5m["macd_hist"],
-                "atr_1h": metrics_1h["atr"],
-                "ob_imbalance": imbalance
+            # 3. CVD & Liq Walls
+            start_trades = time.perf_counter()
+            try:
+                # Nutze binance öffentlich
+                trades = await self.exm.binance.fetch_trades(self.symbol, limit=20)
+                latency_trades = (time.perf_counter() - start_trades) * 1000
+                delta_cvd = sum(t['amount'] if t['side'] == 'buy' else -t['amount'] for t in trades)
+                self.cvd_cumulative += delta_cvd
+                await self._report_health("Binance_Trades", "online", latency_trades)
+            except Exception:
+                await self._report_health("Binance_Trades", "offline", 0.0)
+
+            liq_walls = await self._get_liquidation_walls()
+
+            # 4. Payload & Signal Generation
+            payload = {
+                "symbol": self.symbol,
+                "price": best_bid_p,
+                "VAMP": round(vamp, 2),
+                "CVD": round(self.cvd_cumulative, 2),
+                "OFI": round(ofi, 2),
+                "Liquidation_Walls": liq_walls,
+                "Source": ob.get('source', 'unknown'),
+                "latency_ms": ob.get('latency_ms', 0),
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
+
+            await self.deps.redis.set_cache("bruno:quant:micro", payload)
             
-            signal = QuantSignalV2(
-                agent_id=self.agent_id,
-                symbol=self.symbol,
-                direction=direction,
-                confidence=confidence,
-                indicators=indicators,
-                market_state={"trend": state},
-                reasoning=reasoning
-            )
-            
-            
-            await self.deps.redis.publish_message("signals:quant", signal.model_dump_json())
-            
-            await self.log_manager.debug(
-                category="AGENT",
-                source=self.agent_id,
-                message=f"Quant Analyse abgeschlossen: {direction.value}",
-                details={"rsi_5m": indicators["rsi_5m"], "rsi_1h": indicators["rsi_1h"]}
-            )
-            self.logger.info(f"Quant Signal publiziert: {direction} ({confidence:.2f})")
-            
+            # SIGNAL GENERATION
+            if abs(ofi) >= self.ofi_threshold:
+                side = "buy" if ofi > 0 else "sell"
+                signal = {
+                    "symbol": self.symbol,
+                    "side": side,
+                    "amount": 0.01, # Default HFT Size
+                    "ofi": ofi,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal))
+                self.logger.info(f"Signal gesendet: {side.upper()} {self.symbol} (OFI: {ofi})")
+
         except Exception as e:
-            self.logger.error(f"Fehler in Quant-Analyse: {e}")
+            self.logger.error(f"QuantAgent Fehler: {e}")
+

@@ -16,6 +16,7 @@ const menuItems = [
   { href: "/",            label: "Dashboard",     icon: LayoutDashboard, description: "Markt-Übersicht" },
   { href: "/dashboard",   label: "Trading",       icon: TrendingUp,      description: "Charts & Trades" },
   { href: "/agenten",     label: "Agenten",       icon: BrainCircuit,    description: "KI-Pipeline" },
+  { href: "/monitoring",  label: "Monitoring",    icon: Activity,        description: "MLOps & Telemetry" },
   { href: "/logs",        label: "Logs",          icon: Terminal,        description: "System-Terminal" },
   { href: "/backup",      label: "Backups",       icon: DatabaseBackup,  description: "Datensicherung" },
   { href: "/einstellungen", label: "Settings",    icon: Settings,        description: "Konfiguration" },

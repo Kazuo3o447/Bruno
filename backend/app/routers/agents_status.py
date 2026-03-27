@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import json
 import logging
+import asyncio
 from app.core.redis_client import redis_client
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -49,26 +50,49 @@ AGENT_DEFINITIONS = {
 @router.get("/status", response_model=AgentsResponse)
 async def get_agents_status():
     """
-    Holt den Status aller Agenten.
+    Holt den Status aller Agenten aus den Redis-Heartbeats.
     """
     try:
-        # Alle Agenten-Status parallel prüfen
-        agent_statuses = await asyncio.gather(
-            check_ingestion_agent(),
-            check_quant_agent(),
-            check_sentiment_agent(),
-            check_risk_agent(),
-            check_execution_agent(),
-            return_exceptions=True
-        )
-        
-        # Ergebnisse verarbeiten
         agents = []
-        for status in agent_statuses:
-            if isinstance(status, Exception):
-                logger.error(f"Agent-Check fehlgeschlagen: {status}")
-                continue
-            agents.append(status)
+        for agent_id, info in AGENT_DEFINITIONS.items():
+            heartbeat_raw = await redis_client.get_cache(f"heartbeat:{agent_id}")
+            if heartbeat_raw:
+                try:
+                    hb = json.loads(heartbeat_raw) if isinstance(heartbeat_raw, str) else heartbeat_raw
+                    if isinstance(hb, str): hb = json.loads(hb)
+                    
+                    status = hb.get("status", "error")
+                    consec_err = hb.get("consecutive_errors", 0)
+                    health = "healthy"
+                    if status != "running": health = "offline"
+                    elif consec_err > 0: health = "degraded"
+                    
+                    agents.append(AgentStatus(
+                        id=agent_id,
+                        name=info["name"],
+                        type=info["type"],
+                        status=status,
+                        last_activity=hb.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                        uptime_seconds=hb.get("uptime_seconds", 0.0),
+                        processed_count=hb.get("processed_count", 0),
+                        error_count=hb.get("error_count", 0),
+                        consecutive_errors=consec_err,
+                        health=health,
+                        description=info["desc"]
+                    ))
+                except Exception as ex:
+                    logger.error(f"Fehler beim Parsen des Heartbeats für {agent_id}: {ex}")
+                    agents.append(AgentStatus(
+                        id=agent_id, name=info["name"], type=info["type"], 
+                        status="error", last_activity=datetime.now(timezone.utc).isoformat(), 
+                        health="error", description=info["desc"]
+                    ))
+            else:
+                agents.append(AgentStatus(
+                    id=agent_id, name=info["name"], type=info["type"], 
+                    status="stopped", last_activity=datetime.now(timezone.utc).isoformat(), 
+                    health="offline", description=info["desc"]
+                ))
         
         # Gesamtstatus berechnen
         total = len(agents)
@@ -90,10 +114,6 @@ async def get_agents_status():
             running_agents=running,
             error_agents=error
         )
-        
-        # In Redis speichern
-        await redis_client.redis.set(AGENT_STATUS_KEY, response.json())
-        await redis_client.redis.set(LAST_AGENT_CHECK_KEY, datetime.now(timezone.utc).isoformat())
         
         return response
         

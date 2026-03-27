@@ -1,3 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+transformers
+torch
+feedparser
 fastapi
 uvicorn[standard]
 redis
