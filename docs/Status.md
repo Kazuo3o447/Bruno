@@ -44,7 +44,7 @@
 
 ### ⚠️ Was existiert aber kaputt/unvollständig ist
 - [/] Quant Agent — `quant_new.py` existiert noch, `quant.py` hat falsches Interface (`run_analysis_loop`/`close`)
-- [/] Sentiment Agent — nutzt CryptoPanic API (Key hinterlegt, Logik in Phase 3)
+- [x] Sentiment Agent — nutzt CryptoPanic API + RSS (aktiv & aggregiert)
 - [/] Risk Agent — prüft nur `quant == sentiment`, kein echtes Risk-Management
 - [/] Execution Agent — loggt Trades mit `price = 0.0` (Dummy-Preis)
 - [x] Redis Image — Upgrade auf `redis/redis-stack` abgeschlossen
@@ -55,8 +55,9 @@
 
 ### ❌ Was fehlt
 - [ ] Historische Daten-Pipeline
-- [ ] Multi-Timeframe Candles
-- [ ] Echte Sentiment-Quellen (CryptoPanic, RSS)
+- [x] Multi-Timeframe Candles (Continuous Aggregates 5m, 15m, 1h)
+- [x] Echte Sentiment-Quellen (CryptoPanic API + RSS Feeds)
+- [x] Aggregierte Liquidations-Summen (DB View liquidations_1h)
 - [ ] Echtes Risk-Management (Stop-Loss, Position Sizing, Daily Limits)
 - [ ] Trade-Transparenz (warum wurde gehandelt?)
 - [ ] Performance-Tracking (P&L, Sharpe, Drawdown)
@@ -119,6 +120,12 @@
 - [x] Database Insert Fix - ✅ MarketCandle Objects → Dicts
 - [x] Live News Stream - ✅ Echte RSS-Daten (keine Mocks)
 - [x] Multi-Agenten Pipeline - ✅ 5/5 Agenten aktiv mit Live-Daten
+
+### Phase 4.3: Data Context & Aggregates ✅ ABGESCHLOSSEN
+- [x] CryptoPanic Integration - ✅ Vollständige News-Aggregation (API + RSS)
+- [x] TimescaleDB Aggregates - ✅ `liquidations_1h` Materialized View für Alpha-Daten
+- [x] Risk Context Injection - ✅ Risk Agent nutzt reale DB-Aggregate für LLM Reasoning
+- [x] Pydantic V2 Migration - ✅ Alle Signale nutzen strikte Kontrakte (contracts.py)
 
 ---
 

@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 from app.agents.base import StreamingAgent
 from app.agents.deps import AgentDependencies
 from app.core.contracts import RiskDecision, SignalDirection, QuantSignalV2, SentimentSignalV2
+from sqlalchemy import text
 
 class RiskAgentV2(StreamingAgent):
     """
@@ -43,8 +44,8 @@ class RiskAgentV2(StreamingAgent):
         ob_data = await self.deps.redis.get_cache(f"market:orderbook:{symbol}")
         ob_imbalance = ob_data.get("imbalance_ratio", 1.0) if ob_data else 1.0
         
-        # Optional: Liquidations der letzten Stunde aggregieren (für Phase 3 Mock: Dummy aus Redis stream oder fixed)
-        liquidations = "Keine Anomalien."
+        # 4. Liquidations der letzten Stunde aus der DB aggregieren
+        liquidations = await self._fetch_liquidations(symbol)
         
         return {
             "macro_context": {
@@ -56,6 +57,31 @@ class RiskAgentV2(StreamingAgent):
                 "liquidations_info": liquidations
             }
         }
+
+    async def _fetch_liquidations(self, symbol: str) -> str:
+        """Holt aggregierte Liquidations-Daten der letzten Stunde aus dem TimescaleDB Aggregate."""
+        query = text("""
+            SELECT side, sum(total_liquidation_usdt) as total
+            FROM liquidations_1h
+            WHERE symbol = :symbol AND time >= (now() - INTERVAL '3 hours')
+            GROUP BY side
+        """)
+        try:
+            async with self.deps.db_session_factory() as session:
+                result = await session.execute(query, {"symbol": symbol})
+                rows = result.fetchall()
+                if not rows:
+                    return "Keine signifikanten Liquidationen in den letzten 3 Stunden."
+                
+                parts = []
+                for row in rows:
+                    side_label = "Longs" if row.side == "SELL" else "Shorts"
+                    parts.append(f"{side_label}: ${row.total:,.0f} USDT")
+                
+                return "Recent Liquidations: " + " | ".join(parts)
+        except Exception as e:
+            self.logger.warning(f"Fehler beim Laden der Liquidations-Aggregate: {e}")
+            return "Liquidationen aktuell unbekannt."
         
     async def _evaluate_risk(self) -> None:
         if not self.latest_quant or not self.latest_sentiment:

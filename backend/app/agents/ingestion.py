@@ -156,26 +156,27 @@ class IngestionAgentV2(StreamingAgent):
         """Verarbeitet 1m K-Line."""
         try:
             kline = data["k"]
-            candle = MarketCandle(
-                time=datetime.fromtimestamp(kline["t"] / 1000, tz=timezone.utc),
-                symbol=kline["s"],
-                open=float(kline["o"]),
-                high=float(kline["h"]),
-                low=float(kline["l"]),
-                close=float(kline["c"]),
-                volume=float(kline["v"])
-            )
-            self.candle_buffer.append(candle)
+            # Wir speichern direkt das Dictionary für den TimescaleDB Bulk-Insert
+            candle_data = {
+                "time": datetime.fromtimestamp(kline["t"] / 1000, tz=timezone.utc),
+                "symbol": kline["s"],
+                "open": float(kline["o"]),
+                "high": float(kline["h"]),
+                "low": float(kline["l"]),
+                "close": float(kline["c"]),
+                "volume": float(kline["v"])
+            }
+            self.candle_buffer.append(candle_data)
             
-            # Ticker Daten für Dashboard
-            if candle.symbol == "BTCUSDT":
+            # Ticker Daten für Dashboard (Redis Cache)
+            if candle_data["symbol"] == "BTCUSDT":
                 ticker_data = {
-                    "symbol": candle.symbol,
-                    "last_price": candle.close,
+                    "symbol": candle_data["symbol"],
+                    "last_price": candle_data["close"],
                     "price_change_percent": 0.0, # Wird später berechnet
-                    "timestamp": candle.time.isoformat()
+                    "timestamp": candle_data["time"].isoformat()
                 }
-                await self.deps.redis.set_cache(f"market:ticker:{candle.symbol.replace('/', '')}", ticker_data)
+                await self.deps.redis.set_cache(f"market:ticker:{candle_data['symbol'].replace('/', '')}", ticker_data)
             
             if len(self.candle_buffer) >= 10:
                 await self._flush_buffers()
@@ -189,36 +190,41 @@ class IngestionAgentV2(StreamingAgent):
 
         async with self.deps.db_session_factory() as session:
             try:
+                # 1. Market Candles (TimescaleDB Hypertable)
                 if self.candle_buffer:
-                    candle_dicts = [
-                        {
-                            "time": candle.time,
-                            "symbol": candle.symbol,
-                            "open": candle.open,
-                            "high": candle.high,
-                            "low": candle.low,
-                            "close": candle.close,
-                            "volume": candle.volume
-                        }
-                        for candle in self.candle_buffer
-                    ]
-                    stmt = insert(MarketCandle).values(candle_dicts)
+                    # Da wir nun direkt Dictionaries puffern, können wir self.candle_buffer direkt nutzen
+                    stmt = insert(MarketCandle).values(self.candle_buffer)
                     stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'symbol'])
                     await session.execute(stmt)
+                    
+                    # Bevor wir leeren, merken wir uns den letzten Preis für Redis
+                    latest_candle = self.candle_buffer[-1]
                     self.candle_buffer.clear()
+                    
+                    # Update Redis with latest ticker data (nach erfolgreichem DB-Flush)
+                    ticker_data = {
+                        "symbol": latest_candle["symbol"],
+                        "last_price": latest_candle["close"],
+                        "price_change_percent": 0.0, 
+                        "timestamp": latest_candle["time"].isoformat()
+                    }
+                    await self.deps.redis.set_cache(f"market:ticker:{latest_candle['symbol'].replace('/', '')}", ticker_data)
                 
+                # 2. Orderbook Snapshots
                 if self.ob_buffer:
                     stmt = insert(OrderbookSnapshot).values(self.ob_buffer)
                     stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'symbol'])
                     await session.execute(stmt)
                     self.ob_buffer.clear()
                     
+                # 3. Liquidations
                 if self.liq_buffer:
                     stmt = insert(Liquidation).values(self.liq_buffer)
                     stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'symbol'])
                     await session.execute(stmt)
                     self.liq_buffer.clear()
                     
+                # 4. Funding Rates
                 if self.funding_buffer:
                     stmt = insert(FundingRate).values(self.funding_buffer)
                     stmt = stmt.on_conflict_do_nothing(index_elements=['time', 'symbol'])
@@ -228,26 +234,17 @@ class IngestionAgentV2(StreamingAgent):
                 await session.commit()
                 self.state.health = "healthy"
                 
-                # Update Redis with latest ticker data
-                if self.candle_buffer:
-                    latest_candle = self.candle_buffer[-1]
-                    ticker_data = {
-                        "symbol": latest_candle.symbol,
-                        "last_price": latest_candle.close,
-                        "price_change_percent": 0.0, # Will be calculated later
-                        "timestamp": latest_candle.time.isoformat()
-                    }
-                    await self.deps.redis.set_cache(f"market:ticker:{latest_candle.symbol.replace('/', '')}", ticker_data)
-                    
             except Exception as e:
                 self.state.health = "degraded"
+                error_msg = f"Fehler beim DB-Flush: {str(e)}"
                 await self.log_manager.error(
                     category="DATABASE",
                     source=self.agent_id,
-                    message=f"Fehler beim DB-Flush: {e}"
+                    message=error_msg
                 )
-                self.logger.error(f"Fehler beim DB-Flush: {e}")
+                self.logger.error(error_msg)
                 await session.rollback()
+                # Buffer leeren, um Endlosschleife bei fehlerhaften Daten zu vermeiden
                 self.candle_buffer.clear()
                 self.ob_buffer.clear()
                 self.liq_buffer.clear()
