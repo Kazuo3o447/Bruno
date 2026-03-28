@@ -415,7 +415,7 @@ function TroubleshootSection() {
           <CodeLine code='Invoke-RestMethod -Uri "http://localhost:8000/api/v1/agents/status" | ConvertTo-Json' />
           <div className="h-2" />
           <CodeLine code="# Ollama Status prüfen" />
-          <CodeLine code="Invoke-RestMethod -Uri \"http://localhost:11434/api/tags\"" />
+          <CodeLine code="Invoke-RestMethod -Uri 'http://localhost:11434/api/tags'" />
           <div className="h-2" />
           <CodeLine code="# Redis-Container Health" />
           <CodeLine code="docker exec bruno-redis redis-cli ping" />
@@ -618,3 +618,4 @@ function CodeLine({ code }: any) {
     </div>
   );
 }
+
