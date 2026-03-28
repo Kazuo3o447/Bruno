@@ -317,4 +317,29 @@ In Phase 4.1 wurde die `Sidebar` sowohl in `layout.tsx` als auch in jeder Seite 
 
 ---
 
-*Letzte Aktualisierung: 2026-03-26 — Phase 4.6: Log-Persistenz & System-Transparenz abgeschlossen*
+---
+
+### 2026-03-28 | Frontend Build Error - Missing Node.js Dependencies
+
+**Fehler-Beschreibung:**
+Next.js Frontend kompilierte nicht mit dem Fehler "Failed to compile" und "Unexpected token `div`. Expected jsx identifier". Zusätzliche TypeScript-Fehler: "Cannot find module 'react'" und "Cannot find module 'lucide-react'".
+
+**Ursache:**
+- `node_modules` Verzeichnis war komplett leer
+- Node.js war nicht im System PATH installiert/erreichbar
+- Ohne die React/TypeScript-Module konnte der JSX-Parser die Syntax nicht korrekt interpretieren
+
+**Lösung:**
+1. **Node.js Installation:** `winget install --id OpenJS.NodeJS --source winget` (v25.8.2)
+2. **PATH Update:** Manuelles Hinzufügen von `C:\Program Files\nodejs` zur PATH-Umgebungsvariable
+3. **Dependencies Installation:** `npm install` (165 Pakete in 35s installiert)
+4. **Container Restart:** Vollständiger Neustart aller Docker-Container
+
+**Ergebnis:**
+- Frontend kompiliert wieder erfolgreich
+- Alle Container laufen normal (Frontend:3000, Backend:8000, Worker, Postgres:5432, Redis:6379)
+- 1 high severity vulnerability verbleibt (kann mit `npm audit fix --force` behoben werden)
+
+---
+
+*Letzte Aktualisierung: 2026-03-28 — Node.js Dependencies & Container Restart abgeschlossen*
