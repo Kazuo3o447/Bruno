@@ -21,7 +21,7 @@ Jeder Eintrag folgt diesem Schema:
 
 ## Log-Einträge
 
-### 2026-03-26 | Entscheidung für Windows-Hybrid-Setup
+### 2026-03-26 | Entscheidung für Windows-Hybrid-Setup (Ryzen 7 7800X3D + RX 7900 XT)
 
 **Fehler-Beschreibung:**
 ROCm-Passthrough der AMD RX 7900 XT in WSL2/Docker nicht stabil möglich. Kompilierungsfehler und Treiber-Inkompatibilitäten verhindern GPU-Accelerated LLM-Inferenz in Containern.
@@ -32,7 +32,7 @@ ROCm-Passthrough der AMD RX 7900 XT in WSL2/Docker nicht stabil möglich. Kompil
 - Hohe Komplexität bei Treiber-Abstimmung zwischen Host und Container
 
 **Lösung:**
-Entscheidung für **Windows-Hybrid-Architektur**:
+Entscheidung für **Windows-Hybrid-Architektur** (Ryzen 7 7800X3D + RX 7900 XT):
 - Ollama läuft nativ auf Windows-Host (direkter GPU-Zugriff)
 - Alle anderen Services (Backend, Frontend, DBs) in Docker Desktop (WSL2)
 - Kommunikation via `http://host.docker.internal:11434`
@@ -77,7 +77,7 @@ AMD GPU (RX 7900 XT) war nicht für Ollama in Docker verfügbar. Versuche, ROCm/
 - Hohe Latenz durch Emulationsschichten
 
 **Lösung:**
-Verzicht auf Docker-Passthrough zugunsten eines **nativen Windows-Ollama-Hosts**:
+Verzicht auf Docker-Passthrough zugunsten eines **nativen Windows-Ollama-Hosts** (Ryzen 7 7800X3D + RX 7900 XT):
 - Ollama wird direkt auf Windows installiert (nicht in Docker)
 - AMD RX 7900 XT wird nativ vom Windows-Treiber angesprochen
 - Docker-Container greifen via `http://host.docker.internal:11434` auf Ollama zu

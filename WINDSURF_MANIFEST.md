@@ -1,11 +1,13 @@
 # WINDSURF_MANIFEST.md
-# Bruno Trading Platform — Master Agent Briefing
+# Bruno Trading Platform — Master Agent Briefing v2.0
 
-> **PFLICHTLEKTÜRE.** Jeder Agent, jede Session, jeder Neustart beginnt hier.
+> **PFLICHTLEKTÜRE. Jeder Agent. Jede Session. Jeder Neustart.**
 > Dieses Dokument ist die einzige Quelle der Wahrheit.
 > Es überschreibt alle anderen Dokumente bei Widerspruch.
+> Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
-> Zuletzt aktualisiert: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
+> Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
+> Repository: https://github.com/Kazuo3o447/Bruno
 
 ---
 
@@ -21,7 +23,7 @@ Das ist keine Präferenz. Das ist eine architektonische Entscheidung, die nicht 
 - Ziel-Trades: 2–8 pro Tag
 - Latenz-Sensitivität: niedrig — der LLM HAT Zeit zum Denken
 
-**Warum:** Das System läuft auf Windows-Hybrid-Architektur ohne redundante Netzwerkleitung. HFT ist auf dieser Infrastruktur strukturell unmöglich und gefährlich (offene Positionen bei Verbindungsabbruch). Der LLM-Stack (qwen2.5:14b, deepseek-r1:14b via Ollama) hat 2–8 Sekunden Inferenz-Latenz — das ist ein Feature auf dieser Zeitebene, nicht ein Bug.
+**Warum:** Das System läuft auf Windows-Hybrid-Architektur (Ryzen 7 7800X3D + RX 7900 XT) ohne redundante Netzwerkleitung. HFT ist auf dieser Infrastruktur strukturell unmöglich und gefährlich (offene Positionen bei Verbindungsabbruch). Der LLM-Stack (qwen2.5:14b, deepseek-r1:14b via Ollama) hat 2–8 Sekunden Inferenz-Latenz — das ist ein Feature auf dieser Zeitebene, nicht ein Bug.
 
 ---
 
@@ -698,8 +700,8 @@ Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
 
 | Entscheidung | Begründung |
 |---|---|
-| Medium-Frequency (5–15min Intervall) | Keine redundante Leitung, LLM-Latenz, Windows-Hybrid |
-| Ollama lokal (qwen2.5:14b, deepseek-r1:14b) | AMD RX 7900 XT GPU, keine API-Kosten für LLM, Datenschutz |
+| Medium-Frequency (5–15min Intervall) | Keine redundante Leitung, LLM-Latenz, Windows-Hybrid (Ryzen 7 7800X3D + RX 7900 XT) |
+| Ollama lokal (qwen2.5:14b, deepseek-r1:14b) | Ryzen 7 7800X3D + AMD RX 7900 XT GPU, keine API-Kosten für LLM, Datenschutz |
 | 3-Layer LLM-Kaskade (nicht Single-Prompt) | Skeptiker-Pattern verhindert Overconfidence |
 | GRSS als primäres Gate (nicht optionaler Filter) | Einheitlicher Risk-Score erzwingt Disziplin |
 | Read-Only Live-Parameter (kein Auto-Override) | MLOps-Prinzip: Mensch entscheidet über Parameteränderungen |

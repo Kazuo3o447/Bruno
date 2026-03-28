@@ -46,7 +46,7 @@ export default function HomePage() {
   const [newsHealth, setNewsHealth] = useState<{ active: number, total: number } | null>(null);
   const [contextData, setContextData] = useState<any>(null);
   const [microData, setMicroData] = useState<any>(null);
-  const [time, setTime] = useState(new Date());
+  const [time, setTime] = useState<Date | null>(null);
   const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
   const [sourceHealth, setSourceHealth] = useState<any>({});
   const wsLogRef = useRef<WebSocket | null>(null);
@@ -165,6 +165,7 @@ export default function HomePage() {
 
   // Clock
   useEffect(() => {
+    setTime(new Date()); // Set initial time on client
     const iv = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(iv);
   }, []);
@@ -188,7 +189,7 @@ export default function HomePage() {
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-500">
           <Wifi className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="font-mono">{time.toLocaleTimeString("de-DE", { hour12: false })}</span>
+          <span className="font-mono">{time ? time.toLocaleTimeString("de-DE", { hour12: false }) : "--:--:--"}</span>
           <span className="text-slate-700">|</span>
           <div className="flex items-center gap-2">
             {contextData?.GRSS_Score === 0 && (

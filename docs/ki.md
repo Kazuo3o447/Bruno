@@ -1,12 +1,53 @@
-# KI- & Agenten-Architektur — Implementierungsplan
+# KI- & Agenten-Architektur
 
-> **Vom Prototyp zur robusten Agent-Pipeline**
+> **Referenz: WINDSURF_MANIFEST.md v2.0 — Dieses Dokument ist implementierungsorientiert**
 >
-> Dieses Dokument ist der verbindliche Bauplan für das gesamte Agenten-System.
-> Jede Implementierung MUSS sich an diesem Dokument orientieren.
+> **Manifest hat Vorrang.** Bei Widerspruch zwischen diesem Dokument und dem Manifest gilt das Manifest.
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
-**Letztes Update:** 2026-03-26
+
+---
+
+## Aktueller Fokus (Manifest v2.0)
+
+### Phase A — Fundament (Woche 1–2) — AKTIV
+
+**Ziel:** Den Bot ehrlich machen. Keine Zufallsdaten mehr.
+
+**Kritische Aufgaben:**
+1. `ContextAgent`: Alle `random.uniform()` entfernen
+2. BTC 24h Change aus Redis berechnen
+3. **Binance REST**: Open Interest, OI-Delta, L/S-Ratio, Perp-Basis
+4. **Deribit Public**: Put/Call Ratio, DVOL (kostenlos)
+5. **GRSS-Funktion**: echte Daten (Manifest Abschnitt 5)
+6. **Polling-Intervalle fixen**: Quant 5s→300s, Context 60s→900s
+7. **CVD State**: in Redis persistieren
+
+**Eiserne Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. Keine `random.uniform()`.
+
+---
+
+## Schnell-Referenz: Die 6 Agenten (Manifest v2.0)
+
+| Agent | Typ | Datenquellen | Output |
+|-------|-----|--------------|--------|
+| **Ingestion** | Streaming | Binance WS (5 Streams) | Redis Streams (OHLCV, OFI, Liqs, Funding) |
+| **Context** | Polling | FRED, Deribit, RSS, Makro | Redis `bruno:context:grss` (GRSS Score 0–100) |
+| **Sentiment** | Polling | 8× RSS, CryptoPanic, LLM | Redis `bruno:sentiment` |
+| **Quant** | Polling | Redis, Orderbook | Redis `bruno:signals` (OFI, CVD) |
+| **Risk** | Streaming | Alle Redis Channels | RAM-Veto (GRSS < 40 = Block) |
+| **Execution** | Streaming | Risk + Signals | **Bybit API** (Limit/PostOnly Orders) |
+
+**Börsen-Architektur:**
+- **Binance** = Daten (WebSocket + REST, kostenlos)
+- **Bybit** = **Execution** (Futures, max 1.5× Leverage, Unified Account)
+- **Deribit** = Options-Daten (PCR, DVOL, kostenlos)
+
+---
+
+## Legacy-Inhalt (zu referenzieren, nicht als aktueller Stand)
+
+*Der folgende Inhalt beschreibt die technische Implementierung. Die aktuellen Prioritäten sind in Manifest v2.0 Phase A definiert.*
 
 ---
 
@@ -50,7 +91,7 @@
 | **Besonderheit** | Denkprozess explizit sichtbar |
 
 ### Warum lokal?
-- **Hardware:** AMD RX 7900 XT GPU, nativ auf Windows
+- **Hardware:** Ryzen 7 7800X3D + AMD RX 7900 XT GPU, nativ auf Windows
 - **Latenz:** Unter 500ms für Standard-Inferenz
 - **Kosten:** Keine API-Gebühren, volle Datenkontrolle
 - **Zugang aus Docker:** `http://host.docker.internal:11434`

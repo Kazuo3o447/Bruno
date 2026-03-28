@@ -1,6 +1,6 @@
 # Agent Core Documentation
 
-> **Die Bibel für jeden zukünftigen Agenten**
+> **Referenz: WINDSURF_MANIFEST.md v2.0 — Dieses Dokument ist sekundär**
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -8,61 +8,69 @@
 
 ## Rolle & Mission
 
-Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Ziel ist ein **fehlerfreier, latenzarmer Bot** der auf einer Windows-Hybrid-Architektur läuft.
+Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Ziel ist ein **fehlerfreier, transparenter Bot** der auf einer Windows-Hybrid-Architektur (Ryzen 7 7800X3D + RX 7900 XT) läuft.
+
+**Manifest v2.0 gilt vorrangig.** Bei Widerspruch: Manifest gewinnt.
 
 ---
 
 ## Arbeitsregeln (STRIKT)
 
-### 1. Kontext-Management
-- Lies **immer zuerst diese Datei** (`agent.md`)
-- Prüfe `Status.md` für den aktuellen Entwicklungsstand
-- Lies die spezifische Dokumentation (`arch.md` oder `ki.md`) **bevor** du Code änderst
-- Arbeite gezielt und fokussiert auf den konkreten Task
+### 1. Kontext-Management (Hierarchie beachten!)
+1. **WINDSURF_MANIFEST.md** - IMMER zuerst lesen (einige Quelle der Wahrheit)
+2. **Status.md** - Aktuellen Stand prüfen
+3. **arch.md** - Architektur verstehen
+4. **ki.md** - LLM-Details
+5. **DANN** Code ändern
 
-### 2. Dokumentations-Pflicht
-- **Nach JEDEM abgeschlossenen Feature**: Aktualisiere `Status.md`
-- **Nach JEDEM gelösten, schwerwiegenden Bug**: Dokumentiere Ursache und Lösung in `log.md`
-- Halte die Dokumentation aktuell und präzise
+### 2. Eiserne Regeln (Aus Manifest — NIEMALS BRECHEN)
+```
+❌ Polling < 60s für Quant/Context/Risk
+❌ random.uniform() in produktivem Code
+❌ Echte Orders bei DRY_RUN=True
+❌ GRSS aus < 4 echten Datenquellen
+❌ Position ohne Stop-Loss UND Take-Profit
+❌ API-Keys im Repository
+```
 
-### 3. Terminal-Regel (Windows)
-- **Nutze NIEMALS `curl`** auf Windows-Systemen
-- Verwende in PowerShell ausschließlich:
-  - `Invoke-RestMethod` (bevorzugt)
-  - `Invoke-WebRequest` (alternative)
-- Dies gilt für alle API-Tests und HTTP-Requests
-
----
-
-## Dokumenten-Übersicht
-
-| Datei | Zweck |
-|-------|-------|
-| `agent.md` | Diese Datei - Arbeitsregeln und Mission |
-| `Status.md` | Feature-Tracker, Versionsstatus, offene Tasks |
-| `log.md` | Fehler-Logbuch mit Ursachenanalyse und Lösungen |
-| `arch.md` | Architektur-Manifest - Infrastruktur & Datenfluss |
-| `ki.md` | KI- & Agenten-Verzeichnis - LLMs und Python-Agenten |
+### 3. Dokumentations-Pflicht
+- **Nach JEDEM Feature**: `Status.md` aktualisieren
+- **Nach JEDEM Bug**: `log.md` mit Root-Cause & Lösung
+- **Bei Änderungen**: ERST Manifest, DANN Code
 
 ---
 
-## Aktueller Entwicklungsstand
+## Aktueller Stand (Manifest v2.0)
 
-Wir haben **Phase 7.5 (Shadow Trading & MLOps)** erfolgreich abgeschlossen!
-Das System verfügt nun über ein professionelles Monitoring und einen exakten Audit-Trail.
+### Phase A — Fundament (Woche 1–2) — AKTIV
 
-### ✅ Was wirklich steht (Stand Phase 7.5)
-- **Zero-Latency Core:** Der ExecutionAgent nutzt einen lokalen RAM-Veto-Check (0ms Latenz).
-- **Shadow-Trading Audit:** Exakte 0.04% Fee-Simulation & Slippage-Tracking in BPS.
-- **Monitoring Hub:** Natives Next.js Dashboard mit Recharts (Live-Telemetrie & MLOps).
-- **MLOps Hub:** Read-Only Parameter-Vergleich (Strict MLOps Security).
-- **Offline Optimizer:** PnL-Formel nach Lead Architect Standard (PF > 1.5).
-- **Security Isolation:** Strikte Trennung zwischen Public & Authenticated Clients + DRY_RUN Block.
+Ziel: Den Bot ehrlich machen. Keine Zufallsdaten mehr.
 
-### 🎯 Nächster Schritt: Phase 8 (Stresstest & Refinement)
-**WICHTIGSTE AUFGABE:** Durchführung von Lasttests unter Echtzeit-Bedingungen. Validierung der Slippage-Präzision im Dashboard bei hoher Volatilität.
+**Aufgaben:**
+- [ ] ContextAgent: Alle `random.uniform()` entfernen
+- [ ] BTC 24h Change aus Redis berechnen
+- [ ] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
+- [ ] Deribit Public: Put/Call Ratio, DVOL
+- [ ] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
+- [ ] QuantAgent: 5s → 300s Intervall
+- [ ] ContextAgent: 60s → 900s Intervall
+- [ ] CVD State in Redis persistieren
+
+**Wichtigste Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks.
 
 ---
 
-*Letzte Aktualisierung: 2026-03-27 - Status Update nach Phase 7.5 Dashboard & Audit Integration*
+## Quick Reference
+
+| Ressource | Link | Zweck |
+|-----------|------|-------|
+| **Manifest** | `/WINDSURF_MANIFEST.md` | Einzige Quelle der Wahrheit |
+| **Status** | `/docs/status.md` | Aktueller Projekt-Stand |
+| **Architektur** | `/docs/arch.md` | Börsen, Datenfluss, 6 Agenten |
+| **KI/LLM** | `/docs/ki.md` | Ollama, Modelle, Inferenz |
+| **Logbuch** | `/docs/log.md` | Fehler & Lösungen |
+
+---
+
+*Referenz: WINDSURF_MANIFEST.md v2.0 — Phase A: Fundament*
 

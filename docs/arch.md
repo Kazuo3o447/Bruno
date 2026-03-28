@@ -1,6 +1,6 @@
 # Architektur-Manifest
 
-> **Windows-Hybrid-Plattform für asynchronen Multi-Agenten Trading**
+> **Multi-Agent Trading Plattform — Referenz: WINDSURF_MANIFEST.md v2.0**
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -8,25 +8,35 @@
 
 ## Infrastruktur-Stack
 
-### Docker Desktop (WSL2)
-Alle Container-Services laufen in Docker Desktop mit WSL2-Backend:
+### Umgebungen
+
+| Umgebung | Hardware | Zweck |
+|----------|----------|-------|
+| **Entwicklung** | Windows + Ryzen 7 7800X3D + RX 7900 XT | Agenten-Entwicklung, LLM-Inferenz |
+| **Produktion** | Linux NUC + ZimaOS | Live-Trading (nach Stabilisierung) |
+
+### Docker Services (WSL2 / Linux)
 
 | Service | Technologie | Zweck |
 |---------|-------------|-------|
-| **PostgreSQL** | TimescaleDB + pgvector | Zeitserien-Daten, Vektor-Embeddings |
-| **Redis** | Redis Stack | Caching, Pub/Sub, Message Queue |
-| **FastAPI** | Python ASGI | Backend API, Agenten-Endpoints |
-| **Frontend** | Next.js + React | "Bruno" - Trading Dashboard |
+| **PostgreSQL** | TimescaleDB + pgvector | Zeitserien-Daten, Positionen, Trades |
+| **Redis** | Redis Stack | Caching, Pub/Sub, State-Management |
+| **FastAPI** | Python ASGI | Backend API, Agenten-Orchestration |
+| **Frontend** | Next.js + React | Trading Cockpit |
 
 ---
 
 ## Die LLM-Brücke
 
-### Native Windows-Ollama
-- **Ollama läuft NATIV auf dem Windows-Host**
+### Native Windows-Ollama (Dev)
+- **Ollama läuft NATIV auf dem Windows-Host** (Ryzen 7 7800X3D + RX 7900 XT)
 - Direkter Zugriff auf **AMD RX 7900 XT GPU**
 - Keine Docker-Passthrough-Komplexität
 - Keine WSL2-Kompilierungsprobleme
+
+**Modelle:**
+- **qwen2.5:14b** - Primary (Klassifizierung, Gate-Checks)
+- **deepseek-r1:14b** - Reasoning (Strategische Analyse)
 
 ### Docker-Kommunikation
 Container greifen auf Ollama zu via:
@@ -34,97 +44,100 @@ Container greifen auf Ollama zu via:
 http://host.docker.internal:11434
 ```
 
-**Vorteile dieser Architektur:**
-- Minimale Latenz durch nativen GPU-Zugriff
-- Keine ROCm/WSL2-Kompatibilitätsprobleme
-- Einfache Skalierung der Container unabhängig vom LLM
+---
+
+## Börsen-Architektur (Manifest v2.0)
+
+```
+Binance WS/REST  ──► IngestionAgent + ContextAgent ──► Redis
+                                                           │
+                                                      alle Agenten
+                                                           │
+Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
+```
+
+| Börse | Nutzung | Daten |
+|-------|---------|-------|
+| **Binance** | Daten & Analyse | WebSocket (5 Streams), REST (OI, Funding, Perp-Basis) |
+| **Bybit** | **Execution** | Unified Account Futures (max 1.5× Leverage) |
+| **Deribit** | Options-Daten | Put/Call Ratio, DVOL (kostenlos, kein Key) |
+
+**Bybit Order-Format:**
+```python
+{
+    "category": "linear",
+    "symbol": "BTCUSDT",
+    "side": "Buy",
+    "orderType": "Limit",
+    "qty": "0.001",          # Minimum
+    "price": "84500",
+    "timeInForce": "PostOnly"  # Maker-Fee 0.01%
+}
+```
 
 ---
 
-## Datenfluss-Architektur
-
-### 1. Echtzeit-Datenstrom
-```
-Binance/CryptoPanic WebSocket (ccxt)
-            ↓
-      Redis Pub/Sub
-            ↓
-    Agenten (Python)
-            ↓
-   TimescaleDB (Aggregation)
-```
-
-### 2. Kommunikations-Pfade
-- **Redis Streams**: High-Frequency Trading-Daten
-- **Redis Pub/Sub**: Agenten-Kommunikation
-- **PostgreSQL**: Persistente Marktdaten, Trades, Logs
-- **FastAPI WebSocket**: Frontend-Updates
+## Die 6-Agenten-Kaskade
 
 | Agent | Input | Output | Zweck |
 |-------|-------|--------|-------|
-| **Ingestion** | WebSocket & RSS APIs | Redis Streams | Rohdaten-Aggregation & Normalisierung |
-| **Context** | 8 RSS Feeds + GDELT + Makro | Redis `bruno:context:grss` | **Makro-Bias**: GRSS Score, Geopolitik & Sentiment |
-| **Quant** | Redis + PublicExchange | Redis `bruno:pubsub:signals` | **HFT-Signale**: OFI/CVD Mikro-Struktur Signale |
-| **Risk** | Alle Agent-Signals | Redis `bruno:pubsub:veto` | **0ms Veto-Matrix**: Hard-Veto RAM-State |
-| **Execution** | Risk (RAM) + Signals | Exchange APIs | **Zero-Latency Core**: Direkte Order-Ausführung |
+| **Ingestion** | Binance WebSocket (5 Streams) | Redis Streams | OHLCV, OFI, Liquidations, Funding |
+| **Context** | Makro-Daten (FRED, Deribit, RSS) | Redis `bruno:context:grss` | **GRSS Score** (0–100) |
+| **Sentiment** | RSS Feeds + CryptoPanic | Redis `bruno:sentiment` | LLM-basierte News-Analyse |
+| **Quant** | Redis + Orderbook | Redis `bruno:signals` | OFI, CVD, technische Signale |
+| **Risk** | Alle Signals (RAM-Check) | Redis `bruno:veto` | **0ms Veto** (GRSS < 40 = Block) |
+| **Execution** | Risk + Signals | **Bybit API** | **Limit/PostOnly Orders** |
 
 ---
 
-## Die Multi-Agenten-Kaskade (Phase 7.5 - Shadow Trading & MLOps)
+## Sicherheits-Isolation
 
-Das System nutzt eine dreistufige Entscheidungs-Kaskade zur Absicherung institutioneller Qualität:
+### API-Key Isolation
+- **PublicExchangeClient** (Quant/Context): Keine Keys nötig (Binance Public)
+- **AuthenticatedExchangeClient** (Execution): Nur Bybit API-Keys
 
-1. **ContextAgent (Strategischer Bias)**: Analysiert das "Warum". Berechnet den **Global Risk Sentiment Score (GRSS)**.
-2. **QuantAgent (Taktisches Signal)**: Analysiert die "Wahrheit". Generiert HFT-Signale basierend auf Mikro-Struktur (OFI/CVD).
-3. **ExecutionAgent (Ausführer)**: Reagiert in Millisekunden. Nutzt einen **0ms RAM-Veto-Check**. Bei aktivem `DRY_RUN` wird ein Shadow-Trade mit exakter Gebühren-Simulation (0.04% Taker-Fee) durchgeführt.
-
----
-
-## MLOps & Telemetry Monitoring
-
-### 1. Das Cockpit (Next.js)
-Ein dediziertes Monitoring-Dashboard bietet native Visualisierungen ohne iFrames:
-- **Live-Telemetrie**: Execution-Latenz und Risk-Veto Status in Echtzeit.
-- **Slippage-Analyse**: Scatter-Plots vergleichen Signal-Preis mit Fill-Preis.
-- **Veto-Distribution**: Analyse der Blockade-Gründe des Risk-Agents.
-
-### 2. Parameter Hub (Strict MLOps)
-Vergleich von produktiven (`config.json`) und optimierten (`optimized_params.json`) Parametern. 
-- **Eiserne Regel**: Das Dashboard ist **Read-Only**. Parameter-Updates erfolgen ausschließlich offline über Code-Commits/Neustarts zum Schutz vor Manipulation.
+### DRY_RUN Protection
+- Hardware-naher Block in ExecutionAgent
+- Bei `DRY_RUN=True`: Keine echten Orders möglich
+- Shadow-Trading mit Fee-Simulation (0.01% Maker)
 
 ---
 
-## Sicherheits-Isolation (Trading Keys)
+## Datenbank-Schema (Neue Migrationen)
 
-Um die Sicherheit der Plattform zu gewährleisten, sind die Trading-Keys (BINANCE_SECRET) strikt isoliert:
+### Migration 005: Positions
+```sql
+CREATE TABLE positions (
+    id UUID PRIMARY KEY, symbol VARCHAR(20), side VARCHAR(10),
+    entry_price FLOAT, quantity FLOAT, stop_loss_price FLOAT,
+    take_profit_price FLOAT, exit_price FLOAT, exit_reason VARCHAR(50),
+    pnl_pct FLOAT, status VARCHAR(10)
+);
+```
 
-- **PublicExchangeClient**: Wird von Quant- und Context-Agenten genutzt. Erfordert keine API-Keys.
-- **AuthenticatedExchangeClient**: Exklusiv für den ExecutionAgent. Nur dieser Client lädt die API-Keys.
-- **DRY_RUN Protection**: Ein hardware-naher Software-Block in der Execution-Engine verhindert physische Orders, wenn die Simulation aktiv ist.
-
----
-
-## Technische Spezifikationen
-
-### Datenbank-Schema (Phase 7.5 Audit)
-| Tabelle | Feld | Zweck |
-|---------|------|-------|
-| `trade_audit_logs` | `simulated_fee_usdt` | Exakte Simulation der 0.04% Taker-Fee |
-| `trade_audit_logs` | `slippage_bps` | Slippage-Erfassung in Basis-Punkten |
-| `trade_audit_logs` | `latency_ms` | Zeit vom Signal bis zum Fill |
+### Migration 006: LLM Reasoning Trail
+```sql
+ALTER TABLE trade_audit_logs
+ADD COLUMN llm_reasoning JSONB,
+ADD COLUMN regime VARCHAR(20),
+ADD COLUMN layer1_output JSONB,
+ADD COLUMN layer2_output JSONB,
+ADD COLUMN layer3_output JSONB;
+```
 
 ---
 
 ## System-Status
 
-### ✅ Phase 7.5 Abgeschlossen - MLOps & Shadow Trading
-| Komponente | Status | Details |
-|------------|--------|---------|
-| **Execution Engine** | ✅ High-Perf | Lokaler RAM-Check, 0ms Veto-Latenz, Shadow-Modus |
-| **Slippage Audit** | ✅ Exakt | 0.04% Fee-Simulation & BPS-Tracking |
-| **Monitoring Hub** | ✅ Dashboard | Native Recharts-Integration, Read-Only MLOps |
-| **Offline Optimizer**| ✅ PF > 1.5 | Strenges Profit-Factor-Enforcement |
+### Phase A — Fundament (Woche 1–2) — AKTIV
+- [ ] ContextAgent: `random.uniform()` entfernen
+- [ ] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
+- [ ] Deribit Public: Put/Call Ratio, DVOL
+- [ ] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
+
+### Geplant: Phasen B–H
+Siehe WINDSURF_MANIFEST.md Abschnitt 13
 
 ---
 
-*Letzte Aktualisierung: 2026-03-27 - Phase 7.5 MLOps & Telemetry Integration abgeschlossen*
+*Referenz: WINDSURF_MANIFEST.md v2.0 — Einzige Quelle der Wahrheit*

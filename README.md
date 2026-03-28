@@ -1,14 +1,26 @@
 # Bruno Trading Bot
 
-> **Multi-Agent Bitcoin Trading Bot mit Windows-Hybrid-Architektur**
+> **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.0**
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
 ---
 
-## 🎯 Projekt-Übersicht
+## 🎯 Projekt-Identität (Manifest v2.0)
 
-Bruno ist ein hochmoderner, asynchroner Trading Bot für Kryptowährungen, der auf einer Windows-Hybrid-Architektur läuft. Das System kombiniert Docker Desktop für Backend-Services mit nativem Windows für LLM-GPU-Zugriff.
+| Parameter | Wert |
+|---|---|
+| **Strategie** | Medium-Frequency (5–15 Minuten Signale) |
+| **Startkapital** | 500 EUR |
+| **Execution-Börse** | **Bybit** (Futures, max 1.5× Leverage) |
+| **Daten-Börse** | **Binance** (WebSocket + REST) |
+| **LLM-Stack** | Ollama lokal: qwen2.5:14b + deepseek-r1:14b |
+| **Dev-Umgebung** | Windows (Windsurf/SWE-1.5) |
+| **Prod-Umgebung** | Linux (NUC, ZimaOS) |
+
+**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten.
+
+> ⚠️ **WICHTIG:** Alle Architekturentscheidungen sind in `WINDSURF_MANIFEST.md` dokumentiert. Dieses Dokument überschreibt alle anderen bei Widerspruch.
 
 ### 🏗️ Architektur
 
@@ -22,8 +34,9 @@ Bruno ist ein hochmoderner, asynchroner Trading Bot für Kryptowährungen, der a
 ## 🚀 Quick Start
 
 ### Voraussetzungen
+- **Dev:** Windows mit Ryzen 7 7800X3D + AMD RX 7900 XT GPU (für LLM)
+- **Prod:** Linux NUC mit ZimaOS (nach Stabilisierung)
 - Docker Desktop (WSL2)
-- Windows mit AMD GPU (für LLM)
 - Node.js 18+ (für Frontend)
 - Python 3.11+ (wird in Docker verwendet)
 
@@ -33,12 +46,24 @@ Bruno ist ein hochmoderner, asynchroner Trading Bot für Kryptowährungen, der a
 git clone https://github.com/Kazuo3o447/Bruno.git
 cd Bruno
 
+# Umgebungsvariablen konfigurieren
+cp .env.example .env
+# BYBIT_API_KEY, BYBIT_SECRET in .env eintragen (für Phase D)
+
 # Alle Services starten
 docker compose up -d
 
 # Frontend aufrufen
 open http://localhost:3000/dashboard
 ```
+
+### API-Keys (siehe Manifest Abschnitt 11)
+| API | Kosten | Wann benötigt |
+|-----|--------|---------------|
+| Bybit API | Kostenlos | Phase D (Live-Trading) |
+| FRED API | Kostenlos | Phase A |
+| CryptoPanic | Kostenlos | Phase A |
+| CoinGlass | $29/Monat | Nach 4W stabilem DRY_RUN |
 
 ---
 
@@ -51,15 +76,22 @@ open http://localhost:3000/dashboard
 
 ---
 
-## 🤖 Agenten-Architektur
+## 🤖 Agenten-Architektur (6 Agenten)
 
-| Agent | Aufgabe | Status |
-|-------|--------|--------|
-| **Ingestion** | Binance WebSocket Daten | ✅ V2 Online |
-| **Quant** | Technische Analyse & Signale | ✅ V2 Online |
-| **Sentiment** | LLM-basierte News-Analyse | ✅ V2 Online |
-| **Risk** | Risiko-Bewertung & Veto | ✅ V2 Online |
-| **Execution** | Paper-Trading Ausführung | ✅ V2 Online |
+| Agent | Aufgabe | Börse | Status |
+|-------|---------|-------|--------|
+| **Ingestion** | Binance WebSocket Daten | Binance | ✅ V2 Online |
+| **Quant** | Technische Analyse (OFI, CVD) | Binance | ✅ V2 Online |
+| **Context** | GRSS-Berechnung, Makro-Daten | FRED/Deribit | ✅ V2 Online |
+| **Sentiment** | LLM-basierte News-Analyse | RSS/CryptoPanic | ✅ V2 Online |
+| **Risk** | Risiko-Bewertung & RAM-Veto | — | ✅ V2 Online |
+| **Execution** | **Bybit Futures** Order-Ausführung | Bybit | ✅ V2 Online |
+
+**Execution-Details:**
+- Börse: Bybit Unified Account (Futures)
+- Order-Typ: Limit/PostOnly (Maker-Fee 0.01% vs Taker 0.055%)
+- Mindest-Order: 0.001 BTC
+- Max-Leverage: 1.5× (Kapitalschutz)
 
 ---
 
@@ -98,32 +130,46 @@ open http://localhost:3000/dashboard
 
 ## 📚 Dokumentation
 
-- **[Status.md](docs/Status.md)** - Projekt-Status & Roadmap
-- **[arch.md](docs/arch.md)** - Architektur-Manifest
-- **[agent.md](docs/agent.md)** - Agenten-Core Rules
-- **[ki.md](docs/ki.md)** - KI & LLM Infrastruktur
-- **[log.md](docs/log.md)** - Fehler-Logbuch
+> **Reihenfolge beachten:** Manifest > Architektur > Status > Rest
+
+| Dokument | Zweck |
+|----------|-------|
+| **[WINDSURF_MANIFEST.md](WINDSURF_MANIFEST.md)** | 🎯 **Einzige Quelle der Wahrheit** — immer zuerst lesen |
+| **[docs/arch.md](docs/arch.md)** | Infrastruktur-Stack & Börsen-Architektur |
+| **[docs/status.md](docs/status.md)** | Aktueller Projekt-Status |
+| **[docs/ki.md](docs/ki.md)** | LLM-Infrastruktur (Ollama, Modelle) |
+| **[docs/agent.md](docs/agent.md)** | Agenten-Core Rules |
+| **[docs/log.md](docs/log.md)** | Fehler-Logbuch |
 
 ---
 
-## 🎯 Aktuelle Phase
+## 🎯 Implementierungs-Phasen (Manifest v2.0)
 
-**Phase 4: Agenten-Zentrale & UI-Oversight - ABGESCHLOSSEN**
+**Aktuell: Phase A — Fundament (Woche 1–2)**
+- [ ] ContextAgent: `random.uniform()` entfernen
+- [ ] Binance REST: OI, L/S-Ratio, Perp-Basis
+- [ ] Deribit Public: PCR, DVOL
+- [ ] GRSS-Funktion: echte Daten
 
-✅ Harmonisiertes Premium Layout  
-✅ WebSocket Log-Terminal mit Filterung  
-✅ Agenten-Steuerungs-Panel (Start/Stop/Reset)  
-✅ Interaktiver Agent-Chat & Transparenz-Modals  
-✅ Lightweight Charts v5 Fix  
-
-**Nächste Phase: Live-Testing & Performance-Audit**
+**Kommend:**
+- Phase B — Daten + Bybit Integration
+- Phase C — LLM-Kaskade (3 Layer)
+- Phase D — Position Tracker + Stop-Loss
+- Phase E — Frontend Cockpit
+- Phase F — Lern-System
+- Phase G — Backtest (6 Monate, PF > 1.5)
+- Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
 
 ---
 
-## 📄 Lizenz
+## ⚠️ Eiserne Regeln (Aus Manifest)
 
-MIT License - siehe [LICENSE](LICENSE) Datei
+```
+❌ NIEMALS: random.uniform() in produktivem Code
+❌ NIEMALS: Polling < 60s für Quant/Context/Risk
+❌ NIEMALS: Echte Orders bei DRY_RUN=True
+❌ NIEMALS: Position ohne Stop-Loss UND Take-Profit
+❌ NIEMALS: API-Keys im Repository
+```
 
----
-
-**Entwickelt mit ❤️ für algorithmischen Krypto-Handel**
+**Break-Even:** ~12–16% p.a. auf 500 EUR nach Kosten (~50–67 EUR/Monat)

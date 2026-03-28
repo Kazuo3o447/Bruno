@@ -1,11 +1,11 @@
-# Bruno Trading Platform — Master Architecture Plan
+# Bruno Trading Platform — Project Status
 
-> **Vom Prototyp zur robusten, transparenten Trading-Plattform**
+> **Referenz: WINDSURF_MANIFEST.md v2.0 — Einzige Quelle der Wahrheit**
 >
-> **HINWEIS:** Die aktuelle Strategie ist in `WINDSURF_MANIFEST.md` dokumentiert.
-> Dieses Dokument ist nur für den technischen Ist-Stand. Für alle Architektur-Entscheidungen siehe Manifest.
+> Dieses Dokument zeigt den technischen Ist-Stand.
+> Für Architektur, Phasen und Entscheidungen siehe Manifest.
 >
-> Erstellt: 2026-03-26 | Letzte Aktualisierung: 2026-03-27
+> Erstellt: 2026-03-26 | Letzte Aktualisierung: 2026-03-28
 
 ---
 
@@ -13,41 +13,87 @@
 
 | Attribut | Wert |
 |----------|------|
-| **Version** | `0.4.0` |
-| **Codename** | The Cockpit Update |
-| **Status** | Phase 7.5 abgeschlossen — Alle 6 Agenten operativ |
+| **Manifest Version** | `v2.0` |
+| **Codename** | Fundament & Ehrlichkeit |
+| **Status** | Phase A — Fundament (Woche 1–2) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
 
 ---
 
-## Ehrlicher Ist-Stand
+## Aktueller Fokus: Phase A — Fundament
 
-### ✅ Produktiv Funktionsfähig
+**Ziel:** Den Bot ehrlich machen. Keine Zufallsdaten mehr.
 
-**Core Infrastructure:**
-- [x] Docker Compose (PostgreSQL/TimescaleDB, Redis Stack, FastAPI, Next.js, Worker)
-- [x] Alembic Migrations & Smart Backup System
-- [x] Log Manager (Redis-basiert, 24h Persistenz + Pub/Sub)
-- [x] Multi-Timeframe Candles (Continuous Aggregates 5m, 15m, 1h)
+### Kritische Blocker (Müssen zuerst gelöst werden)
+- [ ] **ContextAgent**: Alle `random.uniform()` und `random.random()` entfernen
+- [ ] **GRSS-Berechnung**: 100% echte Daten (keine Mocks)
+- [ ] **BTC 24h Change**: Aus Redis `market:ticker:BTCUSDT` berechnen
 
-**Agenten-Pipeline (6/6 Agenten):**
-- [x] **Ingestion Agent** — Binance WebSocket Multiplexing (L2 Orderbuch, Ticker, Liquidationen, Funding)
-- [x] **Quant Agent** — OFI, CVD, technische Indikatoren, Signal-Generierung
-- [x] **Context Agent** — Makro-Daten (Fear & Greed, DXY, ETF Flows, Treasury Yields)
-- [x] **Sentiment Agent** — FinBERT/CryptoBERT + Zero-Shot Classification für News
-- [x] **Risk Agent** — Multi-Faktor Konsens, Position Sizing, R:R Prüfung
-- [x] **Execution Agent** — RAM-Veto (0ms), Shadow-Trading mit 0.04% Fee-Simulation
+### Phase A Aufgaben (Woche 1–2)
+- [ ] Binance REST: Open Interest, OI-Delta, L/S-Ratio, Perp-Basis
+- [ ] Deribit Public API: Put/Call Ratio, DVOL (kostenlos, kein Key)
+- [ ] GRSS-Funktion: echte Implementierung (Manifest Abschnitt 5)
+- [ ] QuantAgent: Polling 5s → 300s
+- [ ] ContextAgent: Polling 60s → 900s
+- [ ] CVD State: In Redis persistieren (nicht In-Memory)
 
-**Frontend:**
-- [x] Next.js 14 + TailwindCSS + TypeScript
-- [x] Agenten-Zentrale (Chat, Steuerung, Logs, Heartbeats)
-- [x] MLOps Cockpit (Veto-Tracking, Slippage-Analytik, Parameter-Hub)
-- [x] Lightweight Charts Integration
-- [x] Real-time WebSocket (Ticker & Logs)
+**Eiserne Regel:** Keine Trades auf Basis von Zufallsdaten. GRSS muss echte Datenquellen nutzen.
 
-**Sicherheit:**
-- [x] DRY_RUN Kapitalschutz (immer aktiv bis explizit deaktiviert)
-- [x] Exchange Client Split (Public vs. Authenticated)
+---
+
+## System-Status (Ist-Stand)
+
+### ✅ Funktioniert
+- Docker Compose Stack (PostgreSQL/TimescaleDB, Redis, FastAPI, Next.js)
+- 6 Agenten registriert und startfähig
+- IngestionAgent: Binance WebSocket (5 Streams)
+- Frontend Dashboard mit Agenten-Zentrale
+- LLM-Infrastruktur (Ollama, qwen2.5:14b, deepseek-r1:14b)
+- DRY_RUN-Schutz aktiv
+
+### ⚠️ Bekannte Probleme
+- **ContextAgent**: ~70% der GRSS-Inputs sind `random.uniform()` — KRITISCH
+- **QuantAgent**: Polling-Intervall 5 Sekunden (sollte 300s)
+- **CVD**: Verliert State bei Restart (nicht in Redis)
+- **ExecutionAgent**: Kein Position-Tracker, keine Exit-Logik
+
+### ❌ Fehlt Noch (nach Phase A)
+- Position Tracker (kritischer Pfad für Live-Trading)
+- Stop-Loss / Take-Profit Handler
+- LLM-Kaskade (3 Layer)
+- Bybit Integration (Phase B)
+- Telegram Notifications
+- Backtest Engine
+
+---
+
+## Roadmap (Manifest v2.0 Phasen)
+
+| Phase | Zeitraum | Fokus |
+|-------|----------|-------|
+| **A** | Woche 1–2 | Fundament — Echte Daten, keine Mocks |
+| **B** | Woche 2–3 | Daten + Bybit Integration |
+| **C** | Woche 3–5 | LLM-Kaskade (3 Layer) |
+| **D** | parallel | Position Tracker + Stop-Loss |
+| **E** | parallel | Frontend Cockpit |
+| **F** | Woche 5–7 | Lern-System |
+| **G** | Woche 7–9 | Backtest (6 Monate, PF > 1.5) |
+| **H** | Woche 9–10 | Live-Start (500 EUR, -2% Daily Loss Limit) |
+
+---
+
+## Dokumenten-Hierarchie
+
+1. **WINDSURF_MANIFEST.md** — Einzige Quelle der Wahrheit
+2. **docs/arch.md** — Architektur & Datenfluss
+3. **docs/ki.md** — Agenten-Implementierung
+4. **docs/agent.md** — Arbeitsregeln
+5. **docs/log.md** — Fehler & Lösungen
+6. **docs/status.md** — Dieses Dokument (Ist-Stand)
+
+---
+
+*Siehe WINDSURF_MANIFEST.md v2.0 für vollständige Spezifikation*
 - [x] Shadow-Trading mit exakter Fee-Simulation & Slippage-Tracking
 
 ---
