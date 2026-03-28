@@ -1,11 +1,14 @@
 # Bruno Trading Platform — Project Status
 
 > **Referenz: WINDSURF_MANIFEST.md v2.0 — Einzige Quelle der Wahrheit**
->
+> 
+> ⚠️ **Während des Bauens:** Entwicklung auf **Windows** (Windsurf/SWE-1.5)
+> 🐧 **Ziel-Produktion:** Linux NUC (ZimaOS) nach Stabilisierung
+> 
 > Dieses Dokument zeigt den technischen Ist-Stand.
 > Für Architektur, Phasen und Entscheidungen siehe Manifest.
->
-> Erstellt: 2026-03-26 | Letzte Aktualisierung: 2026-03-28
+
+**Repository:** https://github.com/Kazuo3o447/Bruno
 
 ---
 
@@ -21,6 +24,9 @@
 ---
 
 ## Aktueller Fokus: Phase A — Fundament
+
+> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
+> 🐧 **Produktion:** Linux NUC (ZimaOS) nach Phase H
 
 **Ziel:** Den Bot ehrlich machen. Keine Zufallsdaten mehr.
 

@@ -1,6 +1,9 @@
 # Agent Core Documentation
 
 > **Referenz: WINDSURF_MANIFEST.md v2.0 — Dieses Dokument ist sekundär**
+> 
+> ⚠️ **Entwicklungsumgebung:** Wir bauen auf **Windows** (Windsurf/SWE-1.5)
+> 🐧 **Produktionsumgebung:** Linux NUC (ZimaOS) nach Stabilisierung
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -41,6 +44,8 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 ---
 
 ## Aktueller Stand (Manifest v2.0)
+
+> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
 
 ### Phase A — Fundament (Woche 1–2) — AKTIV
 

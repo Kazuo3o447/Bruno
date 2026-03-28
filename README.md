@@ -1,6 +1,9 @@
 # Bruno Trading Bot
 
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.0**
+> 
+> ⚠️ **Entwicklungsstatus:** Wir bauen auf **Windows** (Windsurf/SWE-1.5). 
+> Linux (NUC/ZimaOS) ist die **Ziel-Produktionsumgebung** nach Stabilisierung.
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -32,6 +35,9 @@
 ---
 
 ## 🚀 Quick Start
+
+> 🔧 **Während des Bauens:** Windows-Entwicklung mit Docker Desktop (WSL2)
+> 🐧 **Produktion:** Linux NUC mit ZimaOS (nach Phase H / Stabilisierung)
 
 ### Voraussetzungen
 - **Dev:** Windows mit Ryzen 7 7800X3D + AMD RX 7900 XT GPU (für LLM)

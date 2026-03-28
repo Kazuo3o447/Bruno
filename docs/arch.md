@@ -1,6 +1,9 @@
 # Architektur-Manifest
 
-> **Multi-Agent Trading Plattform — Referenz: WINDSURF_MANIFEST.md v2.0**
+> **Referenz: WINDSURF_MANIFEST.md v2.0**
+> 
+> ⚠️ **Aktuell:** Entwicklung auf **Windows** (Windsurf/SWE-1.5)
+> 🐧 **Ziel:** Produktion auf **Linux NUC** (ZimaOS) nach Stabilisierung
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -16,6 +19,9 @@
 | **Produktion** | Linux NUC + ZimaOS | Live-Trading (nach Stabilisierung) |
 
 ### Docker Services (WSL2 / Linux)
+
+> 🔧 **Während des Bauens:** Docker Desktop auf Windows (WSL2-Backend)
+> 🐧 **Produktion:** Docker auf Linux NUC (ZimaOS)
 
 | Service | Technologie | Zweck |
 |---------|-------------|-------|

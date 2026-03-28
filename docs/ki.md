@@ -3,12 +3,18 @@
 > **Referenz: WINDSURF_MANIFEST.md v2.0 — Dieses Dokument ist implementierungsorientiert**
 >
 > **Manifest hat Vorrang.** Bei Widerspruch zwischen diesem Dokument und dem Manifest gilt das Manifest.
+>
+> ⚠️ **Während des Bauens:** Entwicklung auf **Windows** (Windsurf/SWE-1.5)
+> 🐧 **Produktion:** Linux NUC (ZimaOS) nach Stabilisierung
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
 ---
 
 ## Aktueller Fokus (Manifest v2.0)
+
+> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
+> 🐧 **Produktion:** Linux NUC (ZimaOS) nach Phase H
 
 ### Phase A — Fundament (Woche 1–2) — AKTIV
 

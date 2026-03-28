@@ -23,6 +23,9 @@ Jeder Eintrag folgt diesem Schema:
 
 ### 2026-03-26 | Entscheidung für Windows-Hybrid-Setup (Ryzen 7 7800X3D + RX 7900 XT)
 
+> ⚠️ **Während des Bauens:** Wir entwickeln auf **Windows** mit Windsurf/SWE-1.5
+> 🐧 **Produktion:** Nach Stabilisierung auf **Linux NUC** (ZimaOS)
+
 **Fehler-Beschreibung:**
 ROCm-Passthrough der AMD RX 7900 XT in WSL2/Docker nicht stabil möglich. Kompilierungsfehler und Treiber-Inkompatibilitäten verhindern GPU-Accelerated LLM-Inferenz in Containern.
 
