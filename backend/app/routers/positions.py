@@ -4,6 +4,7 @@ Positions API — Phase D
 Endpoints für Position-Tracking und Monitoring.
 """
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -11,20 +12,42 @@ from app.core.redis_client import get_redis_client
 from app.core.database import get_db_session_factory
 from app.services.position_tracker import PositionTracker
 from app.services.position_monitor import PositionMonitor
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/positions", tags=["positions"])
 
+_position_tracker_service: PositionTracker | None = None
+_position_monitor_service: PositionMonitor | None = None
+_service_lock = asyncio.Lock()
+
+
+async def _get_position_tracker_service(redis, db) -> PositionTracker:
+    global _position_tracker_service
+    if _position_tracker_service is None:
+        async with _service_lock:
+            if _position_tracker_service is None:
+                _position_tracker_service = PositionTracker(redis, db)
+    return _position_tracker_service
+
+
+async def _get_position_monitor_service(redis, db) -> PositionMonitor:
+    global _position_monitor_service
+    if _position_monitor_service is None:
+        async with _service_lock:
+            if _position_monitor_service is None:
+                tracker = await _get_position_tracker_service(redis, db)
+                _position_monitor_service = PositionMonitor(tracker, redis)
+    return _position_monitor_service
+
 
 # Dependency Injection
-def get_position_tracker(redis=Depends(get_redis_client), db=Depends(get_db_session_factory)):
-    return PositionTracker(redis, db)
+async def get_position_tracker(redis=Depends(get_redis_client), db=Depends(get_db_session_factory)):
+    return await _get_position_tracker_service(redis, db)
 
 
-def get_position_monitor(redis=Depends(get_redis_client), db=Depends(get_db_session_factory)):
-    tracker = PositionTracker(redis, db)
-    return PositionMonitor(tracker, redis)
+async def get_position_monitor(redis=Depends(get_redis_client), db=Depends(get_db_session_factory)):
+    return await _get_position_monitor_service(redis, db)
 
 
 @router.get("/open")
@@ -42,11 +65,11 @@ async def get_open_positions(
             else:
                 return {"position": None, "count": 0}
         else:
-            # Alle offenen Positionen (TODO: Multi-Symbol Support)
-            position = await tracker.get_open_position("BTCUSDT")
+            # Alle offenen Positionen
+            positions = await tracker.list_open_positions()
             return {
-                "positions": [position] if position else [],
-                "count": 1 if position else 0
+                "positions": positions,
+                "count": len(positions)
             }
     except Exception as e:
         logger.error(f"Get Open Positions Error: {e}")
@@ -71,11 +94,7 @@ async def get_position_status(
         # Aktuellen Preis holen
         current_price = None
         try:
-            from app.core.redis_client import RedisClient
-            redis = RedisClient()
-            await redis.connect()
-            
-            ticker_data = await redis.get_cache(f"market:ticker:{symbol}")
+            ticker_data = await tracker.redis.get_cache(f"market:ticker:{symbol}")
             if ticker_data and "price" in ticker_data:
                 current_price = float(ticker_data["price"])
                 
@@ -256,7 +275,7 @@ async def get_position_history(
                 result = await session.execute(query, {"limit": limit})
                 
             rows = result.fetchall()
-            positions = [dict(row) for row in rows]
+            positions = [dict(row._mapping) for row in rows]
             
         return {
             "positions": positions,

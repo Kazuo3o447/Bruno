@@ -132,7 +132,7 @@ Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
 
 ### ✅ Gelöste Probleme (Audit März 2026)
 
-- **Execution Latenz:** Der `ExecutionAgent` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.
+- **Execution Latenz:** Der `ExecutionAgentV3` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.
 - **Schatten-Handel (Audit):** Implementierung einer exakten **0.04% Taker-Fee** Simulation und BPS-Slippage Tracking.
 - **Monitoring Hub:** Natives Monitoring für Telemetrie, Veto-Distribution und MLOps-Parameter.
 - **Strict MLOps Security:** Das Dashboard ist **Read-Only**; Parameter-Updates erfolgen ausschließlich offline.
@@ -140,7 +140,7 @@ Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
 - **Phase B Hardening:** CoinGlass läuft graceful ohne API-Key, Telegram ist chat-authentifiziert und der Profit Factor basiert auf realisierter P&L-Historie.
 
 - **Einheitliches Interface:** Alle Agenten erben von `BaseAgent` / `PollingAgent` / `StreamingAgent`.
-- **HFT-Performance:** Der `ExecutionAgent` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.
+- **HFT-Performance:** Der `ExecutionAgentV3` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.
 - **Sicherheits-Isolation:** `PublicExchangeClient` vs `AuthenticatedExchangeClient` Trennung.
 - **Fehler-Handling:** Supervised Neustarts durch den `AgentOrchestrator` im Worker-Container.
 - **Standardisierung:** Alle Pub/Sub Kanäle folgen dem `bruno:pubsub:*` Schema.
@@ -896,7 +896,7 @@ from app.agents.ingestion import IngestionAgentV2
 from app.agents.quant import QuantAgentV2
 from app.agents.sentiment import SentimentAgentV2
 from app.agents.risk import RiskAgentV2
-from app.agents.execution import ExecutionAgentV2
+from app.agents.execution_v3 import ExecutionAgentV3
 
 logging.basicConfig(
     level=logging.INFO,
@@ -967,7 +967,7 @@ async def main():
     orchestrator.register("quant", QuantAgentV2(deps, symbol="BTC/USDT"))
     orchestrator.register("sentiment", SentimentAgentV2(deps))
     orchestrator.register("risk", RiskAgentV2(deps))
-    orchestrator.register("execution", ExecutionAgentV2(deps))
+    orchestrator.register("execution", ExecutionAgentV3(deps))
 
     # ===== 5. Starten in Pipeline-Reihenfolge =====
     await orchestrator.start_all()
@@ -1152,7 +1152,7 @@ class TradeExecution(SignalEnvelope):
 
 ---
 
-## 10. Agent-Spezifikationen (Phase 7 - Zero Latency)
+## 10. Agent-Spezifikationen (Phase C/D - Zero Latency)
 
 ### Ingestion Agent
 - **Basisklasse:** `StreamingAgent`
@@ -1160,9 +1160,10 @@ class TradeExecution(SignalEnvelope):
 - **Daten-Target:** Redis Stream + TimescaleDB Hypertables.
 
 ### Quant Agent (HFT Engine)
-- **Basisklasse:** `PollingAgent` (Interval: 1.0s)
-- **Ziel:** HFT-Signale basierend auf Mikro-Struktur (OFI, CVD).
+- **Basisklasse:** `PollingAgent` (Interval: 300s)
+- **Ziel:** Mikro-Struktur-Signale basierend auf OFI, VAMP und CVD.
 - **Security:** Nutzt `PublicExchangeClient` (keine Keys erforderlich).
+- **LLM:** Ruft die Phase-C-LLM-Kaskade auf und publiziert nur actionable Signale.
 - **Output:** Publiziert an `bruno:pubsub:signals`.
 
 ### Sentiment Agent
@@ -1181,7 +1182,8 @@ class TradeExecution(SignalEnvelope):
 - **RAM-Cache:** Spiegelt den Veto-State im lokalen RAM (0ms Latenz).
 - **Latency-Check:** Bei Signal-Eingang erfolgt ein sofortiger RAM-Check.
 - **Security:** Einziger Agent mit `AuthenticatedExchangeClient` (API-Keys).
-- **Execution:** 0ms RAM-Check → Order Fire → Async Audit.
+- **Execution:** 0ms RAM-Check → Order Fire → `PositionTracker.open_position()` → Async Audit.
+- **Phase D:** Schließt Positionen über `PositionTracker.close_position()` und überwacht SL/TP im Monitor-Loop.
 
 
 ---
@@ -1190,12 +1192,12 @@ class TradeExecution(SignalEnvelope):
 
 ### Wie das Frontend Agent-Status abfragt
 
-**Heute** (`routers/agents_status.py`): 568 Zeilen Boilerplate mit 5 separaten `check_*_agent()`-Funktionen die über `from app.main import active_agent_tasks` den Task-Status raten.
+**Aktuell**: Heartbeats werden von `BaseAgent._send_heartbeat()` in Redis geschrieben (`heartbeat:<agent_id>`). Das Runtime-Tracking läuft über Worker + Orchestrator, nicht über `app.main`.
 
-**Zukünftig**: Ein einziger Endpoint, der die Heartbeat-Keys aus Redis liest:
+**Frontend/Status-API**: Der Status-Endpoint liest die Heartbeat-Keys direkt aus Redis und zeigt damit den realen Worker-Zustand an:
 
 ```python
-# routers/agents_status.py — VEREINFACHT
+# routers/agents_status.py — heartbeat-basiert
 
 @router.get("/status")
 async def get_agents_status():
@@ -1248,47 +1250,42 @@ Kein `TODO` mehr — das funktioniert über Redis Pub/Sub zum Worker-Container.
 
 ---
 
-## 12. Dateisystem-Übersicht (Zielzustand)
+## 12. Dateisystem-Übersicht (Aktueller Stand)
 
 ```
 backend/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py                 # [REFACTORED] Nur FastAPI, KEINE Agenten
-│   ├── worker.py               # [NEU] Agent Orchestrator Entrypoint
+│   ├── main.py                 # FastAPI API + Router inkl. Phase C/D Monitoring
+│   ├── worker.py               # Agent Orchestrator Entrypoint
 │   │
 │   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── base.py             # [NEU] BaseAgent, PollingAgent, StreamingAgent
-│   │   ├── deps.py             # [NEU] AgentDependencies
-│   │   ├── orchestrator.py     # [NEU] AgentOrchestrator
-│   │   ├── ingestion.py        # [REFACTORED] → IngestionAgentV2(StreamingAgent)
-│   │   ├── quant.py            # [REFACTORED] → QuantAgentV2(PollingAgent)
-│   │   ├── quant_new.py        # [LÖSCHEN] Tote Datei
-│   │   ├── sentiment.py        # [REFACTORED] → SentimentAgentV2(PollingAgent)
-│   │   ├── risk.py             # [REFACTORED] → RiskAgentV2(StreamingAgent)
-│   │   └── execution.py        # [REFACTORED] → ExecutionAgentV2(StreamingAgent)
+│   │   ├── base.py             # BaseAgent, PollingAgent, StreamingAgent
+│   │   ├── deps.py             # AgentDependencies
+│   │   ├── orchestrator.py     # AgentOrchestrator
+│   │   ├── quant.py            # QuantAgent mit LLM Cascade
+│   │   ├── execution_v3.py     # ExecutionAgentV3 mit PositionTracker
+│   │   ├── risk.py             # Veto / Guard Agent
+│   │   └── ...
 │   │
-│   ├── core/
-│   │   ├── config.py           # Unverändert
-│   │   ├── database.py         # Unverändert
-│   │   ├── redis_client.py     # Unverändert (aber jetzt per DI genutzt)
-│   │   ├── llm_client.py       # Unverändert
-│   │   ├── log_manager.py      # Unverändert
-│   │   ├── scheduler.py        # Unverändert
-│   │   └── contracts.py        # [NEU] Message Schemas (Pydantic)
+│   ├── llm/
+│   │   └── llm_cascade.py      # 3-Layer Cascade + Provider-Abstraktion
+│   │
+│   ├── services/
+│   │   ├── regime_config_v2.py # RegimeManager + Transition Buffer
+│   │   ├── position_tracker.py # Redis Live-State + DB Audit Trail
+│   │   └── position_monitor.py # SL/TP Monitoring
 │   │
 │   ├── routers/
-│   │   ├── agents_status.py    # [REFACTORED] Heartbeat-basiert statt Task-Inspect
+│   │   ├── llm_cascade.py      # Monitoring / Debugging
+│   │   ├── positions.py        # Positions API
 │   │   └── ...                 # Rest unverändert
 │   │
 │   └── schemas/
-│       ├── agents.py           # [DEPRECATED] → Wird durch contracts.py ersetzt
-│       └── models.py           # Unverändert (DB-Models)
+│       └── models.py           # DB-Models
 │
-├── docker-compose.yml          # [ERWEITERT] + bruno-worker Service
+├── docker-compose.yml          # api + worker + db + redis
 └── docker/
-    └── Dockerfile.backend      # Unverändert (gleiche Codebase, anderer Command)
+    └── Dockerfile.backend      # Gleiche Codebase, anderer Command
 ```
 
 ---
@@ -1297,40 +1294,14 @@ backend/
 
 > **Die Reihenfolge ist entscheidend.** Jeder Schritt baut auf dem vorherigen auf.
 
-### Schritt 1: Aufräumen (sofort)
-- [ ] `quant_new.py` löschen
-- [ ] `quant.py`: `run_analysis_loop()` in `start()` umbenennen + `close()` in `stop()` umbenennen (Interims-Fix, bis V2 kommt)
-
-### Schritt 2: Infrastruktur-Layer (Phase 1.1)
-- [ ] `agents/base.py` erstellen (BaseAgent, PollingAgent, StreamingAgent)
-- [ ] `agents/deps.py` erstellen (AgentDependencies)
-- [ ] `core/contracts.py` erstellen (SignalEnvelope, QuantSignalV2, etc.)
-- [ ] Tests für base.py schreiben (Mock-Dependencies)
-
-### Schritt 3: Orchestrator (Phase 1.2)
-- [ ] `agents/orchestrator.py` erstellen
-- [ ] `worker.py` Entrypoint erstellen
-- [ ] Docker-Compose um `bruno-worker` Service erweitern
-
-### Schritt 4: Agenten migrieren (Phase 1.3)
-- [ ] `ingestion.py` → `IngestionAgentV2(StreamingAgent)` 
-- [ ] `quant.py` → `QuantAgentV2(PollingAgent)`
-- [ ] `sentiment.py` → `SentimentAgentV2(PollingAgent)`
-- [ ] `risk.py` → `RiskAgentV2(StreamingAgent)`
-- [ ] `execution.py` → `ExecutionAgentV2(StreamingAgent)`
-
-### Schritt 5: API bereinigen (Phase 1.4)
-- [ ] Agent-Imports aus `main.py` entfernen
-- [ ] `agent_instances` dict entfernen
-- [ ] Startup/Shutdown Events auf API-only reduzieren
-- [ ] `agents_status.py` auf Heartbeat-basiert umschreiben
-
-### Schritt 6: Verifizierung (Phase 1.5)
-- [ ] `docker compose up -d` startet api + worker + db + redis
-- [ ] Worker startet Agenten in definierter Reihenfolge (Logs prüfen)
-- [ ] Heartbeats in Redis sichtbar
-- [ ] Agent-Restart via API-Endpoint funktioniert
-- [ ] Agent-Crash wird aufgefangen, Agent wird neugestartet
+### Aktueller Betriebsstand
+- [x] `worker.py` startet die Agenten im Orchestrator
+- [x] `quant.py` publiziert LLM-angereicherte Signale
+- [x] `execution_v3.py` schließt/opened Positionen über `PositionTracker`
+- [x] `positions.py` bietet Monitoring / Status / History
+- [x] `llm_cascade.py` ist in die Runtime eingebunden
+- [ ] SL/TP End-to-End live validieren
+- [ ] Dashboard-Ansichten für Positions- und Cascade-Metriken finalisieren
 
 ---
 

@@ -45,14 +45,14 @@ GRSS Score (≥ 30) ──► QuantAgent
                     └────┬────┘
                          │ blocker == false
                          ▼
-                   Signal → RiskAgent → ExecutionAgent
+                   Signal → RiskAgent → ExecutionAgentV3
 ```
 
 ### Integration
 
 - **QuantAgent** ruft LLM-Kaskade auf (statt einfacher OFI-Signale)
 - **RiskAgent** erhält Cascade-Extras für Risiko-Checks
-- **ExecutionAgent** nutzt SL/TP aus Layer 2
+- **ExecutionAgentV3** nutzt SL/TP aus Layer 2 und übergibt Positionen an den PositionTracker
 
 ---
 
@@ -66,7 +66,7 @@ GRSS Score (≥ 30) ──► QuantAgent
 - **Gate-Mechanismus** mit klaren HOLD-Pfaden
 - **Redis-Logging** für Dashboard-Anzeige
 
-#### 2. `app/services/regime_config.py`
+#### 2. `app/services/regime_config_v2.py`
 - **RegimeManager** mit 2-Bestätigungs-Logik
 - **RegimeConfig** für regime-spezifische Parameter
 - **REGIME_CONFIGS** Dictionary mit allen Regimen
@@ -75,6 +75,12 @@ GRSS Score (≥ 30) ──► QuantAgent
 - **API-Endpoints** für Monitoring und Debugging
 - **Status**, **Metrics**, **Decision History**
 - **Force Regime** für Testing
+
+### Runtime-Status
+
+- **QuantAgent** publiziert nur actionable Signale nach der 3-Layer-Kaskade
+- **ExecutionAgentV3** übernimmt die Order-Ausführung und öffnet die Position im `PositionTracker`
+- **PositionTracker** und **PositionMonitor** bilden den Phase-D-Flow für Open/Close/SL/TP
 
 ### Prompts
 

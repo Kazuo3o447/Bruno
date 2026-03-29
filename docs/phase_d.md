@@ -524,7 +524,7 @@ if not monitor._running:
 - [ ] Performance Benchmarks
 
 ### Short Term (Integration)
-- [ ] ExecutionAgent Integration
+- [ ] ExecutionAgentV3 Live-Exit Tests
 - [ ] Dashboard Frontend
 - [ ] Alert System
 
@@ -544,7 +544,7 @@ if not monitor._running:
 - [x] Database Migration mit JSONB Fields
 - [ ] SL/TP Tests erfolgreich
 - [ ] MAE/MFE Tracking validiert
-- [ ] Integration mit ExecutionAgent
+- [x] Integration mit ExecutionAgentV3 im Worker
 - [ ] Frontend Dashboard Integration
 
 ---

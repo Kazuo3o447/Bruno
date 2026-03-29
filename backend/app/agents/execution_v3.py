@@ -309,29 +309,9 @@ class ExecutionAgentV3(StreamingAgent):
                 message=f"Audit completed for order {order.get('id')}",
                 details={"latency_ms": latency}
             )
-            
-            # Portfolio nach Trade aktualisieren
-            if self.deps.config.DRY_RUN:
-                entry_price = signal.get("price", order.get("price", 0.0))
-                exit_price = order.get("price", entry_price)
-                qty = order.get("amount", 0.0)
-                side = signal.get("side", "buy")
-
-                raw_pnl = (
-                    (exit_price - entry_price) * qty
-                    if side == "buy"
-                    else (entry_price - exit_price) * qty
-                )
-                await self._update_portfolio({
-                    "pnl_eur": raw_pnl,
-                    "fee_eur": order.get("fee", 0.0)
-                })
                 
         except Exception as e:
             self.logger.error(f"Audit-Log Fehler: {e}")
-
-        # Profit Factor nach jedem Trade aktualisieren
-        asyncio.create_task(self._update_profit_factor())
 
     async def _update_portfolio(self, trade_result: dict) -> None:
         """

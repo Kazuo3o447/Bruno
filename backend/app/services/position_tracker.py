@@ -11,6 +11,7 @@ Regeln:
   und optional — beim Start ohne LLM-Cascade werden sie leer gelassen
 """
 
+import json
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -49,6 +50,20 @@ class PositionTracker:
         if pos and pos.get("status") == "open":
             return pos
         return None
+
+    async def list_open_positions(self) -> list[dict]:
+        """Gibt alle offenen Positionen aus Redis zurück."""
+        if not getattr(self.redis, "redis", None):
+            return []
+
+        positions: list[dict] = []
+        async for key in self.redis.redis.scan_iter(match="bruno:position:*"):
+            pos = await self.redis.get_cache(key)
+            if pos and pos.get("status") == "open":
+                positions.append(pos)
+
+        positions.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return positions
 
     async def open_position(
         self,
@@ -253,9 +268,9 @@ class PositionTracker:
                         "stop_loss_price": position["stop_loss_price"],
                         "take_profit_price": position["take_profit_price"],
                         "grss_at_entry": position["grss_at_entry"],
-                        "layer1_output": str(position["layer1_output"]).replace("'", '"'),
-                        "layer2_output": str(position["layer2_output"]).replace("'", '"'),
-                        "layer3_output": str(position["layer3_output"]).replace("'", '"'),
+                        "layer1_output": json.dumps(position["layer1_output"] or {}),
+                        "layer2_output": json.dumps(position["layer2_output"] or {}),
+                        "layer3_output": json.dumps(position["layer3_output"] or {}),
                         "regime": position["regime"],
                         "created_at": position["created_at"],
                     }
@@ -267,7 +282,6 @@ class PositionTracker:
     async def _persist_close_to_db(self, position: dict) -> None:
         """Aktualisiert geschlossene Position in der DB."""
         try:
-            import json as _json
             from sqlalchemy import text
             async with self.db_session_factory() as session:
                 await session.execute(

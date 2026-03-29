@@ -21,6 +21,33 @@ Jeder Eintrag folgt diesem Schema:
 
 ## Log-Einträge
 
+### 2026-03-29 | Phase C/D Doku-Sync — Runtime-Stand, Worker-Wiring und Positions-Flow
+
+**Fehler-Beschreibung:**
+Mehrere Dokumente spiegelten noch einen Zwischenstand wider: Phase B war teils noch als aktiv markiert, Phase C/D wurden nicht konsistent mit dem tatsächlichen Worker- und Positions-Flow beschrieben und einige Referenzen zeigten noch auf alte Agenten-Bezeichnungen.
+
+**Ursache:**
+- `docs/status.md` und `README.md` enthielten noch alte Phase-Labels bzw. offene Zwischenstände.
+- `docs/arch.md` und `docs/ki.md` beschrieben den Agenten- und Runtime-Flow teilweise noch mit alten Bezeichnungen.
+- `docs/phase_c.md` und `docs/phase_d.md` waren noch nicht vollständig auf `ExecutionAgentV3`, `PositionTracker` und den neuen Runtime-Stand synchronisiert.
+
+**Lösung:**
+- README, Status-, Architektur-, KI-, Agenten- sowie Phase-C/D-Dokumentation auf den aktuellen Stand gebracht.
+- Der Worker-/Runtime-Flow mit `ExecutionAgentV3`, `QuantAgent`, `PositionTracker` und `PositionMonitor` wurde in der Doku konsistent beschrieben.
+- Veraltete Referenzen wurden durch aktuelle Runtime-Bezeichnungen ersetzt.
+
+**Dateien geändert:**
+- `README.md`
+- `docs/status.md`
+- `docs/arch.md`
+- `docs/ki.md`
+- `docs/agent.md`
+- `docs/phase_c.md`
+- `docs/phase_d.md`
+- `docs/log.md`
+
+---
+
 ### 2026-03-29 | Phase B Hardening Audit — Kapitalschutz, DRY_RUN-Telemetrie und Doku-Sync
 
 **Fehler-Beschreibung:**

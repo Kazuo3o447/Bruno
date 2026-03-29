@@ -47,16 +47,20 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
 
-### Phase B — Daten-Erweiterung & Hardening — AKTIV
+### Phase C/D — LLM-Kaskade + Position Tracking — AKTIV
 
-Ziel: Phase A abgeschlossen — Bot ist "ehrlich". Jetzt Daten-Erweiterung.
+Ziel: Phase A/B abgeschlossen — Bot ist "ehrlich" und regime-aware. Jetzt laufen LLM-Kaskade und Positionsverwaltung im Worker.
 
 **Aufgaben:**
+- [x] LLM Cascade (3 Layer) im QuantAgent integriert
+- [x] Regime Manager mit 2-Bestätigungs-Logik + Transition Buffer
+- [x] PositionTracker/PositionMonitor im Worker verdrahtet
 - [x] CoinGlass Graceful Degradation ohne API-Key
 - [x] Telegram Notifications mit Chat-ID-Auth
 - [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
 - [x] Profit-Factor-Tracking aus realisierter P&L-Historie
-- [ ] Bybit Live-Trading bleibt durch `LIVE_TRADING_APPROVED` gesperrt
+- [ ] SL/TP Tests mit echten Preisen validieren
+- [ ] Frontend Cockpit
 
 ### Phase A — Fundament ✅ COMPLETED (2026-03-29)
 
@@ -76,6 +80,10 @@ Ziel erreicht: Den Bot ehrlich machen. Keine Zufallsdaten mehr.
 - [x] CryptoPanic Health: Health-Telemetrie integriert
 
 **Wichtigste Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. ✅ ERLEDIGT
+
+### Phase D — Position Tracker & Stop-Loss ✅ CORE IMPLEMENTED
+
+**Status:** Der Live-Positions-Flow läuft über `ExecutionAgentV3`, `PositionTracker` und `PositionMonitor`.
 
 ---
 

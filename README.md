@@ -147,25 +147,19 @@ open http://localhost:3000/dashboard
 
 ## 🎯 Implementierungs-Phasen (Manifest v2.0)
 
-**Aktuell: Phase B — Daten-Erweiterung & Hardening (DRY_RUN-ready)**
+**Aktuell: Phase D — Position Tracker & Stop-Loss (Core implementiert)**
 - [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
-- [x] Phase B — CoinGlass-Graceful-Degradation
-- [x] Phase B — Telegram-Auth für Buttons/Commands
-- [x] Phase B — Funding/Orderbook-Erweiterungen im Context
-- [x] Phase B — Profit-Factor-Tracking & Status-Endpoint
-- [ ] Phase B — Bybit Live-Trading bleibt durch `LIVE_TRADING_APPROVED` gesperrt
-- [ ] Phase C — LLM-Kaskade (3 Layer)
-- [ ] Phase D — Position Tracker + Stop-Loss
+- [x] Phase B ✅ COMPLETED — Daten-Erweiterung & Hardening
+- [x] Phase C ✅ COMPLETED — LLM-Kaskade (3 Layer)
+- [x] Phase D — Position Tracker + Stop-Loss im Worker verdrahtet
+- [ ] Phase D — SL/TP Tests mit echten Preisen validieren
 - [ ] Phase E — Frontend Cockpit
 - [ ] Phase F — Lern-System
 - [ ] Phase G — Backtest (6 Monate, PF > 1.5)
 - [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
 
 **Kommend:**
-- Phase B — Finales Hardening der Metriken und Monitoring-Ansichten
-- Phase B — Bybit Live-Trading erst nach Review und `LIVE_TRADING_APPROVED`
-- Phase C — LLM-Kaskade (3 Layer)
-- Phase D — Position Tracker + Stop-Loss
+- Phase D — Echte SL/TP-Validierung und Live-Test-Fahrten
 - Phase E — Frontend Cockpit
 - Phase F — Lern-System
 - Phase G — Backtest (6 Monate, PF > 1.5)

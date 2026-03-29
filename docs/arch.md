@@ -56,7 +56,9 @@ Binance WS/REST  ──► IngestionAgent + ContextAgent ──► Redis
                                                            │
                                                       alle Agenten
                                                            │
-Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
+Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
+                        │
+                        └──► PositionTracker (Redis Live-State + DB Audit)
 ```
 
 | Börse | Nutzung | Daten |
@@ -89,7 +91,7 @@ Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
 | **Sentiment** | RSS Feeds + CryptoPanic | Redis `bruno:sentiment` | LLM-basierte News-Analyse |
 | **Quant** | Redis + Orderbook | Redis `bruno:signals` | OFI, CVD, technische Signale |
 | **Risk** | Alle Signals (RAM-Check) | Redis `bruno:veto` | **0ms Veto** (GRSS < 40 = Block) |
-| **Execution** | Risk + Signals | **Bybit API** | **Limit/PostOnly Orders** |
+| **Execution** | Risk + Signals | **Bybit API** | **Limit/PostOnly Orders** + PositionTracker |
 
 ---
 
@@ -100,15 +102,21 @@ Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
 - **AuthenticatedExchangeClient** (Execution): Nur Bybit API-Keys
 
 ### DRY_RUN Protection
-- Hardware-naher Block in ExecutionAgent
+- Hardware-naher Block in ExecutionAgentV3
 - Bei `DRY_RUN=True`: Keine echten Orders möglich
 - Shadow-Trading mit Fee-Simulation (0.04% Taker, plus Slippage-Logging)
 
-### Phase B Hardening (aktuell)
+### Phase B Hardening (abgeschlossen)
 - CoinGlass läuft im Graceful-Degradation-Modus ohne API-Key
 - Telegram-Buttons und Commands sind an die konfigurierte Chat-ID gebunden
 - Profit Factor wird aus realisierter P&L-Historie berechnet und per Endpoint angezeigt
 - Funding- und Liquidations-Daten sind in GRSS und Status-Checks integriert
+
+### Phase C/D Runtime (aktuell)
+- LLM Cascade läuft über `QuantAgent`
+- `ExecutionAgentV3` ist im Worker registriert
+- `PositionTracker` hält den Live-Positions-State in Redis und schreibt asynchron in die DB
+- `PositionMonitor` prüft SL/TP im 30s-Intervall
 
 ---
 
@@ -117,10 +125,30 @@ Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
 ### Migration 005: Positions
 ```sql
 CREATE TABLE positions (
-    id UUID PRIMARY KEY, symbol VARCHAR(20), side VARCHAR(10),
-    entry_price FLOAT, quantity FLOAT, stop_loss_price FLOAT,
-    take_profit_price FLOAT, exit_price FLOAT, exit_reason VARCHAR(50),
-    pnl_pct FLOAT, status VARCHAR(10)
+    id UUID PRIMARY KEY,
+    symbol VARCHAR(20),
+    side VARCHAR(10),
+    entry_price FLOAT,
+    entry_time TIMESTAMPTZ,
+    quantity FLOAT,
+    stop_loss_price FLOAT,
+    take_profit_price FLOAT,
+    grss_at_entry FLOAT,
+    layer1_output JSONB,
+    layer2_output JSONB,
+    layer3_output JSONB,
+    regime VARCHAR(20),
+    exit_price FLOAT,
+    exit_time TIMESTAMPTZ,
+    exit_reason VARCHAR(50),
+    exit_trade_id VARCHAR(100),
+    pnl_eur FLOAT,
+    pnl_pct FLOAT,
+    mae_pct FLOAT,
+    mfe_pct FLOAT,
+    hold_duration_minutes INTEGER,
+    status VARCHAR(20),
+    created_at TIMESTAMPTZ
 );
 ```
 

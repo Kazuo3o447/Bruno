@@ -10,14 +10,11 @@ from app.core.config import settings
 from app.agents.deps import AgentDependencies
 from app.agents.orchestrator import AgentOrchestrator
 
-# Wir importieren die Agenten, die wir später auf V2 umstellen.
-# Für den Augenblick registrieren wir leere Dummies, bis ihre Dateien refactored sind.
-# Die tatsächlichen V2-Agenten werden wir im nächsten Schritt implementieren.
 from app.agents.ingestion import IngestionAgentV2
 from app.agents.quant import QuantAgent
 from app.agents.context import ContextAgent
 from app.agents.risk import RiskAgent
-from app.agents.execution import ExecutionAgentV3
+from app.agents.execution_v3 import ExecutionAgentV3
 from app.agents.sentiment import SentimentAgent
 
 logging.basicConfig(
