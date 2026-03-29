@@ -58,3 +58,8 @@ async def close_db():
     """Schließt alle Datenbank-Verbindungen."""
     await engine.dispose()
     logger.info("Datenbank-Verbindungen geschlossen")
+
+
+def get_db_session_factory():
+    """Dependency Injection Funktion für FastAPI."""
+    return AsyncSessionLocal

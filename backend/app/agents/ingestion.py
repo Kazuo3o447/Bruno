@@ -9,6 +9,7 @@ from app.agents.deps import AgentDependencies
 from app.schemas.models import MarketCandle, OrderbookSnapshot, Liquidation, FundingRate
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy import text
+from app.core.log_manager import LogManager, LogCategory, LogLevel
 
 class IngestionAgentV2(StreamingAgent):
     """
@@ -39,10 +40,11 @@ class IngestionAgentV2(StreamingAgent):
 
     async def setup(self) -> None:
         self.logger.info("IngestionAgent setup abgeschlossen.")
-        await self.log_manager.info(
-            category="AGENT",
-            source=self.agent_id,
-            message="Ingestion Agent gestartet. Verbinde zu Binance..."
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.ingestion",
+            "Ingestion Agent gestartet. Verbinde zu Binance..."
         )
         # Background-Tasks
         asyncio.create_task(self._poll_fg_index())
@@ -88,10 +90,11 @@ class IngestionAgentV2(StreamingAgent):
     async def run_stream(self) -> None:
         async with websockets.connect(self.ws_url) as ws:
             self.state.health = "healthy"
-            await self.log_manager.info(
-                category="BINANCE",
-                source=self.agent_id,
-                message=f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams"
+            await self.deps.log_manager.add_log(
+                LogLevel.INFO,
+                LogCategory.BINANCE,
+                "agent.ingestion",
+                f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams"
             )
             self.logger.info(f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams")
             

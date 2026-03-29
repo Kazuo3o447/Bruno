@@ -5,8 +5,10 @@ import time
 from datetime import datetime, timezone
 from sqlalchemy import text
 from typing import Dict, Any, Optional, List
-from app.agents.base import PollingAgent
+from app.agents.base import BaseAgent, PollingAgent
 from app.agents.deps import AgentDependencies
+from app.core.redis_client import redis_client
+from app.core.log_manager import LogManager, LogCategory, LogLevel
 from app.core.exchange_manager import PublicExchangeClient
 from app.llm import LLMCascade
 
@@ -28,17 +30,43 @@ class QuantAgent(PollingAgent):
     async def setup(self) -> None:
         self.logger.info(f"QuantAgent für {self.symbol} gestartet.")
         
+        # Log to central LogManager with AGENT category
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.quant",
+            f"QuantAgent für {self.symbol} wird initialisiert..."
+        )
+        
         # Phase C: LLM Cascade initialisieren
         await self.cascade.initialize()
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.quant",
+            "LLM Cascade initialisiert"
+        )
 
         # CVD-State aus Redis laden (überlebt Restarts)
         cvd_cached = await self.deps.redis.get_cache("bruno:cvd:BTCUSDT")
         if cvd_cached:
             self.cvd_cumulative = float(cvd_cached.get("value", 0.0))
             self.logger.info(f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f}")
+            await self.deps.log_manager.add_log(
+                LogLevel.INFO,
+                LogCategory.AGENT,
+                "agent.quant",
+                f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f}"
+            )
         else:
             self.cvd_cumulative = 0.0
             self.logger.info("CVD State: Kein Cache — starte bei 0.0")
+            await self.deps.log_manager.add_log(
+                LogLevel.INFO,
+                LogCategory.AGENT,
+                "agent.quant",
+                "CVD State: Kein Cache — starte bei 0.0"
+            )
 
         await self.deps.redis.set_cache(
             "bruno:cvd:BTCUSDT",
@@ -50,6 +78,12 @@ class QuantAgent(PollingAgent):
         )
 
         self.prev_ob = None
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.quant",
+            "QuantAgent vollständig initialisiert und betriebsbereit"
+        )
 
     def get_interval(self) -> float:
         """5-Minuten-Intervall für Medium-Frequency (kein HFT)."""
@@ -225,4 +259,10 @@ class QuantAgent(PollingAgent):
 
         except Exception as e:
             self.logger.error(f"QuantAgent Fehler: {e}")
+            await self.deps.log_manager.add_log(
+                LogLevel.ERROR,
+                LogCategory.AGENT,
+                "agent.quant",
+                f"QuantAgent Fehler: {e}"
+            )
 

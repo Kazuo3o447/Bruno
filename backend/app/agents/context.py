@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
 from app.services.sentiment_analyzer import analyzer
+from app.core.log_manager import LogManager, LogCategory, LogLevel
 
 class ContextAgent(PollingAgent):
     """
@@ -99,6 +100,12 @@ class ContextAgent(PollingAgent):
 
     async def setup(self) -> None:
         self.logger.info("ContextAgent gestartet. Makro & Sentiment Bias Mode.")
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.context",
+            "ContextAgent gestartet. Makro & Sentiment Bias Mode."
+        )
 
     async def _report_health(self, source: str, status: str, latency: float):
         """Meldet Status und Latenz an den globalen Redis-Hub."""

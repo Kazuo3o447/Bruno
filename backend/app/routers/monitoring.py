@@ -399,3 +399,140 @@ async def phase_b_status():
         "grss_raw": grss_data.get("GRSS_Score_Raw"),
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+
+@router.get("/performance/simulated")
+async def get_simulated_performance(db: AsyncSession = Depends(get_db)):
+    """
+    Simulated Performance Endpoint.
+    
+    Zeigt die tatsächliche Rendite von Paper-Trading und später Real Trading
+    für verschiedene Zeiträume an:
+    - 24h (1 Tag)
+    - 1 Woche
+    - 6 Monate
+    - 1 Jahr
+    - YTD (Year-to-Date)
+    
+    Aufruf: GET /api/v1/performance/simulated
+    """
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import func, select, text
+    
+    try:
+        now = datetime.now(timezone.utc)
+        
+        # Zeitpunkte für verschiedene Perioden
+        timeframes = {
+            "24h": now - timedelta(hours=24),
+            "1w": now - timedelta(weeks=1),
+            "6m": now - timedelta(days=180),
+            "1y": now - timedelta(days=365),
+            "ytd": datetime(now.year, 1, 1, tzinfo=timezone.utc)  # 1. Januar aktuelles Jahr
+        }
+        
+        performance_data = {}
+        
+        for period_name, start_time in timeframes.items():
+            # Abfrage: Geschlossene Positionen im Zeitraum (using raw SQL)
+            query = text("""
+                SELECT 
+                    COUNT(*) as total_trades,
+                    SUM(pnl_eur) as total_pnl,
+                    SUM(pnl_pct) as total_pnl_pct,
+                    AVG(pnl_pct) as avg_return_per_trade,
+                    COUNT(CASE WHEN pnl_eur > 0 THEN 1 END) as winning_trades,
+                    COUNT(CASE WHEN pnl_eur < 0 THEN 1 END) as losing_trades,
+                    MAX(pnl_pct) as best_trade_pct,
+                    MIN(pnl_pct) as worst_trade_pct
+                FROM positions 
+                WHERE status = 'closed' 
+                AND exit_time >= :start_time
+            """)
+            
+            result = await db.execute(query, {"start_time": start_time})
+            row = result.fetchone()
+            
+            total_trades = row.total_trades or 0
+            winning_trades = row.winning_trades or 0
+            losing_trades = row.losing_trades or 0
+            total_pnl = float(row.total_pnl or 0.0)
+            
+            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+            
+            # Tägliche Returns für die Grafik
+            daily_query = text("""
+                SELECT 
+                    DATE(exit_time) as date,
+                    SUM(pnl_eur) as daily_pnl,
+                    SUM(pnl_pct) as daily_return_pct
+                FROM positions 
+                WHERE status = 'closed' 
+                AND exit_time >= :start_time
+                GROUP BY DATE(exit_time)
+                ORDER BY DATE(exit_time)
+            """)
+            
+            daily_result = await db.execute(daily_query, {"start_time": start_time})
+            daily_data = [
+                {
+                    "date": str(row.date),
+                    "pnl_eur": float(row.daily_pnl or 0),
+                    "return_pct": float(row.daily_return_pct or 0)
+                }
+                for row in daily_result.fetchall()
+            ]
+            
+            # Kumulativen Return berechnen
+            cumulative_return = 0.0
+            cumulative_data = []
+            for day in daily_data:
+                cumulative_return += day["return_pct"]
+                cumulative_data.append({
+                    "date": day["date"],
+                    "cumulative_return_pct": round(cumulative_return, 4)
+                })
+            
+            # Falls keine Daten, füge Dummy-Daten für den Zeitraum hinzu
+            if not cumulative_data:
+                cumulative_data = [
+                    {"date": start_time.strftime("%Y-%m-%d"), "cumulative_return_pct": 0},
+                    {"date": now.strftime("%Y-%m-%d"), "cumulative_return_pct": 0}
+                ]
+            
+            performance_data[period_name] = {
+                "total_trades": total_trades,
+                "winning_trades": winning_trades,
+                "losing_trades": losing_trades,
+                "win_rate_pct": round(win_rate, 2),
+                "total_pnl_eur": round(total_pnl, 2),
+                "avg_return_per_trade_pct": round(float(row.avg_return_per_trade or 0), 4),
+                "best_trade_pct": round(float(row.best_trade_pct or 0), 4),
+                "worst_trade_pct": round(float(row.worst_trade_pct or 0), 4),
+                "period": period_name,
+                "start_date": start_time.isoformat(),
+                "end_date": now.isoformat(),
+                "daily_breakdown": daily_data,
+                "cumulative_chart_data": cumulative_data
+            }
+        
+        # Zusammenfassung über alle Perioden
+        summary = {
+            "status": "ok" if any(p["total_trades"] > 0 for p in performance_data.values()) else "no_data",
+            "trading_mode": "paper" if settings.DRY_RUN else "real",
+            "current_capital_eur": settings.INITIAL_CAPITAL_EUR,
+            "generated_at": now.isoformat()
+        }
+        
+        return {
+            "summary": summary,
+            "performance_by_period": performance_data
+        }
+        
+    except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}\n{traceback.format_exc()}"
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Fehler bei Performance-Berechnung: {error_detail}"
+        )

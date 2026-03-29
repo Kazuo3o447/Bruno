@@ -81,7 +81,10 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
 
     return () => {
       window.removeEventListener("resize", handleResize);
-      chart.remove();
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
     };
   }, [initialData]);
 

@@ -56,26 +56,31 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
     seriesRef.current = series;
 
     const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
       }
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.remove();
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
     };
   }, []);
 
   // WebSocket price feed — use ticker data to build a simple price line
   useEffect(() => {
-    if (!seriesRef.current) return;
+    if (!seriesRef.current || !chartRef.current) return;
 
     const ws = new WebSocket(`ws://localhost:8000/ws/market/${symbol}`);
 
     ws.onmessage = (event) => {
       try {
+        if (!seriesRef.current || !chartRef.current) return;
+        
         const payload = JSON.parse(event.data);
         if (payload.type === 'ticker' && payload.data) {
           const now = Math.floor(Date.now() / 1000);
@@ -95,7 +100,9 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
       } catch {}
     };
 
-    return () => ws.close();
+    return () => {
+      ws.close();
+    };
   }, [symbol]);
 
   return (

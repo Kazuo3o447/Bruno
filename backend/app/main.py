@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, llm_cascade, positions
+from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, llm_cascade, positions, market
 from app.core.redis_client import redis_client
 from app.core.llm_client import ollama_client
 from app.core.database import init_db, close_db
@@ -38,6 +38,7 @@ app.include_router(trades.router, prefix="/api/v1/trades", tags=["trades"])
 app.include_router(monitoring.router, prefix="/api/v1", tags=["monitoring"])
 app.include_router(llm_cascade.router, prefix="/api/v1", tags=["llm-cascade"])
 app.include_router(positions.router, prefix="/api/v1", tags=["positions"])
+app.include_router(market.router, prefix="/api/v1/market", tags=["market"])
 
 @app.on_event("startup")
 async def startup_event():

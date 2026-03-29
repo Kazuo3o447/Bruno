@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
 from app.core.contracts import SignalDirection
+from app.core.log_manager import LogManager, LogCategory, LogLevel
 
 class RiskAgent(PollingAgent):
     """
@@ -27,6 +28,12 @@ class RiskAgent(PollingAgent):
     async def setup(self) -> None:
         """Initialisierung der Risiko-Matrix."""
         self.logger.info("RiskAgent gestartet. Veto-Matrix aktiv.")
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.risk",
+            "RiskAgent gestartet. Veto-Matrix aktiv."
+        )
         self.last_price = 0.0
         self.last_cvd = 0.0
 

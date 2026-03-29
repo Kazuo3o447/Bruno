@@ -12,7 +12,12 @@ import {
   TrendingDown,
   ChevronRight,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  TrendingUp,
+  DollarSign,
+  Calendar,
+  Clock,
+  Award
 } from "lucide-react";
 import { 
   ResponsiveContainer, 
@@ -28,8 +33,15 @@ import {
   Legend, 
   CartesianGrid,
   AreaChart,
-  Area
+  Area,
+  LineChart,
+  Line,
+  BarChart,
+  Bar
 } from "recharts";
+
+// Performance Period Type
+type Period = "24h" | "1w" | "6m" | "1y" | "ytd";
 
 // Mock Data for demonstration if API is missing
 const MOCK_TELEMETRY = {
@@ -37,6 +49,85 @@ const MOCK_TELEMETRY = {
   veto_reason: "None (System Healthy)",
   execution_latency_ms: 1.25,
   dry_run: true
+};
+
+const MOCK_PERFORMANCE = {
+  "24h": {
+    total_trades: 3,
+    winning_trades: 2,
+    losing_trades: 1,
+    win_rate_pct: 66.67,
+    total_pnl_eur: 125.50,
+    avg_return_per_trade_pct: 0.85,
+    best_trade_pct: 2.1,
+    worst_trade_pct: -0.5,
+    cumulative_chart_data: [
+      { date: "2026-03-28", cumulative_return_pct: 0 },
+      { date: "2026-03-29", cumulative_return_pct: 0.85 }
+    ]
+  },
+  "1w": {
+    total_trades: 12,
+    winning_trades: 8,
+    losing_trades: 4,
+    win_rate_pct: 66.67,
+    total_pnl_eur: 485.20,
+    avg_return_per_trade_pct: 0.72,
+    best_trade_pct: 3.2,
+    worst_trade_pct: -1.1,
+    cumulative_chart_data: [
+      { date: "2026-03-22", cumulative_return_pct: 0 },
+      { date: "2026-03-23", cumulative_return_pct: 0.45 },
+      { date: "2026-03-24", cumulative_return_pct: 1.12 },
+      { date: "2026-03-25", cumulative_return_pct: 0.85 },
+      { date: "2026-03-26", cumulative_return_pct: 1.55 },
+      { date: "2026-03-27", cumulative_return_pct: 2.10 },
+      { date: "2026-03-28", cumulative_return_pct: 1.95 },
+      { date: "2026-03-29", cumulative_return_pct: 2.42 }
+    ]
+  },
+  "6m": {
+    total_trades: 145,
+    winning_trades: 89,
+    losing_trades: 56,
+    win_rate_pct: 61.38,
+    total_pnl_eur: 3250.80,
+    avg_return_per_trade_pct: 0.68,
+    best_trade_pct: 5.8,
+    worst_trade_pct: -2.5,
+    cumulative_chart_data: Array.from({ length: 26 }, (_, i) => ({
+      date: `2026-01-${String((i * 7) % 30 + 1).padStart(2, '0')}`,
+      cumulative_return_pct: Math.sin(i * 0.3) * 2 + i * 0.15
+    }))
+  },
+  "1y": {
+    total_trades: 312,
+    winning_trades: 189,
+    losing_trades: 123,
+    win_rate_pct: 60.58,
+    total_pnl_eur: 6850.40,
+    avg_return_per_trade_pct: 0.65,
+    best_trade_pct: 8.2,
+    worst_trade_pct: -3.1,
+    cumulative_chart_data: Array.from({ length: 52 }, (_, i) => ({
+      date: `Week ${i + 1}`,
+      cumulative_return_pct: Math.sin(i * 0.15) * 3 + i * 0.25
+    }))
+  },
+  "ytd": {
+    total_trades: 89,
+    winning_trades: 54,
+    losing_trades: 35,
+    win_rate_pct: 60.67,
+    total_pnl_eur: 2150.60,
+    avg_return_per_trade_pct: 0.70,
+    best_trade_pct: 4.5,
+    worst_trade_pct: -1.8,
+    cumulative_chart_data: Array.from({ length: 12 }, (_, i) => ({
+      date: `2026-${String(i + 1).padStart(2, '0')}-01`,
+      cumulative_return_pct: Math.sin(i * 0.5) * 1.5 + i * 0.4
+    }))
+  }
 };
 
 const MOCK_VETO_DATA = [
@@ -60,10 +151,30 @@ const MOCK_PARAMS = {
 export default function MonitoringPage() {
   const [telemetry, setTelemetry] = useState(MOCK_TELEMETRY);
   const [params, setParams] = useState(MOCK_PARAMS);
+  const [performance, setPerformance] = useState(MOCK_PERFORMANCE);
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>("1w");
   const [loading, setLoading] = useState(false);
 
-  // In a real app, use fetch() to backend endpoints
-  // useEffect(() => { fetchTelemetry(); fetchParams(); }, []);
+  // Fetch performance data from API
+  useEffect(() => {
+    const fetchPerformance = async () => {
+      try {
+        const response = await fetch('/api/v1/performance/simulated');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.performance_by_period) {
+            setPerformance(data.performance_by_period);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch performance:', error);
+      }
+    };
+    
+    fetchPerformance();
+    const interval = setInterval(fetchPerformance, 60000); // Refresh every minute
+    return () => clearInterval(interval);
+  }, []);
 
   const getLatencyColor = (ms: number) => {
     if (ms < 5) return "text-emerald-400";
@@ -248,22 +359,126 @@ export default function MonitoringPage() {
           </table>
         </div>
 
-        <div className="bg-gradient-to-br from-indigo-900/40 to-violet-900/40 rounded-2xl border border-indigo-500/20 p-8 flex flex-col justify-center items-center text-center space-y-4">
-          <div className="p-4 bg-white/10 rounded-full">
-            <TrendingDown className="w-12 h-12 text-emerald-400 transform rotate-180" />
+        <div className="bg-[#0c0c1e] rounded-2xl border border-[#1a1a2e] p-6 space-y-6">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-emerald-400" />
+              Simulated Performance
+            </h3>
+            <span className="text-xs text-slate-500 uppercase tracking-widest font-bold">
+              {telemetry.dry_run ? "Paper Trading" : "Real Trading"}
+            </span>
           </div>
-          <div>
-            <h4 className="text-indigo-200 font-bold uppercase tracking-widest text-xs">Simulated Performance</h4>
-            <div className="text-5xl font-black text-white mt-2">
-              +{params.theoretical_pnl}%
-            </div>
-            <p className="text-emerald-400 font-bold mt-1 uppercase text-[10px] tracking-tighter">
-              Theoretical Profit Factor Improvement
-            </p>
+          
+          {/* Period Selector */}
+          <div className="flex gap-2">
+            {(["24h", "1w", "6m", "1y", "ytd"] as Period[]).map((period) => (
+              <button
+                key={period}
+                onClick={() => setSelectedPeriod(period)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                  selectedPeriod === period
+                    ? "bg-emerald-500 text-white"
+                    : "bg-[#1a1a2e] text-slate-400 hover:text-white"
+                }`}
+              >
+                {period === "24h" && "24h"}
+                {period === "1w" && "1W"}
+                {period === "6m" && "6M"}
+                {period === "1y" && "1Y"}
+                {period === "ytd" && "YTD"}
+              </button>
+            ))}
           </div>
-          <div className="pt-4 text-xs text-indigo-300/60 font-medium">
-            Based on historical slippage & 2.5x Leverage
-          </div>
+
+          {/* Performance Metrics */}
+          {performance[selectedPeriod] && (
+            <>
+              {/* Main PnL Display */}
+              <div className="text-center py-4">
+                <div className={`text-5xl font-black ${
+                  performance[selectedPeriod].total_pnl_eur >= 0 ? "text-emerald-400" : "text-rose-400"
+                }`}>
+                  {performance[selectedPeriod].total_pnl_eur >= 0 ? "+" : ""}
+                  {performance[selectedPeriod].total_pnl_eur.toFixed(2)} €
+                </div>
+                <div className="text-sm text-slate-500 mt-1">
+                  {performance[selectedPeriod].total_trades} Trades • {performance[selectedPeriod].win_rate_pct}% Win Rate
+                </div>
+              </div>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-[#06060f] rounded-lg p-3 border border-[#1a1a2e]">
+                  <div className="text-xs text-slate-500 uppercase">Winning Trades</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    {performance[selectedPeriod].winning_trades}
+                  </div>
+                </div>
+                <div className="bg-[#06060f] rounded-lg p-3 border border-[#1a1a2e]">
+                  <div className="text-xs text-slate-500 uppercase">Losing Trades</div>
+                  <div className="text-lg font-bold text-rose-400">
+                    {performance[selectedPeriod].losing_trades}
+                  </div>
+                </div>
+                <div className="bg-[#06060f] rounded-lg p-3 border border-[#1a1a2e]">
+                  <div className="text-xs text-slate-500 uppercase">Best Trade</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    +{performance[selectedPeriod].best_trade_pct}%
+                  </div>
+                </div>
+                <div className="bg-[#06060f] rounded-lg p-3 border border-[#1a1a2e]">
+                  <div className="text-xs text-slate-500 uppercase">Worst Trade</div>
+                  <div className="text-lg font-bold text-rose-400">
+                    {performance[selectedPeriod].worst_trade_pct}%
+                  </div>
+                </div>
+              </div>
+
+              {/* Cumulative Return Chart */}
+              <div className="h-[200px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={performance[selectedPeriod].cumulative_chart_data}>
+                    <defs>
+                      <linearGradient id="colorReturn" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1a1a2e" vertical={false} />
+                    <XAxis 
+                      dataKey="date" 
+                      stroke="#475569" 
+                      fontSize={10}
+                      tickFormatter={(value) => {
+                        if (selectedPeriod === "1y") return value; // Week X
+                        const date = new Date(value);
+                        return `${date.getMonth() + 1}/${date.getDate()}`;
+                      }}
+                    />
+                    <YAxis stroke="#475569" fontSize={10} unit="%" />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: "#0c0c1e", 
+                        borderColor: "#1a1a2e", 
+                        borderRadius: "8px",
+                        fontSize: "12px"
+                      }}
+                      formatter={(value: number) => [`${value.toFixed(2)}%`, "Return"]}
+                    />
+                    <Area 
+                      type="monotone" 
+                      dataKey="cumulative_return_pct" 
+                      stroke="#10b981" 
+                      strokeWidth={2}
+                      fillOpacity={1} 
+                      fill="url(#colorReturn)" 
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

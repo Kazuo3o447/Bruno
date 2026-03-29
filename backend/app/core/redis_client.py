@@ -125,3 +125,7 @@ class RedisClient:
 
 # Singleton-Instanz
 redis_client = RedisClient()
+
+def get_redis_client() -> RedisClient:
+    """Dependency Injection Funktion für FastAPI."""
+    return redis_client

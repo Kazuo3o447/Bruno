@@ -72,12 +72,12 @@ class BaseAgent(ABC):
                 "consecutive_errors": self.state.consecutive_errors,
                 "last_error": self.state.last_error,
                 "health": self.state.health,
-                "timestamp": datetime.now(timezone.utc)
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
             if hasattr(self.deps, "redis"):
                 await self.deps.redis.set_cache(f"heartbeat:{self.agent_id}", heartbeat, ttl=60)
         except Exception as e:
-            self.logger.debug(f"Heartbeat-Fehler (ignoriert): {e}")
+            self.logger.warning(f"Heartbeat-Fehler: {e}")
 
     async def _report_error(self, error: Exception) -> None:
         """Meldet einen Crash an das System."""

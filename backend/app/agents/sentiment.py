@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
 from app.services.sentiment_analyzer import SentimentAnalyzer
+from app.core.log_manager import LogManager, LogCategory, LogLevel
 
 class SentimentAgent(PollingAgent):
     """
@@ -23,12 +24,30 @@ class SentimentAgent(PollingAgent):
     async def setup(self) -> None:
         """Initialisiert den Sentiment Analyzer (Lazy-Load der Modelle)."""
         self.logger.info("SentimentAgent startet. Modelle werden bei Bedarf geladen.")
+        await self.deps.log_manager.add_log(
+            LogLevel.INFO,
+            LogCategory.AGENT,
+            "agent.sentiment",
+            "SentimentAgent startet. Modelle werden bei Bedarf geladen."
+        )
         # Test-Initialisierung um Fehler früh zu erkennen
         try:
             self.analyzer._init_zero_shot()
             self.logger.info("Zero-Shot Classifier initialisiert.")
+            await self.deps.log_manager.add_log(
+                LogLevel.INFO,
+                LogCategory.AGENT,
+                "agent.sentiment",
+                "Zero-Shot Classifier initialisiert."
+            )
         except Exception as e:
             self.logger.warning(f"Zero-Shot Init (lazy): {e}")
+            await self.deps.log_manager.add_log(
+                LogLevel.WARNING,
+                LogCategory.AGENT,
+                "agent.sentiment",
+                f"Zero-Shot Init (lazy): {e}"
+            )
 
     async def _report_health(self, source: str, status: str, latency: float):
         """Meldet Status und Latenz an den globalen Redis-Health-Hub."""
