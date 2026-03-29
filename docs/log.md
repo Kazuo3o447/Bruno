@@ -21,6 +21,32 @@ Jeder Eintrag folgt diesem Schema:
 
 ## Log-Einträge
 
+### 2026-03-29 | Phase B Hardening Audit — Kapitalschutz, DRY_RUN-Telemetrie und Doku-Sync
+
+**Fehler-Beschreibung:**
+Die Phase-B-Statuslage war fachlich korrekt, aber zwei mittlere Audit-Punkte waren noch nicht sauber aufgelöst: MLOps-/Config-Drift rund um `Max_Leverage` und eine hardcodierte `DRY_RUN`-Anzeige in der Live-Telemetrie. Zusätzlich spiegelten mehrere Dokumente den alten Phase-B-Stand noch nicht vollständig wider.
+
+**Ursache:**
+- `backend/app/routers/monitoring.py` lieferte MLOps-Parameter ohne Normalisierung/Drift-Hinweis.
+- Die Live-Telemetrie zeigte `dry_run: True` als festen Platzhalter statt den echten Runtime-Wert.
+- README, Status- und Architektur-Dokumente enthielten noch den alten 1.5×-Leverage-Text und offene Phase-B-To-dos.
+
+**Lösung:**
+- MLOps-Endpoint normalisiert `Max_Leverage` jetzt auf `1.0` und meldet Drift explizit im `safety_guard`.
+- Live-Telemetrie nutzt jetzt `settings.DRY_RUN` statt eines Hardcodes.
+- README, `docs/status.md`, `docs/arch.md`, `docs/agent.md`, `docs/ki.md` und `BRUNO_REVIEW.md` wurden auf den aktuellen Phase-B-Stand synchronisiert.
+
+**Dateien geändert:**
+- `backend/app/routers/monitoring.py`
+- `README.md`
+- `docs/status.md`
+- `docs/arch.md`
+- `docs/ki.md`
+- `docs/agent.md`
+- `BRUNO_REVIEW.md`
+
+---
+
 ### 2026-03-26 | Entscheidung für Windows-Hybrid-Setup (Ryzen 7 7800X3D + RX 7900 XT)
 
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (native Ollama)

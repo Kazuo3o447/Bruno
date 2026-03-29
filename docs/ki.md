@@ -56,7 +56,7 @@
 
 **Börsen-Architektur:**
 - **Binance** = Daten (WebSocket + REST, kostenlos)
-- **Bybit** = **Execution** (Futures, max 1.5× Leverage, Unified Account)
+- **Bybit** = **Execution** (Futures, max 1.0× Leverage, Unified Account)
 - **Deribit** = Options-Daten (PCR, DVOL, kostenlos)
 
 ---
@@ -137,6 +137,7 @@ Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
 - **Monitoring Hub:** Natives Monitoring für Telemetrie, Veto-Distribution und MLOps-Parameter.
 - **Strict MLOps Security:** Das Dashboard ist **Read-Only**; Parameter-Updates erfolgen ausschließlich offline.
 - **Offline Optimizer:** Erzwingt die Realität (PnL inkl. Gebühren & PF > 1.5).
+- **Phase B Hardening:** CoinGlass läuft graceful ohne API-Key, Telegram ist chat-authentifiziert und der Profit Factor basiert auf realisierter P&L-Historie.
 
 - **Einheitliches Interface:** Alle Agenten erben von `BaseAgent` / `PollingAgent` / `StreamingAgent`.
 - **HFT-Performance:** Der `ExecutionAgent` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.

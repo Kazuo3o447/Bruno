@@ -47,6 +47,7 @@ class IngestionAgentV2(StreamingAgent):
         # Background-Tasks
         asyncio.create_task(self._poll_fg_index())
         asyncio.create_task(self._cleanup_old_data())
+        asyncio.create_task(self._daily_summary_sender())
 
     async def _poll_fg_index(self):
         """Pollen des Fear & Greed Index 1x am Tag"""
@@ -278,3 +279,33 @@ class IngestionAgentV2(StreamingAgent):
                 self.ob_buffer.clear()
                 self.liq_buffer.clear()
                 self.funding_buffer.clear()
+
+    async def _daily_summary_sender(self):
+        """Sendet täglich um 23:55 UTC eine Zusammenfassung."""
+        while self.state.running:
+            try:
+                now = datetime.now(timezone.utc)
+                # Warte bis 23:55 UTC
+                target = now.replace(
+                    hour=23, minute=55, second=0, microsecond=0
+                )
+                if now >= target:
+                    # Bereits vorbei heute — morgen
+                    from datetime import timedelta
+                    target += timedelta(days=1)
+
+                wait_seconds = (target - now).total_seconds()
+                await asyncio.sleep(wait_seconds)
+
+                # Summary senden
+                from app.core.telegram_bot import get_telegram_bot
+                telegram = get_telegram_bot()
+                if telegram:
+                    portfolio = await self.deps.redis.get_cache(
+                        "bruno:portfolio:state"
+                    ) or {}
+                    await telegram.send_daily_summary(portfolio)
+
+            except Exception as e:
+                self.logger.error(f"Daily Summary Fehler: {e}")
+            await asyncio.sleep(60)

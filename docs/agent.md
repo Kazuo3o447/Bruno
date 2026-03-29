@@ -39,6 +39,7 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 - **Nach JEDEM Feature**: `Status.md` aktualisieren
 - **Nach JEDEM Bug**: `log.md` mit Root-Cause & Lösung
 - **Bei Änderungen**: ERST Manifest, DANN Code
+- **Bei Phase-B-Hardening**: `docs/status.md`, `docs/arch.md` und `README.md` synchron halten
 
 ---
 
@@ -46,14 +47,16 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
 
-### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
+### Phase B — Daten-Erweiterung & Hardening — AKTIV
 
 Ziel: Phase A abgeschlossen — Bot ist "ehrlich". Jetzt Daten-Erweiterung.
 
 **Aufgaben:**
-- [ ] CoinGlass API Integration ($29/Monat)
-- [ ] Telegram Notifications
-- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+- [x] CoinGlass Graceful Degradation ohne API-Key
+- [x] Telegram Notifications mit Chat-ID-Auth
+- [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+- [x] Profit-Factor-Tracking aus realisierter P&L-Historie
+- [ ] Bybit Live-Trading bleibt durch `LIVE_TRADING_APPROVED` gesperrt
 
 ### Phase A — Fundament ✅ COMPLETED (2026-03-29)
 

@@ -18,3 +18,4 @@ pandas==2.2.1
 pandas-datareader
 ntplib
 optuna
+python-telegram-bot==20.8

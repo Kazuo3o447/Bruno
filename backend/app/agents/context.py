@@ -41,6 +41,12 @@ class ContextAgent(PollingAgent):
         # ── GRSS Velocity Tracking ──────────────────────────────
         # Liste von {"ts": float, "grss": float} — letzte 6 Einträge
         self.grss_history: list = []
+        
+        # ── EMA-Glättung des GRSS ────────────────────────────────
+        self._grss_ema: float = 50.0          # EMA-Startwert (neutral)
+        self._grss_ema_alpha: float = 0.4     # EMA-Periode ~3 (schnell genug, nicht zu träge)
+        # Formel: EMA_neu = alpha * GRSS_aktuell + (1 - alpha) * EMA_alt
+        # alpha=0.4: reagiert auf echte Trends, filtert Einzelspikes
 
         # ── Fetch-Intervall-Kontrolle ───────────────────────────
         self._last_binance_rest_fetch: float = 0.0
@@ -48,6 +54,40 @@ class ContextAgent(PollingAgent):
         # Binance REST: bei jedem Agent-Cycle (300s)
         # Deribit: alle 900s (15 Min)
         self._deribit_interval: float = 900.0
+        
+        # ── Latenz-Monitoring ─────────────────────────────────
+        from app.core.latency_monitor import LatencyMonitor
+        self.latency_monitor = LatencyMonitor(
+            redis_client=deps.redis,
+            ollama_host=deps.config.OLLAMA_HOST
+        )
+        self._last_latency_check: float = 0.0
+        self._latency_check_interval: float = 300.0  # alle 5 Min
+        
+        # ── CoinGlass Integration ─────────────────────────────
+        from app.services.coinglass_client import CoinGlassClient
+        self.coinglass = CoinGlassClient(
+            api_key=deps.config.COINGLASS_API_KEY,
+            redis_client=deps.redis
+        )
+        self._last_coinglass_fetch: float = 0.0
+        self._coinglass_interval: float = 900.0   # 15 Minuten
+        # Cache-Werte
+        self._etf_flows_3d: float = 0.0
+        self._funding_divergence: float = 0.0
+        
+        # ── Retail Sentiment ───────────────────────────────────
+        from app.services.retail_sentiment import RetailSentimentService
+        from app.services.sentiment_analyzer import analyzer as nlp_analyzer
+        self.retail_sentiment_service = RetailSentimentService(
+            redis_client=deps.redis,
+            sentiment_analyzer=nlp_analyzer
+        )
+        # Phase B: Erstmal nur loggen, Gewicht=0
+        # Nach 2 Wochen Beobachtung auf 8.0 erhöhen (manuell in config)
+        self._retail_sentiment_weight: float = 0.0   # ← BEWUSST 0.0
+        self._retail_score: float = 0.0
+        self._retail_fomo_warning: bool = False
 
     def get_interval(self) -> float:
         """
@@ -70,6 +110,61 @@ class ContextAgent(PollingAgent):
         current_map = await self.deps.redis.get_cache("bruno:health:sources") or {}
         current_map[source] = health_data
         await self.deps.redis.set_cache("bruno:health:sources", current_map)
+
+    def _is_funding_settlement_window(self) -> bool:
+        """
+        Prüft ob wir uns im Funding-Settlement-Fenster befinden.
+        Funding wird alle 8h abgerechnet: 00:00, 08:00, 16:00 UTC.
+        15 Minuten vor Settlement: erhöhte Volatilität, konservativerer GRSS.
+
+        Aus der Aktienwelt nicht bekannt — Crypto-spezifisch.
+        """
+        now = datetime.now(timezone.utc)
+        minutes_since_midnight = now.hour * 60 + now.minute
+
+        # Settlement-Zeiten in Minuten: 0, 480, 960
+        settlement_times = [0, 480, 960]
+        window_minutes = 15  # 15 Min vor Settlement
+
+        for st in settlement_times:
+            # Modulo für Wrap-around (z.B. 23:55 → kurz vor 00:00)
+            diff = (minutes_since_midnight - st) % (24 * 60)
+            # Fenster: 15 Min VOR Settlement
+            if (24 * 60 - window_minutes) <= diff or diff < 5:
+                return True
+        return False
+
+    async def _fetch_coinglass_data(self) -> None:
+        """
+        Holt CoinGlass-Daten alle 15 Minuten.
+        Graceful: Wenn kein Key → 0.0 (neutral), kein Fehler.
+        """
+        now = time.time()
+        if now - self._last_coinglass_fetch < self._coinglass_interval:
+            return
+        self._last_coinglass_fetch = now
+
+        if not self.coinglass.is_active:
+            self._etf_flows_3d = 0.0
+            self._funding_divergence = 0.0
+            return  # Kein Key — stillt weiterlaufen
+
+        self._etf_flows_3d, self._funding_divergence = await asyncio.gather(
+            self.coinglass.get_etf_flows(),
+            self.coinglass.get_funding_divergence(),
+            return_exceptions=True
+        )
+
+        if isinstance(self._etf_flows_3d, Exception):
+            self._etf_flows_3d = 0.0
+        if isinstance(self._funding_divergence, Exception):
+            self._funding_divergence = 0.0
+
+        if self.coinglass.is_active:
+            self.logger.info(
+                f"CoinGlass: ETF_Flows={self._etf_flows_3d:.1f}M | "
+                f"Funding_Div={self._funding_divergence:.4%}"
+            )
 
     async def _fetch_fred_yields(self) -> float:
         """Holt US 10Y Yields von FRED API mit Latenz-Tracking."""
@@ -130,71 +225,125 @@ class ContextAgent(PollingAgent):
             await self._report_health("yFinance_NDX", "offline", latency)
             return self.ndx_status
 
-    async def _fetch_vix_and_dxy(self) -> Dict[str, float]:
-        """Holt VIX und DXY von Yahoo Finance."""
-        start = time.perf_counter()
+    async def _fetch_vix_and_dxy(self) -> dict:
+        """
+        Holt VIX und DXY von Yahoo Finance mit 4h Redis-Cache.
+        Fallback-Hierarchie:
+        1. Yahoo Finance (primär)
+        2. Stooq (Fallback bei 429)
+        3. Redis-Cache (Fallback bei beiden Fehlern)
+        4. Instanz-Default (letzter Ausweg)
+        """
+        CACHE_KEY = "bruno:macro:vix_dxy"
+        CACHE_TTL = 14400  # 4 Stunden
+
         results = {"VIX": self.vix, "DXY_Change": self.dxy_change}
         headers = {"User-Agent": self._user_agent}
-        success_parts = 0
-        
+
         try:
-            async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-                # VIX
-                vix_resp = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/^VIX?range=1d&interval=1m")
-                if vix_resp.status_code != 429:
-                    vix_data = vix_resp.json()
-                    results["VIX"] = float(vix_data['chart']['result'][0]['meta']['regularMarketPrice'])
-                    success_parts += 1
-                else:
-                    self.logger.warning("yFinance VIX Rate Limit (429). Nutze Cache.")
-                    # Stooq-Fallback wenn yFinance Rate-Limit
-                    if vix_resp.status_code == 429:
-                        try:
-                            import pandas_datareader as pdr
-                            from datetime import date
-                            vix_df = pdr.get_data_stooq(
-                                "^VIX.US",
-                                start=date.today() - timedelta(days=5),
-                                end=date.today()
-                            )
-                            if not vix_df.empty:
-                                results["VIX"] = float(vix_df["Close"].iloc[-1])
-                                success_parts += 1
-                                self.logger.info(
-                                    f"VIX via Stooq-Fallback: {results['VIX']:.1f}"
-                                )
-                        except Exception as stooq_err:
-                            self.logger.warning(
-                                f"Stooq VIX Fallback fehlgeschlagen: {stooq_err}"
-                            )
+            async with httpx.AsyncClient(
+                timeout=10.0, headers=headers
+            ) as client:
 
-                await asyncio.sleep(2)   # 429-Schutz zwischen Yahoo-Calls
+                # ── VIX ──────────────────────────────────────────
+                vix_fetched = False
+                try:
+                    vix_resp = await client.get(
+                        "https://query1.finance.yahoo.com/v8/finance/chart/"
+                        "^VIX?range=1d&interval=1m"
+                    )
+                    if vix_resp.status_code == 200:
+                        vix_data = vix_resp.json()
+                        results["VIX"] = float(
+                            vix_data["chart"]["result"][0]["meta"][
+                                "regularMarketPrice"
+                            ]
+                        )
+                        vix_fetched = True
+                    elif vix_resp.status_code == 429:
+                        self.logger.warning("yFinance VIX: 429 — versuche Stooq")
+                except Exception as e:
+                    self.logger.warning(f"yFinance VIX Fehler: {e}")
 
-                # DXY 24h Change
-                dxy_resp = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?range=2d&interval=1d")
-                if dxy_resp.status_code != 429:
-                    dxy_data = dxy_resp.json()
-                    dxy_closes = [c for c in dxy_data['chart']['result'][0]['indicators']['quote'][0]['close'] if c is not None]
-                    if len(dxy_closes) >= 2:
-                        results["DXY_Change"] = (dxy_closes[-1] - dxy_closes[-2]) / dxy_closes[-2]
-                        success_parts += 1
-                else:
-                    self.logger.warning("yFinance DXY Rate Limit (429). Nutze Cache.")
-                
-                latency = (time.perf_counter() - start) * 1000
-                if success_parts == 2:
-                    status = "online"
-                elif success_parts == 1:
-                    status = "degraded"
-                else:
-                    status = "offline"
-                await self._report_health("yFinance_Macro", status, latency)
+                # Stooq-Fallback für VIX
+                if not vix_fetched:
+                    try:
+                        import pandas_datareader as pdr
+                        from datetime import date, timedelta
+                        df = await asyncio.to_thread(
+                            pdr.get_data_stooq,
+                            "^VIX.US",
+                            date.today() - timedelta(days=5),
+                            date.today()
+                        )
+                        if not df.empty:
+                            results["VIX"] = float(df["Close"].iloc[-1])
+                            vix_fetched = True
+                            self.logger.info(
+                                f"VIX via Stooq: {results['VIX']:.1f}"
+                            )
+                    except Exception as e:
+                        self.logger.warning(f"Stooq VIX Fehler: {e}")
+
+                await asyncio.sleep(2)  # 429-Schutz
+
+                # ── DXY ──────────────────────────────────────────
+                try:
+                    dxy_resp = await client.get(
+                        "https://query1.finance.yahoo.com/v8/finance/chart/"
+                        "DX-Y.NYB?range=2d&interval=1d"
+                    )
+                    if dxy_resp.status_code == 200:
+                        dxy_data = dxy_resp.json()
+                        closes = [
+                            c for c in
+                            dxy_data["chart"]["result"][0]["indicators"][
+                                "quote"
+                            ][0]["close"]
+                            if c is not None
+                        ]
+                        if len(closes) >= 2:
+                            results["DXY_Change"] = (
+                                closes[-1] - closes[-2]
+                            ) / closes[-2]
+                except Exception as e:
+                    self.logger.warning(f"yFinance DXY Fehler: {e}")
+
+            # ── Redis-Cache aktualisieren ─────────────────────────
+            await self.deps.redis.set_cache(
+                CACHE_KEY,
+                {
+                    "VIX": results["VIX"],
+                    "DXY_Change": results["DXY_Change"],
+                    "cached_at": datetime.now(timezone.utc).isoformat()
+                },
+                ttl=CACHE_TTL
+            )
+            await self._report_health("yFinance_Macro", "online", 0.0)
+            return results
+
         except Exception as e:
-            latency = (time.perf_counter() - start) * 1000
-            self.logger.warning(f"yFinance Macro Fehler: {e}. Nutze Cache.")
-            await self._report_health("yFinance_Macro", "offline", latency)
-            
-        return results
+            self.logger.warning(f"yFinance/DXY gesamt Fehler: {e}")
+            await self._report_health("yFinance_Macro", "degraded", 0.0)
+
+            # ── Redis-Cache als Fallback ──────────────────────────
+            cached = await self.deps.redis.get_cache(CACHE_KEY)
+            if cached:
+                age_info = cached.get("cached_at", "unbekannt")
+                self.logger.info(
+                    f"Nutze Redis-Cache für VIX/DXY (cached: {age_info})"
+                )
+                return {
+                    "VIX": cached.get("VIX", self.vix),
+                    "DXY_Change": cached.get("DXY_Change", self.dxy_change)
+                }
+
+            # ── Instanz-Default als letzter Ausweg ────────────────
+            self.logger.warning(
+                "Kein Cache verfügbar — nutze Instanz-Defaults "
+                f"(VIX={self.vix:.1f}, DXY={self.dxy_change:.4f})"
+            )
+            return results
 
     async def _fetch_binance_rest_data(self) -> None:
         """
@@ -417,6 +566,10 @@ class ContextAgent(PollingAgent):
         data_freshness_ok = bool(data.get("data_freshness_ok", fresh_source_count > 0))
         if not data_freshness_ok or fresh_source_count <= 0:
             return 0.0
+        
+        # Netzwerk-Latenz-Veto
+        if data.get("latency_veto_active", False):
+            return 0.0   # Kein Trading bei schlechter Verbindung
 
         # ═══════════════════════════════════════════════════
         # MAKRO LAYER (~30 Punkte)
@@ -491,8 +644,30 @@ class ContextAgent(PollingAgent):
         if etf_flows > 500:     score += 10.0
         elif etf_flows < -500:  score -= 15.0
 
+        # Funding Settlement Fenster (15 Min vor 00:00, 08:00, 16:00 UTC)
+        # Erhöhte Volatilität durch Position-Schließungen — konservativ
+        if data.get("funding_settlement_window", False):
+            score = min(score, 42.0)  # Kein Hard Veto, aber unter normaler Schwelle
+
+        # Cross-Exchange Funding Divergenz (CoinGlass)
+        if data.get("coinglass_active", False):
+            div = data.get("funding_divergence", 0.0)
+            if div < 0.010:     score += 8.0   # Konvergent → stabiler Markt
+            elif div > 0.030:   score -= 10.0  # Divergent → instabiles Umfeld
+
         # LLM News Sentiment (aus SentimentAgent, echte CryptoPanic-Daten)
         score += llm_sentiment * 10.0
+
+        # Retail Narrative Score — Gewicht 0.0 für erste 2 Wochen
+        # Manuell erhöhen auf 8.0 nach Verifikation der Signal-Qualität
+        retail_weight = data.get("retail_sentiment_weight", 0.0)
+        if retail_weight > 0:
+            retail_score = data.get("retail_score", 0.0)
+            score += retail_score * retail_weight
+
+        # FOMO-Warning: alle Retail-Quellen gleichzeitig extrem bullish
+        if data.get("retail_fomo_warning", False):
+            score -= 12.0  # Top-Signal — Reversal-Risiko
 
         # ═══════════════════════════════════════════════════
         # HARD VETOES — überschreiben alles
@@ -551,7 +726,40 @@ class ContextAgent(PollingAgent):
             # ── 3. Deribit Public (15-Min-Cache intern) ──────────
             await self._fetch_deribit_data()
 
-            # ── 4. BTC 1h Change aus Redis-Ticker ────────────────
+            # ── 4. CoinGlass (15-Min-Cache, graceful wenn kein Key) ──
+            await self._fetch_coinglass_data()
+
+            # ── Retail Sentiment (Google Trends + Reddit + StockTwits) ──
+            try:
+                retail_data = await self.retail_sentiment_service.update()
+                self._retail_score = retail_data.get("retail_score", 0.0)
+                self._retail_fomo_warning = retail_data.get(
+                    "fomo_warning", False
+                )
+
+                # FOMO-Warning → Telegram + Failure Watch
+                if self._retail_fomo_warning:
+                    from app.core.telegram_bot import get_telegram_bot
+                    telegram = get_telegram_bot()
+                    if telegram:
+                        await telegram.send_fomo_warning(self._retail_score)
+
+                    # In Redis für LLM-Kaskade loggen
+                    await self.deps.redis.set_cache(
+                        "bruno:learning:fomo_active",
+                        {
+                            "detected_at": datetime.now(
+                                timezone.utc
+                            ).isoformat(),
+                            "retail_score": self._retail_score,
+                            "pattern": "fomo_top_risk"
+                        },
+                        ttl=86400
+                    )
+            except Exception as e:
+                self.logger.warning(f"Retail Sentiment Fehler: {e}")
+
+            # ── 5. BTC 1h Change aus Redis-Ticker ────────────────
             btc_ticker = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
             btc_price_now = float(btc_ticker.get("last_price", 0))
 
@@ -644,6 +852,18 @@ class ContextAgent(PollingAgent):
                     grss_30min_ago = old[-1]["grss"]
 
             # ── 11. GRSS berechnen ────────────────────────────────
+            # ── Latenz-Monitoring (alle 5 Min) ───────────────────
+            now_lat = time.time()
+            latency_veto_active = False
+            if now_lat - self._last_latency_check > self._latency_check_interval:
+                self._last_latency_check = now_lat
+                latency_result = await self.latency_monitor.run_checks()
+                latency_veto_active = latency_result.get("trade_veto_active", False)
+                if latency_veto_active:
+                    self.logger.warning(
+                        "Latenz-Veto aktiv — wird an RiskAgent weitergeleitet"
+                    )
+            
             grss_input = {
                 "ndx_status": self.ndx_status,
                 "yields_10y": self.yields_10y,
@@ -656,15 +876,30 @@ class ContextAgent(PollingAgent):
                 "put_call_ratio": self.put_call_ratio,
                 "perp_basis_pct": self.perp_basis_pct,
                 "fear_greed": fear_greed,
-                "etf_flows_3d_m": 0.0,           # Neutral-Platzhalter bis Phase B
+                "etf_flows_3d_m": self._etf_flows_3d,          # 0.0 wenn kein Key
+                "funding_divergence": self._funding_divergence,  # 0.0 wenn kein Key
+                "coinglass_active": self.coinglass.is_active,
+                "retail_score": self._retail_score,
+                "retail_fomo_warning": self._retail_fomo_warning,
+                "retail_sentiment_weight": self._retail_sentiment_weight,
                 "llm_news_sentiment": llm_news_sentiment,
                 "news_silence_seconds": news_silence_seconds,
                 "grss_30min_ago": grss_30min_ago,
                 "fresh_source_count": fresh_source_count,
                 "data_freshness_ok": data_freshness_ok,
+                "latency_veto_active": latency_veto_active,
+                "funding_settlement_window": self._is_funding_settlement_window(),
             }
 
             grss = self.calculate_grss(grss_input)
+
+            # ── EMA-Glättung des GRSS ─────────────────────────────
+            # Filtert Einzelspikes, behält echte Trends
+            self._grss_ema = (
+                self._grss_ema_alpha * grss +
+                (1 - self._grss_ema_alpha) * self._grss_ema
+            )
+            grss_smoothed = round(self._grss_ema, 1)
 
             # ── 12. GRSS-History für Velocity-Tracking ───────────
             self.grss_history.append({
@@ -686,14 +921,15 @@ class ContextAgent(PollingAgent):
             # WICHTIG: Bestehende Keys beibehalten (RiskAgent ist abhängig davon)
             payload = {
                 # ── Keys die RiskAgent erwartet (NICHT umbenennen) ──
-                "GRSS_Score": grss,
+                "GRSS_Score": grss_smoothed,      # Geglättet — für Entscheidungen
+                "GRSS_Score_Raw": grss,            # Roh — für Dashboard/Debug
                 "Stress_Score": round(stress_score, 1),
                 "Macro_Status": self.ndx_status,
                 "Yields_10Y": round(self.yields_10y, 2),
                 "VIX": round(self.vix, 2),
-                "Veto_Active": grss < 40 or news_silence_seconds > 3600 or not data_freshness_ok,
+                "Veto_Active": grss_smoothed < 40 or news_silence_seconds > 3600 or not data_freshness_ok,
                 "Reason": (
-                    f"GRSS={grss:.1f} | NDX={self.ndx_status} | "
+                    f"GRSS={grss_smoothed:.1f} | NDX={self.ndx_status} | "
                     f"VIX={self.vix:.1f} | PCR={self.put_call_ratio:.2f}"
                     + (f" | DATA_FRESHNESS=STALE({fresh_source_count})" if not data_freshness_ok else "")
                 ),
@@ -711,11 +947,17 @@ class ContextAgent(PollingAgent):
                 "LLM_News_Sentiment": round(llm_news_sentiment, 3),
                 "Funding_Rate": round(funding_rate, 6),
                 "DXY_Change_Pct": round(self.dxy_change * 100, 2),
-                "ETF_Flows_3d_M": 0.0,   # Neutral bis CoinGlass Phase B
+                "ETF_Flows_3d_M": round(self._etf_flows_3d, 1),
+                "Funding_Divergence": round(self._funding_divergence, 4),
+                "CoinGlass_Active": self.coinglass.is_active,
+                "Retail_Score": round(self._retail_score, 3),
+                "Retail_FOMO_Warning": self._retail_fomo_warning,
+                "Retail_Weight_Active": self._retail_sentiment_weight > 0,
                 "News_Silence_Seconds": int(news_silence_seconds),
                 "GRSS_Velocity_30min": round(grss - grss_30min_ago, 1),
                 "Data_Freshness_Active": data_freshness_ok,
                 "Fresh_Source_Count": fresh_source_count,
+                "Funding_Settlement_Window": self._is_funding_settlement_window(),
             }
 
             await self.deps.redis.set_cache(

@@ -1,7 +1,7 @@
 {
-    "GRSS_Threshold": 40,
+    "GRSS_Threshold": 48,
     "Liq_Distance": 0.005,
     "OFI_Threshold": 500,
-    "Max_Leverage": 3,
-    "Stop_Loss_Pct": 0.01
+    "Max_Leverage": 1.0,
+    "Stop_Loss_Pct": 0.010
 }

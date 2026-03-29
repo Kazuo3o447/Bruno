@@ -160,6 +160,24 @@ Die folgenden Audit-Fixes wurden umgesetzt und live bzw. im Codepfad abgesichert
   - `AuthenticatedExchangeClient` blockiert `BYBIT_MODE="live"`, solange `LIVE_TRADING_APPROVED=False` bleibt.
   - Der neue Schalter ist in `.env.example` dokumentiert.
 
+## 1.2 PHASE-B HARDENING UPDATE — 2026-03-29
+
+Die Phase-B-Implementierung ist jetzt im Codepfad und in den Monitoring-Ansichten abgesichert:
+
+- **Kapitalschutz-Guard**
+  - Die Laufzeit konvergiert auf `MAX_LEVERAGE <= 1.0`.
+  - `backend/app/core/config.py` blockiert Env-Overrides über `1.0`.
+  - Das Monitoring normalisiert MLOps-Parameter auf den Hard-Cap und meldet Drift explizit.
+
+- **DRY_RUN-Signal**
+  - Die Live-Telemetrie zeigt den echten `settings.DRY_RUN`-Wert statt eines Hardcodes.
+
+- **Phase-B Observability**
+  - CoinGlass degradiert neutral ohne API-Key.
+  - Telegram-Buttons und Commands sind chat-id-authentifiziert.
+  - Profit Factor wird aus realisierter P&L-Historie berechnet.
+  - Der Phase-B-Status-Endpunkt prüft reale Feature-Signale statt Platzhalter.
+
 ---
 
 ## 2. REPORT-TYPEN UND FORMATE
@@ -172,7 +190,7 @@ Die folgenden Audit-Fixes wurden umgesetzt und live bzw. im Codepfad abgesichert
 **Telegram-Format (kompakt, für Ruben):**
 ```
 🟢 LONG BTCUSDT ausgeführt
-Entry: $84.500 | Qty: 0.001 BTC | Leverage: 1.5×
+Entry: $84.500 | Qty: 0.001 BTC | Leverage: 1.0×
 SL: $83.745 | TP: $85.270
 GRSS: 67.5 | Regime: trending_bull | L2 Conf: 74%
 Reasoning: "OI steigt, Funding neutral, PCR 0.41"

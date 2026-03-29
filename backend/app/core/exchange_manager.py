@@ -92,6 +92,47 @@ class AuthenticatedExchangeClient(PublicExchangeClient):
             'options': {'defaultType': 'future'}
         })
 
+        # Bybit mit Keys re-initialisieren
+        bybit_config = self._get_bybit_config()
+        if bybit_config:
+            self.bybit = ccxt.bybit(bybit_config)
+
+    def _get_bybit_config(self) -> dict:
+        """
+        Gibt Bybit-Konfiguration basierend auf BYBIT_MODE zurück.
+        demo → api-demo.bybit.com (50.000 USDT simuliert)
+        live → api.bybit.com (echtes Kapital — NUR nach Backtest)
+        """
+        mode = getattr(settings, 'BYBIT_MODE', 'demo')
+        api_key = getattr(settings, 'BYBIT_API_KEY', None)
+        secret = getattr(settings, 'BYBIT_SECRET', None)
+
+        if not api_key or not secret:
+            return {}   # Kein Key — ccxt nicht initialisieren
+
+        base_config = {
+            "apiKey": api_key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": {
+                "defaultType": "linear",
+                "adjustForTimeDifference": True,
+            }
+        }
+
+        if mode == "demo":
+            base_config["urls"] = {
+                "api": {
+                    "rest": "https://api-demo.bybit.com"
+                }
+            }
+            self.logger.info("Bybit: DEMO-Modus (api-demo.bybit.com)")
+        elif mode == "live":
+            # Wird durch LIVE_TRADING_APPROVED Guard in Phase A blockiert
+            self.logger.warning("Bybit: LIVE-Modus — nur nach bestandenem Backtest!")
+
+        return base_config
+
     async def create_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> Dict:
         """Führt eine Order an der Binance Futures Börse aus."""
         try:

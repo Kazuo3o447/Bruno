@@ -42,6 +42,8 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ❌ NIEMALS: Live-Parameter (config.json) automatisch überschreiben — nur manuell nach Review
 ❌ NIEMALS: Position ohne definierten Stop-Loss und Take-Profit öffnen
 ❌ NIEMALS: Mehr als MAX_LEVERAGE * Kontokapital als Positionsgröße berechnen
+❌ NIEMALS: Max_Leverage über 1.0 setzen — kein Kredit, keine Hebelwirkung
+❌ NIEMALS: SIMULATED_CAPITAL_EUR unter 10 EUR setzen
 ```
 
 ---
@@ -404,7 +406,7 @@ REGIME_CONFIGS = {
     "trending_bull": {
         "GRSS_Threshold": 45,       # Niedrigere Schwelle — Trend gibt Rückenwind
         "OFI_Threshold": 400,
-        "Max_Leverage": 2.5,
+        "Max_Leverage": 1.0,
         "Stop_Loss_Pct": 0.008,
         "Take_Profit_Pct": 0.020,   # 2.5:1 R:R
         "allow_longs": True,
@@ -413,7 +415,7 @@ REGIME_CONFIGS = {
     "ranging": {
         "GRSS_Threshold": 55,       # Höhere Schwelle — weniger Klarheit
         "OFI_Threshold": 600,
-        "Max_Leverage": 1.5,
+        "Max_Leverage": 1.0,
         "Stop_Loss_Pct": 0.006,
         "Take_Profit_Pct": 0.012,   # 2:1 R:R
         "allow_longs": True,
@@ -433,7 +435,7 @@ REGIME_CONFIGS = {
     "bear": {
         "GRSS_Threshold": 50,
         "OFI_Threshold": 500,
-        "Max_Leverage": 1.5,
+        "Max_Leverage": 1.0,
         "Stop_Loss_Pct": 0.010,
         "Take_Profit_Pct": 0.020,
         "allow_longs": False,       # Keine Longs im Bärenmarkt

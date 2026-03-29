@@ -17,12 +17,12 @@
 |----------|------|
 | **Manifest Version** | `v2.0` |
 | **Codename** | Fundament & Ehrlichkeit |
-| **Status** | ✅ Phase A COMPLETED — Phase B AKTIV |
+| **Status** | ✅ Phase A COMPLETED — Phase B HARDENED |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
 
 ---
 
-## Aktueller Fokus: Phase B — Daten-Erweiterung
+## Aktueller Fokus: Phase B — Daten-Erweiterung & Hardening
 
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
 
@@ -42,11 +42,13 @@
 - [x] **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
 - [x] **CryptoPanic Health**: Health-Telemetrie integriert
 
-### Phase B Aufgaben (Woche 2–3)
-- [ ] CoinGlass API Integration ($29/Monat)
-- [ ] Telegram Notifications
-- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
-- [ ] Bybit Integration für Live-Trading
+### Phase B Status (aktuell)
+- [x] CoinGlass graceful degradation ohne API-Key
+- [x] Telegram Notifications mit Chat-ID-Auth
+- [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+- [x] Profit-Factor-Tracking aus realisierter P&L-Historie
+- [x] Phase-B Verifikationsendpoint mit echten Checks
+- [ ] Bybit Live-Trading bleibt gesperrt, bis `LIVE_TRADING_APPROVED=True`
 
 **Eiserne Regel:** Phase A ist abgeschlossen. Keine Zufallsdaten mehr im System.
 
@@ -61,20 +63,21 @@
 - Frontend Dashboard mit Agenten-Zentrale
 - LLM-Infrastruktur (Ollama, qwen2.5:14b, deepseek-r1:14b)
 - DRY_RUN-Schutz aktiv
+- Max-Leverage hart auf `1.0` begrenzt
 - **Phase A COMPLETE**: Alle `random.uniform()` entfernt, 100% echte Daten
 - **Data-Freshness Fail-Safe**: GRSS bricht bei stale data auf 0.0 ab
 - **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
 - **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
+- **Phase B Hardening**: CoinGlass, Telegram, Profit Factor und Phase-B Status-Endpoint aktiv
 
 ### ⚠️ Bekannte Probleme
-- **ExecutionAgent**: Kein Position-Tracker, keine Exit-Logik (Phase D)
+- **ExecutionAgent**: Kein vollständiger Position-Tracker für Live-Trading (Phase D)
 
 ### ❌ Fehlt Noch (nach Phase A)
-- Position Tracker (kritischer Pfad für Live-Trading)
-- Stop-Loss / Take-Profit Handler
+- Position Tracker für Live-Trading
+- Guarded Bybit Live-Execution
 - LLM-Kaskade (3 Layer)
-- Bybit Integration (Phase B)
-- Telegram Notifications
+- Bybit Live-Trading-Freigabe
 - Backtest Engine
 
 ---
@@ -84,7 +87,7 @@
 | Phase | Zeitraum | Fokus |
 |-------|----------|-------|
 | **A** | ✅ COMPLETED | Fundament — Echte Daten, keine Mocks |
-| **B** | Woche 2–3 | Daten-Erweiterung (CoinGlass API, Telegram) — AKTIV |
+| **B** | Woche 2–3 | Daten-Erweiterung & Hardening — AKTIV |
 | **C** | Woche 3–5 | LLM-Kaskade (3 Layer) |
 | **D** | parallel | Position Tracker + Stop-Loss |
 | **E** | parallel | Frontend Cockpit |

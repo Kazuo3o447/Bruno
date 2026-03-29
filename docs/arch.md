@@ -62,7 +62,7 @@ Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
 | Börse | Nutzung | Daten |
 |-------|---------|-------|
 | **Binance** | Daten & Analyse | WebSocket (5 Streams), REST (OI, Funding, Perp-Basis) |
-| **Bybit** | **Execution** | Unified Account Futures (max 1.5× Leverage) |
+| **Bybit** | **Execution** | Unified Account Futures (max 1.0× Leverage) |
 | **Deribit** | Options-Daten | Put/Call Ratio, DVOL (kostenlos, kein Key) |
 
 **Bybit Order-Format:**
@@ -102,7 +102,13 @@ Bybit REST  ◄── ExecutionAgent ◄── RiskAgent (RAM-Veto) ◄─┘
 ### DRY_RUN Protection
 - Hardware-naher Block in ExecutionAgent
 - Bei `DRY_RUN=True`: Keine echten Orders möglich
-- Shadow-Trading mit Fee-Simulation (0.01% Maker)
+- Shadow-Trading mit Fee-Simulation (0.04% Taker, plus Slippage-Logging)
+
+### Phase B Hardening (aktuell)
+- CoinGlass läuft im Graceful-Degradation-Modus ohne API-Key
+- Telegram-Buttons und Commands sind an die konfigurierte Chat-ID gebunden
+- Profit Factor wird aus realisierter P&L-Historie berechnet und per Endpoint angezeigt
+- Funding- und Liquidations-Daten sind in GRSS und Status-Checks integriert
 
 ---
 

@@ -63,6 +63,51 @@ async def main():
     await wait_for_db()
     await log_manager.initialize()
     
+    # Telegram Bot initialisieren
+    from app.core.telegram_bot import init_telegram_bot, get_telegram_bot
+
+    telegram = init_telegram_bot(
+        token=settings.TELEGRAM_BOT_TOKEN,
+        chat_id=settings.TELEGRAM_CHAT_ID,
+        redis_client=redis
+    )
+
+    # Emergency Stop Callback
+    async def emergency_stop():
+        logger.warning("EMERGENCY STOP via Telegram ausgelöst!")
+        await orchestrator.stop_all()
+        await telegram.send_critical_alert(
+            "Emergency Stop ausgeführt. Alle Agenten gestoppt."
+        )
+
+    # Pause Callback
+    async def pause_bot(hours: int = 4):
+        if hours == 0:
+            await redis.set_cache("bruno:system:paused", {"paused": False})
+            await telegram.send_critical_alert("Bot fortgesetzt.")
+        else:
+            from datetime import timedelta
+            resume_at = (
+                datetime.now(timezone.utc) + timedelta(hours=hours)
+            ).isoformat()
+            await redis.set_cache(
+                "bruno:system:paused",
+                {"paused": True, "resume_at": resume_at},
+                ttl=hours * 3600
+            )
+            await telegram.send_critical_alert(
+                f"Bot für {hours}h pausiert. Resume: {resume_at}"
+            )
+
+    telegram.set_callbacks(
+        emergency_stop=emergency_stop,
+        pause=pause_bot
+    )
+
+    telegram_started = await telegram.start()
+    if not telegram_started:
+        logger.warning("Telegram nicht aktiv — Keys fehlen in .env")
+    
     ollama_ok = await ollama.health_check()
     logger.info(f"Ollama Status: {'✅ Ok' if ollama_ok else '⚠️ Down (Fallback)'}")
 
@@ -103,6 +148,12 @@ async def main():
     cmd_task.cancel()
     await ollama.close()
     await redis.disconnect()
+    
+    # Telegram Bot stoppen
+    telegram_bot = get_telegram_bot()
+    if telegram_bot:
+        await telegram_bot.stop()
+    
     logger.info("Worker sauber beendet.")
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
     "GRSS_Threshold": 45,
     "Liq_Distance": 0.006,
     "OFI_Threshold": 550,
+    "Max_Leverage": 1.0,
     "Simulation_Metrics": {
         "net_pnl": 236.6,
         "profit_factor": 2.5,

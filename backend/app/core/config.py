@@ -1,4 +1,5 @@
 from typing import Optional
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,11 +51,23 @@ class Settings(BaseSettings):
     DAILY_LOSS_LIMIT_PCT: float = 0.02      # 2% des Kontos — Hard Stop
     FAILURE_WATCH_EXPIRY_TRADES: int = 20    # Nach N Trades verfällt ein Failure Watch
     
+    # Kapitalschutz — UNVERÄNDERLICH
+    MAX_LEVERAGE: float = 1.0        # Kein Kredit. Niemals über 1.0.
+    SIMULATED_CAPITAL_EUR: float = 500.0  # Startkapital für DRY_RUN Portfolio
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore"
     )
+
+    @model_validator(mode="after")
+    def _validate_capital_safety(self):
+        if self.MAX_LEVERAGE > 1.0:
+            raise ValueError("MAX_LEVERAGE must not exceed 1.0")
+        if self.SIMULATED_CAPITAL_EUR < 10:
+            raise ValueError("SIMULATED_CAPITAL_EUR must be at least 10 EUR")
+        return self
 
 
 settings = Settings()

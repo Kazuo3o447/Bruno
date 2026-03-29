@@ -14,7 +14,7 @@
 |---|---|
 | **Strategie** | Medium-Frequency (5–15 Minuten Signale) |
 | **Startkapital** | 500 EUR |
-| **Execution-Börse** | **Bybit** (Futures, max 1.5× Leverage) |
+| **Execution-Börse** | **Bybit** (Futures, max 1.0× Leverage) |
 | **Daten-Börse** | **Binance** (WebSocket + REST) |
 | **LLM-Stack** | Ollama lokal: qwen2.5:14b + deepseek-r1:14b |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (native Ollama) |
@@ -93,7 +93,7 @@ open http://localhost:3000/dashboard
 - Börse: Bybit Unified Account (Futures)
 - Order-Typ: Limit/PostOnly (Maker-Fee 0.01% vs Taker 0.055%)
 - Mindest-Order: 0.001 BTC
-- Max-Leverage: 1.5× (Kapitalschutz)
+- Max-Leverage: 1.0× (Kapitalschutz)
 
 ---
 
@@ -147,9 +147,13 @@ open http://localhost:3000/dashboard
 
 ## 🎯 Implementierungs-Phasen (Manifest v2.0)
 
-**Aktuell: Phase B — Daten-Erweiterung**
+**Aktuell: Phase B — Daten-Erweiterung & Hardening (DRY_RUN-ready)**
 - [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
-- [ ] Phase B — Daten-Erweiterung (CoinGlass, Telegram)
+- [x] Phase B — CoinGlass-Graceful-Degradation
+- [x] Phase B — Telegram-Auth für Buttons/Commands
+- [x] Phase B — Funding/Orderbook-Erweiterungen im Context
+- [x] Phase B — Profit-Factor-Tracking & Status-Endpoint
+- [ ] Phase B — Bybit Live-Trading bleibt durch `LIVE_TRADING_APPROVED` gesperrt
 - [ ] Phase C — LLM-Kaskade (3 Layer)
 - [ ] Phase D — Position Tracker + Stop-Loss
 - [ ] Phase E — Frontend Cockpit
@@ -158,7 +162,8 @@ open http://localhost:3000/dashboard
 - [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
 
 **Kommend:**
-- Phase B — Daten + Bybit Integration (CoinGlass API, Telegram Alerts)
+- Phase B — Finales Hardening der Metriken und Monitoring-Ansichten
+- Phase B — Bybit Live-Trading erst nach Review und `LIVE_TRADING_APPROVED`
 - Phase C — LLM-Kaskade (3 Layer)
 - Phase D — Position Tracker + Stop-Loss
 - Phase E — Frontend Cockpit
