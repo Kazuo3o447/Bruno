@@ -18,32 +18,39 @@
 |----------|------|
 | **Manifest Version** | `v2.0` |
 | **Codename** | Fundament & Ehrlichkeit |
-| **Status** | Phase A — Fundament (Woche 1–2) |
+| **Status** | ✅ Phase A COMPLETED — Phase B AKTIV |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
 
 ---
 
-## Aktueller Fokus: Phase A — Fundament
+## Aktueller Fokus: Phase B — Daten-Erweiterung
 
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
 > 🐧 **Produktion:** Linux NUC (ZimaOS) nach Phase H
 
-**Ziel:** Den Bot ehrlich machen. Keine Zufallsdaten mehr.
+**Ziel:** Phase A abgeschlossen — Bot ist "ehrlich" mit 100% echten Daten.
 
-### Kritische Blocker (Müssen zuerst gelöst werden)
-- [ ] **ContextAgent**: Alle `random.uniform()` und `random.random()` entfernen
-- [ ] **GRSS-Berechnung**: 100% echte Daten (keine Mocks)
-- [ ] **BTC 24h Change**: Aus Redis `market:ticker:BTCUSDT` berechnen
+### Phase A ✅ COMPLETED (2026-03-29)
+- [x] **ContextAgent**: Alle `random.uniform()` und `random.random()` entfernt
+- [x] **GRSS-Berechnung**: 100% echte Daten (keine Mocks)
+- [x] **BTC 24h Change**: Aus Redis `market:ticker:BTCUSDT` berechnet
+- [x] **Binance REST**: Open Interest, OI-Delta, L/S-Ratio, Perp-Basis
+- [x] **Deribit Public API**: Put/Call Ratio, DVOL (kostenlos, kein Key)
+- [x] **GRSS-Funktion**: echte Implementierung (Manifest Abschnitt 5)
+- [x] **QuantAgent**: Polling 5s → 300s
+- [x] **ContextAgent**: Polling 60s → 900s
+- [x] **CVD State**: In Redis persistiert
+- [x] **Data-Freshness Fail-Safe**: GRSS bricht auf 0.0 ab bei stale data
+- [x] **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
+- [x] **CryptoPanic Health**: Health-Telemetrie integriert
 
-### Phase A Aufgaben (Woche 1–2)
-- [ ] Binance REST: Open Interest, OI-Delta, L/S-Ratio, Perp-Basis
-- [ ] Deribit Public API: Put/Call Ratio, DVOL (kostenlos, kein Key)
-- [ ] GRSS-Funktion: echte Implementierung (Manifest Abschnitt 5)
-- [ ] QuantAgent: Polling 5s → 300s
-- [ ] ContextAgent: Polling 60s → 900s
-- [ ] CVD State: In Redis persistieren (nicht In-Memory)
+### Phase B Aufgaben (Woche 2–3)
+- [ ] CoinGlass API Integration ($29/Monat)
+- [ ] Telegram Notifications
+- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+- [ ] Bybit Integration für Live-Trading
 
-**Eiserne Regel:** Keine Trades auf Basis von Zufallsdaten. GRSS muss echte Datenquellen nutzen.
+**Eiserne Regel:** Phase A ist abgeschlossen. Keine Zufallsdaten mehr im System.
 
 ---
 
@@ -56,12 +63,13 @@
 - Frontend Dashboard mit Agenten-Zentrale
 - LLM-Infrastruktur (Ollama, qwen2.5:14b, deepseek-r1:14b)
 - DRY_RUN-Schutz aktiv
+- **Phase A COMPLETE**: Alle `random.uniform()` entfernt, 100% echte Daten
+- **Data-Freshness Fail-Safe**: GRSS bricht bei stale data auf 0.0 ab
+- **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
+- **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
 
 ### ⚠️ Bekannte Probleme
-- **ContextAgent**: ~70% der GRSS-Inputs sind `random.uniform()` — KRITISCH
-- **QuantAgent**: Polling-Intervall 5 Sekunden (sollte 300s)
-- **CVD**: Verliert State bei Restart (nicht in Redis)
-- **ExecutionAgent**: Kein Position-Tracker, keine Exit-Logik
+- **ExecutionAgent**: Kein Position-Tracker, keine Exit-Logik (Phase D)
 
 ### ❌ Fehlt Noch (nach Phase A)
 - Position Tracker (kritischer Pfad für Live-Trading)
@@ -77,8 +85,8 @@
 
 | Phase | Zeitraum | Fokus |
 |-------|----------|-------|
-| **A** | Woche 1–2 | Fundament — Echte Daten, keine Mocks |
-| **B** | Woche 2–3 | Daten + Bybit Integration |
+| **A** | ✅ COMPLETED | Fundament — Echte Daten, keine Mocks |
+| **B** | Woche 2–3 | Daten-Erweiterung (CoinGlass API, Telegram) — AKTIV |
 | **C** | Woche 3–5 | LLM-Kaskade (3 Layer) |
 | **D** | parallel | Position Tracker + Stop-Loss |
 | **E** | parallel | Frontend Cockpit |
@@ -171,6 +179,18 @@
 
 ## Abgeschlossene Phasen (Archiv)
 
+### Phase A: Fundament & Ehrlichkeit ✅ COMPLETED
+- [x] ContextAgent: Alle `random.uniform()` entfernt
+- [x] GRSS-Funktion: 100% echte Daten
+- [x] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
+- [x] Deribit Public: PCR, DVOL
+- [x] QuantAgent: Polling 5s → 300s
+- [x] ContextAgent: Polling 60s → 900s
+- [x] CVD State: In Redis persistiert
+- [x] Data-Freshness Fail-Safe: GRSS bricht bei stale data auf 0.0 ab
+- [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag
+- [x] CryptoPanic Health-Telemetrie
+
 ### Phase 0-1: Foundation & Architecture ✅
 - API und Worker in separate Container
 - BaseAgent Klasse mit Heartbeat, Error-Handling, Auto-Restart
@@ -221,4 +241,4 @@ Die Implementierung erfolgt in den Phasen A-H wie im Manifest definiert:
 
 ---
 
-*Letzte Aktualisierung: 2026-03-27 — Alle 6 Agenten operational, Zero-Latency Execution aktiv*
+*Letzte Aktualisierung: 2026-03-29 — Phase A COMPLETED, Phase B AKTIV*

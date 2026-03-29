@@ -135,13 +135,21 @@ ADD COLUMN layer3_output JSONB;
 
 ## System-Status
 
-### Phase A — Fundament (Woche 1–2) — AKTIV
-- [ ] ContextAgent: `random.uniform()` entfernen
-- [ ] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
-- [ ] Deribit Public: Put/Call Ratio, DVOL
-- [ ] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
+### Phase A — Fundament (Woche 1–2) ✅ COMPLETED (2026-03-29)
+- [x] ContextAgent: `random.uniform()` entfernt — 100% echte Daten
+- [x] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
+- [x] Deribit Public: Put/Call Ratio, DVOL
+- [x] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
+- [x] Data-Freshness Fail-Safe: GRSS bricht bei stale data auf 0.0 ab
+- [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag implementiert
+- [x] CryptoPanic Health: Health-Telemetrie integriert
 
-### Geplant: Phasen B–H
+### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
+- [ ] CoinGlass API Integration ($29/Monat)
+- [ ] Telegram Notifications
+- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+
+### Geplant: Phasen C–H
 Siehe WINDSURF_MANIFEST.md Abschnitt 13
 
 ---

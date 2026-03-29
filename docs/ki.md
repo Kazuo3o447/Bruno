@@ -16,20 +16,32 @@
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
 > 🐧 **Produktion:** Linux NUC (ZimaOS) nach Phase H
 
-### Phase A — Fundament (Woche 1–2) — AKTIV
+### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
 
-**Ziel:** Den Bot ehrlich machen. Keine Zufallsdaten mehr.
+**Ziel:** Phase A abgeschlossen — Bot ist "ehrlich". Jetzt Daten-Erweiterung.
 
-**Kritische Aufgaben:**
-1. `ContextAgent`: Alle `random.uniform()` entfernen
-2. BTC 24h Change aus Redis berechnen
-3. **Binance REST**: Open Interest, OI-Delta, L/S-Ratio, Perp-Basis
-4. **Deribit Public**: Put/Call Ratio, DVOL (kostenlos)
-5. **GRSS-Funktion**: echte Daten (Manifest Abschnitt 5)
-6. **Polling-Intervalle fixen**: Quant 5s→300s, Context 60s→900s
-7. **CVD State**: in Redis persistieren
+**Aufgaben:**
+- [ ] CoinGlass API Integration ($29/Monat)
+- [ ] Telegram Notifications
+- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
 
-**Eiserne Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. Keine `random.uniform()`.
+### Phase A — Fundament ✅ COMPLETED (2026-03-29)
+
+**Ziel erreicht:** Den Bot ehrlich machen. Keine Zufallsdaten mehr.
+
+**Erledigt:**
+- [x] `ContextAgent`: Alle `random.uniform()` entfernt
+- [x] BTC 24h Change aus Redis berechnet
+- [x] **Binance REST**: Open Interest, OI-Delta, L/S-Ratio, Perp-Basis
+- [x] **Deribit Public**: Put/Call Ratio, DVOL (kostenlos)
+- [x] **GRSS-Funktion**: echte Daten (Manifest Abschnitt 5)
+- [x] **Polling-Intervalle**: Quant 5s→300s, Context 60s→900s
+- [x] **CVD State**: in Redis persistiert
+- [x] **Data-Freshness Fail-Safe**: GRSS bricht bei stale data auf 0.0 ab
+- [x] **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
+- [x] **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
+
+**Eiserne Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. Keine `random.uniform()`. ✅ ERLEDIGT
 
 ---
 

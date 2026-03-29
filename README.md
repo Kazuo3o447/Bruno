@@ -151,14 +151,18 @@ open http://localhost:3000/dashboard
 
 ## 🎯 Implementierungs-Phasen (Manifest v2.0)
 
-**Aktuell: Phase A — Fundament (Woche 1–2)**
-- [ ] ContextAgent: `random.uniform()` entfernen
-- [ ] Binance REST: OI, L/S-Ratio, Perp-Basis
-- [ ] Deribit Public: PCR, DVOL
-- [ ] GRSS-Funktion: echte Daten
+**Aktuell: Phase B — Daten-Erweiterung**
+- [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
+- [ ] Phase B — Daten-Erweiterung (CoinGlass, Telegram)
+- [ ] Phase C — LLM-Kaskade (3 Layer)
+- [ ] Phase D — Position Tracker + Stop-Loss
+- [ ] Phase E — Frontend Cockpit
+- [ ] Phase F — Lern-System
+- [ ] Phase G — Backtest (6 Monate, PF > 1.5)
+- [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
 
 **Kommend:**
-- Phase B — Daten + Bybit Integration
+- Phase B — Daten + Bybit Integration (CoinGlass API, Telegram Alerts)
 - Phase C — LLM-Kaskade (3 Layer)
 - Phase D — Position Tracker + Stop-Loss
 - Phase E — Frontend Cockpit

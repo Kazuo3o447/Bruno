@@ -47,21 +47,33 @@ Du bist ein **Elite-KI-Entwickler** für algorithmischen Krypto-Handel. Unser Zi
 
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
 
-### Phase A — Fundament (Woche 1–2) — AKTIV
+### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
 
-Ziel: Den Bot ehrlich machen. Keine Zufallsdaten mehr.
+Ziel: Phase A abgeschlossen — Bot ist "ehrlich". Jetzt Daten-Erweiterung.
 
 **Aufgaben:**
-- [ ] ContextAgent: Alle `random.uniform()` entfernen
-- [ ] BTC 24h Change aus Redis berechnen
-- [ ] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
-- [ ] Deribit Public: Put/Call Ratio, DVOL
-- [ ] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
-- [ ] QuantAgent: 5s → 300s Intervall
-- [ ] ContextAgent: 60s → 900s Intervall
-- [ ] CVD State in Redis persistieren
+- [ ] CoinGlass API Integration ($29/Monat)
+- [ ] Telegram Notifications
+- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
 
-**Wichtigste Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks.
+### Phase A — Fundament ✅ COMPLETED (2026-03-29)
+
+Ziel erreicht: Den Bot ehrlich machen. Keine Zufallsdaten mehr.
+
+**Erledigt:**
+- [x] ContextAgent: Alle `random.uniform()` entfernt
+- [x] BTC 24h Change aus Redis berechnet
+- [x] Binance REST: OI, OI-Delta, L/S-Ratio, Perp-Basis
+- [x] Deribit Public: Put/Call Ratio, DVOL
+- [x] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
+- [x] QuantAgent: 5s → 300s Intervall
+- [x] ContextAgent: 60s → 900s Intervall
+- [x] CVD State in Redis persistiert
+- [x] Data-Freshness Fail-Safe: GRSS bricht bei stale data auf 0.0 ab
+- [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag implementiert
+- [x] CryptoPanic Health: Health-Telemetrie integriert
+
+**Wichtigste Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. ✅ ERLEDIGT
 
 ---
 
