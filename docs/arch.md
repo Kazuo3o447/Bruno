@@ -2,8 +2,7 @@
 
 > **Referenz: WINDSURF_MANIFEST.md v2.0**
 > 
-> ⚠️ **Aktuell:** Entwicklung auf **Windows** (Windsurf/SWE-1.5)
-> 🐧 **Ziel:** Produktion auf **Linux NUC** (ZimaOS) nach Stabilisierung
+> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (native Ollama)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -15,13 +14,11 @@
 
 | Umgebung | Hardware | Zweck |
 |----------|----------|-------|
-| **Entwicklung** | Windows + Ryzen 7 7800X3D + RX 7900 XT | Agenten-Entwicklung, LLM-Inferenz |
-| **Produktion** | Linux NUC + ZimaOS | Live-Trading (nach Stabilisierung) |
+| **Primär** | Windows + Ryzen 7 7800X3D + RX 7900 XT | Entwicklung, LLM-Inferenz, Trading |
 
-### Docker Services (WSL2 / Linux)
+### Docker Services (WSL2)
 
-> 🔧 **Während des Bauens:** Docker Desktop auf Windows (WSL2-Backend)
-> 🐧 **Produktion:** Docker auf Linux NUC (ZimaOS)
+> 🔧 **Docker Desktop:** Windows (WSL2-Backend) mit GPU-Passthrough
 
 | Service | Technologie | Zweck |
 |---------|-------------|-------|

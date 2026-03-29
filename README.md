@@ -2,8 +2,7 @@
 
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.0**
 > 
-> ⚠️ **Entwicklungsstatus:** Wir bauen auf **Windows** (Windsurf/SWE-1.5). 
-> Linux (NUC/ZimaOS) ist die **Ziel-Produktionsumgebung** nach Stabilisierung.
+> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -18,8 +17,7 @@
 | **Execution-Börse** | **Bybit** (Futures, max 1.5× Leverage) |
 | **Daten-Börse** | **Binance** (WebSocket + REST) |
 | **LLM-Stack** | Ollama lokal: qwen2.5:14b + deepseek-r1:14b |
-| **Dev-Umgebung** | Windows (Windsurf/SWE-1.5) |
-| **Prod-Umgebung** | Linux (NUC, ZimaOS) |
+| **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (native Ollama) |
 
 **Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten.
 
@@ -36,12 +34,10 @@
 
 ## 🚀 Quick Start
 
-> 🔧 **Während des Bauens:** Windows-Entwicklung mit Docker Desktop (WSL2)
-> 🐧 **Produktion:** Linux NUC mit ZimaOS (nach Phase H / Stabilisierung)
+> 🔧 **Primäre Entwicklungsumgebung:** Windows mit Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
 
 ### Voraussetzungen
-- **Dev:** Windows mit Ryzen 7 7800X3D + AMD RX 7900 XT GPU (für LLM)
-- **Prod:** Linux NUC mit ZimaOS (nach Stabilisierung)
+- **Hardware:** Windows mit Ryzen 7 7800X3D + AMD RX 7900 XT GPU (für native LLM-Inferenz)
 - Docker Desktop (WSL2)
 - Node.js 18+ (für Frontend)
 - Python 3.11+ (wird in Docker verwendet)

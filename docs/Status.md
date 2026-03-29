@@ -2,8 +2,7 @@
 
 > **Referenz: WINDSURF_MANIFEST.md v2.0 — Einzige Quelle der Wahrheit**
 > 
-> ⚠️ **Während des Bauens:** Entwicklung auf **Windows** (Windsurf/SWE-1.5)
-> 🐧 **Ziel-Produktion:** Linux NUC (ZimaOS) nach Stabilisierung
+> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
 > 
 > Dieses Dokument zeigt den technischen Ist-Stand.
 > Für Architektur, Phasen und Entscheidungen siehe Manifest.
@@ -25,8 +24,7 @@
 
 ## Aktueller Fokus: Phase B — Daten-Erweiterung
 
-> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
-> 🐧 **Produktion:** Linux NUC (ZimaOS) nach Phase H
+> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
 
 **Ziel:** Phase A abgeschlossen — Bot ist "ehrlich" mit 100% echten Daten.
 

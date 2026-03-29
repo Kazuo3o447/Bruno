@@ -4,8 +4,7 @@
 >
 > **Manifest hat Vorrang.** Bei Widerspruch zwischen diesem Dokument und dem Manifest gilt das Manifest.
 >
-> ⚠️ **Während des Bauens:** Entwicklung auf **Windows** (Windsurf/SWE-1.5)
-> 🐧 **Produktion:** Linux NUC (ZimaOS) nach Stabilisierung
+> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (native Ollama)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -13,8 +12,7 @@
 
 ## Aktueller Fokus (Manifest v2.0)
 
-> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama
-> 🐧 **Produktion:** Linux NUC (ZimaOS) nach Phase H
+> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
 
 ### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
 

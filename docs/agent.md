@@ -2,8 +2,7 @@
 
 > **Referenz: WINDSURF_MANIFEST.md v2.0 — Dieses Dokument ist sekundär**
 > 
-> ⚠️ **Entwicklungsumgebung:** Wir bauen auf **Windows** (Windsurf/SWE-1.5)
-> 🐧 **Produktionsumgebung:** Linux NUC (ZimaOS) nach Stabilisierung
+> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (native Ollama)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
