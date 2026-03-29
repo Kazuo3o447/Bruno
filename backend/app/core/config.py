@@ -26,8 +26,29 @@ class Settings(BaseSettings):
     CRYPTOPANIC_API_KEY: Optional[str] = None
     FRED_API_KEY: Optional[str] = None
     
+    # Bybit Execution (Phase D — jetzt vorbereiten)
+    BYBIT_API_KEY: Optional[str] = None
+    BYBIT_SECRET: Optional[str] = None
+    BYBIT_MODE: str = "demo"   # "demo" = api-demo.bybit.com | "live" = api.bybit.com
+                               # NIEMALS auf "live" ohne bestandenen Backtest
+    LIVE_TRADING_APPROVED: bool = False
+
+    # Glassnode On-Chain (Phase C)
+    GLASSNODE_API_KEY: Optional[str] = None
+
+    # CoinGlass (Phase B — nach 4 Wochen DRY_RUN)
+    COINGLASS_API_KEY: Optional[str] = None
+
+    # Telegram Notifications (Phase B)
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[str] = None
+    
     # Trading Mode
     DRY_RUN: bool = True
+    
+    # Risk & Learning
+    DAILY_LOSS_LIMIT_PCT: float = 0.02      # 2% des Kontos — Hard Stop
+    FAILURE_WATCH_EXPIRY_TRADES: int = 20    # Nach N Trades verfällt ein Failure Watch
     
     model_config = SettingsConfigDict(
         env_file=".env",

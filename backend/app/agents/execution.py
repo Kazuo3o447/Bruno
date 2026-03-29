@@ -55,14 +55,35 @@ class ExecutionAgentV3(StreamingAgent):
             self.logger.info(f"Signal blockiert durch Veto: {self._last_veto_reason}")
             return
 
+        # ── Preis-Validierung ─────────────────────────────────────────
+        # Verhindert Orders mit price=0 (QuantAgent-Bug war: kein Preis im Signal)
+        signal_price = signal.get("price", 0.0)
+        if signal_price <= 0:
+            self.logger.error(
+                f"ABBRUCH: Signal ohne validen Preis empfangen. "
+                f"Signal: {signal}. "
+                f"Prüfe ob QuantAgent 'price' im Signal-Dict hat."
+            )
+            return
+
         symbol = signal.get("symbol")
         side = signal.get("side")
         amount = signal.get("amount", 0.01)
 
+        if not symbol or not isinstance(symbol, str):
+            self.logger.error(f"ABBRUCH: Ungültiges oder fehlendes Symbol im Signal: {signal}")
+            return
+
+        if side not in {"buy", "sell"}:
+            self.logger.error(f"ABBRUCH: Ungültige Signal-Seite empfangen: {signal}")
+            return
+
+        if amount <= 0:
+            self.logger.error(f"ABBRUCH: Ungültige Signal-Menge empfangen: {signal}")
+            return
+
         # 2. IMMEDIATE ORDER FIRING (OR SHADOW SIMULATION)
         try:
-            signal_price = signal.get("price", 0.0)
-            
             if self.deps.config.DRY_RUN:
                 # ABSOLUTER DRY-RUN BLOCK (Phase 7.5 Audit)
                 exec_latency = (time.perf_counter() - start_exec) * 1000

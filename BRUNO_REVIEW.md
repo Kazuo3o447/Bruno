@@ -142,6 +142,26 @@ Kein freier Text ohne Struktur. Keine Tabellen ohne Kontext.
 
 ---
 
+## 1.1 PHASE-A HARDENING UPDATE — 2026-03-29
+
+Die folgenden Audit-Fixes wurden umgesetzt und live bzw. im Codepfad abgesichert:
+
+- **Data-Freshness Fail-Safe**
+  - `ContextAgent` bricht die GRSS-Berechnung jetzt auf `0.0` ab, wenn keine frische externe Datenquelle verfügbar ist.
+  - Das verhindert Fail-Open-Verhalten bei vollständigem API-Ausfall.
+
+- **CryptoPanic Health-Telemetrie**
+  - `SentimentAgent` meldet jetzt `online` / `degraded` / `offline` inklusive Latenz an `bruno:health:sources`.
+
+- **DVOL-Reason-Persistenz**
+  - `RiskAgent` behält DVOL-Leverage-Reduktionshinweise im finalen `Reason`, auch wenn später ein anderes Veto greift.
+
+- **Live-Trading Approval Guard**
+  - `AuthenticatedExchangeClient` blockiert `BYBIT_MODE="live"`, solange `LIVE_TRADING_APPROVED=False` bleibt.
+  - Der neue Schalter ist in `.env.example` dokumentiert.
+
+---
+
 ## 2. REPORT-TYPEN UND FORMATE
 
 ### 2.1 Trade Report (nach jedem Trade, sofort)

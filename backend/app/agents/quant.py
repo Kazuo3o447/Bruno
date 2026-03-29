@@ -24,13 +24,31 @@ class QuantAgent(PollingAgent):
         self.ofi_threshold = 500.0 # Schwellenwert für Signale
         
     async def setup(self) -> None:
-        self.logger.info(f"QuantAgent für {self.symbol} gestartet. Public-Only Mode.")
-        self.cvd_cumulative = 0.0
+        self.logger.info(f"QuantAgent für {self.symbol} gestartet.")
+
+        # CVD-State aus Redis laden (überlebt Restarts)
+        cvd_cached = await self.deps.redis.get_cache("bruno:cvd:BTCUSDT")
+        if cvd_cached:
+            self.cvd_cumulative = float(cvd_cached.get("value", 0.0))
+            self.logger.info(f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f}")
+        else:
+            self.cvd_cumulative = 0.0
+            self.logger.info("CVD State: Kein Cache — starte bei 0.0")
+
+        await self.deps.redis.set_cache(
+            "bruno:cvd:BTCUSDT",
+            {
+                "value": self.cvd_cumulative,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            },
+            ttl=86400
+        )
+
         self.prev_ob = None
 
     def get_interval(self) -> float:
-        """HFT Polling-Intervall: alle 5 Sekunden."""
-        return 5.0
+        """5-Minuten-Intervall für Medium-Frequency (kein HFT)."""
+        return 300.0
 
     async def teardown(self) -> None:
         await self.exm.close()
@@ -113,6 +131,17 @@ class QuantAgent(PollingAgent):
                 latency_trades = (time.perf_counter() - start_trades) * 1000
                 delta_cvd = sum(t['amount'] if t['side'] == 'buy' else -t['amount'] for t in trades)
                 self.cvd_cumulative += delta_cvd
+                
+                # CVD persistieren (überlebt Neustarts)
+                await self.deps.redis.set_cache(
+                    "bruno:cvd:BTCUSDT",
+                    {
+                        "value": self.cvd_cumulative,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    },
+                    ttl=86400   # 24 Stunden
+                )
+                
                 await self._report_health("Binance_Trades", "online", latency_trades)
             except Exception:
                 await self._report_health("Binance_Trades", "offline", 0.0)
@@ -140,8 +169,9 @@ class QuantAgent(PollingAgent):
                 signal = {
                     "symbol": self.symbol,
                     "side": side,
-                    "amount": 0.01, # Default HFT Size
+                    "amount": 0.001,   # Bybit Futures Minimum (war 0.01 BTC — zu groß)
                     "ofi": ofi,
+                    "price": best_bid_p,   # KRITISCH: ExecutionAgent braucht Preis
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
                 await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal))

@@ -214,6 +214,7 @@ class IngestionAgentV2(StreamingAgent):
                     await session.execute(stmt)
                     
                     # Bevor wir leeren, merken wir uns den letzten Preis für Redis
+                    self._last_flush_count = len(self.candle_buffer)
                     latest_candle = self.candle_buffer[-1]
                     self.candle_buffer.clear()
                     
@@ -248,6 +249,18 @@ class IngestionAgentV2(StreamingAgent):
                     self.funding_buffer.clear()
                     
                 await session.commit()
+                
+                # Timestamp des letzten erfolgreichen Ingestion-Cycles
+                # ContextAgent prüft diesen Wert für den News-Watchdog
+                await self.deps.redis.set_cache(
+                    "bruno:ingestion:last_message",
+                    {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "candles": getattr(self, '_last_flush_count', 0)
+                    },
+                    ttl=7200   # 2 Stunden
+                )
+                
                 self.state.health = "healthy"
                 
             except Exception as e:

@@ -77,6 +77,12 @@ class AuthenticatedExchangeClient(PublicExchangeClient):
     def __init__(self, redis=None):
         super().__init__(redis)
         self.logger = logging.getLogger("execution_exchange")
+
+        if settings.BYBIT_MODE.lower() == "live" and not settings.LIVE_TRADING_APPROVED:
+            raise RuntimeError(
+                "BYBIT_MODE='live' ist gesperrt. Setze LIVE_TRADING_APPROVED=True "
+                "nur nach bestandenem Backtest und expliziter Freigabe."
+            )
         
         # Binance mit Keys re-initialisieren
         self.binance = ccxt.binance({
