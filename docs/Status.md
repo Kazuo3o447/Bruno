@@ -17,16 +17,16 @@
 |----------|------|
 | **Manifest Version** | `v2.0` |
 | **Codename** | Fundament & Ehrlichkeit |
-| **Status** | ✅ Phase A COMPLETED — Phase B HARDENED |
+| **Status** | ✅ Phase A COMPLETED — Phase B HARDENED — Phase C ACTIVE |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
 
 ---
 
-## Aktueller Fokus: Phase B — Daten-Erweiterung & Hardening
+## Aktueller Fokus: Phase C — LLM-Kaskade (3 Layer)
 
-> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
+> 🧠 **Intelligenz-Schicht:** 3-Layer LLM-Entscheidungskaskade mit Regime-Erkennung, strategischem Reasoning und Advocatus Diaboli
 
-**Ziel:** Phase A abgeschlossen — Bot ist "ehrlich" mit 100% echten Daten.
+**Ziel:** Intelligente Handels-Entscheidungen durch 3-stufige LLM-Kaskade.
 
 ### Phase A ✅ COMPLETED (2026-03-29)
 - [x] **ContextAgent**: Alle `random.uniform()` und `random.random()` entfernt
@@ -42,13 +42,22 @@
 - [x] **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
 - [x] **CryptoPanic Health**: Health-Telemetrie integriert
 
-### Phase B Status (aktuell)
+### Phase B ✅ COMPLETED (2026-03-29)
 - [x] CoinGlass graceful degradation ohne API-Key
 - [x] Telegram Notifications mit Chat-ID-Auth
 - [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
 - [x] Profit-Factor-Tracking aus realisierter P&L-Historie
 - [x] Phase-B Verifikationsendpoint mit echten Checks
-- [ ] Bybit Live-Trading bleibt gesperrt, bis `LIVE_TRADING_APPROVED=True`
+- [x] Bybit Live-Trading bleibt gesperrt, bis `LIVE_TRADING_APPROVED=True`
+
+### Phase C Status (aktuell)
+- [x] LLM Cascade Core (3-Layer) implementiert
+- [x] Regime Manager mit 2-Bestätigungs-Logik
+- [x] QuantAgent Integration mit Cascade-Aufruf
+- [x] LLM Cascade API Router für Monitoring
+- [ ] Cascade Testing mit echten GRSS-Daten
+- [ ] Failure WatchList Mechanismus
+- [ ] Decision History Tracking
 
 **Eiserne Regel:** Phase A ist abgeschlossen. Keine Zufallsdaten mehr im System.
 
@@ -69,16 +78,18 @@
 - **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
 - **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
 - **Phase B Hardening**: CoinGlass, Telegram, Profit Factor und Phase-B Status-Endpoint aktiv
+- **Phase C LLM Cascade**: 3-Layer Entscheidungslogik implementiert
 
 ### ⚠️ Bekannte Probleme
 - **ExecutionAgent**: Kein vollständiger Position-Tracker für Live-Trading (Phase D)
 
-### ❌ Fehlt Noch (nach Phase A)
-- Position Tracker für Live-Trading
-- Guarded Bybit Live-Execution
-- LLM-Kaskade (3 Layer)
-- Bybit Live-Trading-Freigabe
-- Backtest Engine
+### ❌ Fehlt Noch (nach Phase C)
+- Position Tracker für Live-Trading (Phase D)
+- Guarded Bybit Live-Execution (Phase D)
+- LLM-Kaskade Testing mit echten Daten (Phase C)
+- Failure WatchList Mechanismus (Phase C)
+- Bybit Live-Trading-Freigabe (Phase H)
+- Backtest Engine (Phase G)
 
 ---
 
@@ -87,8 +98,8 @@
 | Phase | Zeitraum | Fokus |
 |-------|----------|-------|
 | **A** | ✅ COMPLETED | Fundament — Echte Daten, keine Mocks |
-| **B** | Woche 2–3 | Daten-Erweiterung & Hardening — AKTIV |
-| **C** | Woche 3–5 | LLM-Kaskade (3 Layer) |
+| **B** | ✅ COMPLETED | Daten-Erweiterung & Hardening |
+| **C** | Woche 3–5 | LLM-Kaskade (3 Layer) — AKTIV |
 | **D** | parallel | Position Tracker + Stop-Loss |
 | **E** | parallel | Frontend Cockpit |
 | **F** | Woche 5–7 | Lern-System |
@@ -242,4 +253,4 @@ Die Implementierung erfolgt in den Phasen A-H wie im Manifest definiert:
 
 ---
 
-*Letzte Aktualisierung: 2026-03-29 — Phase A COMPLETED, Phase B AKTIV*
+*Letzte Aktualisierung: 2026-03-29 — Phase A COMPLETED, Phase B COMPLETED, Phase C ACTIVE*

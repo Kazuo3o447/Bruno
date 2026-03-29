@@ -1,6 +1,7 @@
 import redis.asyncio as redis
 import logging
 import json
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from app.core.config import settings
 
@@ -102,6 +103,22 @@ class RedisClient:
                 await self.redis.ping()
                 return True
             except Exception:
+                return False
+        return False
+
+    def get_current_time(self) -> str:
+        """Gibt aktuelle Zeit als ISO-String zurück."""
+        return datetime.now(timezone.utc).isoformat()
+
+    async def delete_cache(self, key: str) -> bool:
+        """Löscht einen Cache-Eintrag."""
+        if self.redis:
+            try:
+                await self.redis.delete(key)
+                logger.debug(f"Cache gelöscht: {key}")
+                return True
+            except Exception as e:
+                logger.error(f"Fehler beim Löschen von Cache {key}: {e}")
                 return False
         return False
 

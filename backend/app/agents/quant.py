@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, List
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
 from app.core.exchange_manager import PublicExchangeClient
+from app.llm import LLMCascade
 
 class QuantAgent(PollingAgent):
     """
@@ -22,9 +23,13 @@ class QuantAgent(PollingAgent):
         self.exm = PublicExchangeClient(redis=deps.redis)
         self.prev_ob = None
         self.ofi_threshold = 500.0 # Schwellenwert für Signale
+        self.cascade = LLMCascade(deps.redis)  # Phase C: LLM Cascade
         
     async def setup(self) -> None:
         self.logger.info(f"QuantAgent für {self.symbol} gestartet.")
+        
+        # Phase C: LLM Cascade initialisieren
+        await self.cascade.initialize()
 
         # CVD-State aus Redis laden (überlebt Restarts)
         cvd_cached = await self.deps.redis.get_cache("bruno:cvd:BTCUSDT")
@@ -163,19 +168,60 @@ class QuantAgent(PollingAgent):
 
             await self.deps.redis.set_cache("bruno:quant:micro", payload)
             
-            # SIGNAL GENERATION
+            # PHASE C: LLM Cascade statt einfacher OFI-Signal-Generation
             if abs(ofi) >= self.ofi_threshold:
-                side = "buy" if ofi > 0 else "sell"
-                signal = {
-                    "symbol": self.symbol,
-                    "side": side,
-                    "amount": 0.001,   # Bybit Futures Minimum (war 0.01 BTC — zu groß)
-                    "ofi": ofi,
-                    "price": best_bid_p,   # KRITISCH: ExecutionAgent braucht Preis
-                    "timestamp": datetime.now(timezone.utc).isoformat()
+                # GRSS-Daten für Cascade holen
+                grss_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
+                grss_score = grss_data.get("GRSS_Score", 50.0)
+                grss_components = {
+                    "macro_sentiment": grss_data.get("Macro_Sentiment", 0.0),
+                    "derivatives_flow": grss_data.get("Derivatives_Flow", 0.0),
+                    "funding_pressure": grss_data.get("Funding_Pressure", 0.0),
+                    "retail_fomo": grss_data.get("Retail_FOMO", 0.0),
                 }
-                await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal))
-                self.logger.info(f"Signal gesendet: {side.upper()} {self.symbol} (OFI: {ofi})")
+                
+                # Markt-Kontext für Cascade
+                market_context = {
+                    "btc_price": best_bid_p,
+                    "funding_rate": grss_data.get("Funding_Rate", 0.0),
+                    "vix": grss_data.get("VIX", 0.0),
+                    "oi_delta_pct": grss_data.get("OI_Delta_Pct", 0.0),
+                    "put_call_ratio": grss_data.get("Put_Call_Ratio", 0.0),
+                    "ndx_status": grss_data.get("NDX_Status", "unknown"),
+                    "ofi": ofi,
+                    "vamp": vamp,
+                    "cvd": self.cvd_cumulative,
+                }
+                
+                # LLM Cascade ausführen
+                cascade_result = await self.cascade.run(
+                    grss_components=grss_components,
+                    market_context=market_context,
+                    grss_score=grss_score
+                )
+                
+                # Nur wenn Cascade ein Signal gibt, senden
+                if cascade_result.is_actionable:
+                    signal = {
+                        "symbol": self.symbol,
+                        "side": cascade_result.decision.lower(),
+                        "amount": 0.001,   # Bybit Futures Minimum
+                        "ofi": ofi,
+                        "price": best_bid_p,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        # Phase C: Cascade-Extras für RiskAgent und ExecutionAgent
+                        **cascade_result.to_signal_extras()
+                    }
+                    await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal))
+                    self.logger.info(
+                        f"LLM Cascade Signal: {cascade_result.decision} {self.symbol} "
+                        f"(Regime: {cascade_result.regime}, Confidence: {cascade_result.final_confidence:.2f})"
+                    )
+                else:
+                    self.logger.info(
+                        f"LLM Cascade HOLD @ {cascade_result.aborted_at} "
+                        f"(Regime: {cascade_result.regime})"
+                    )
 
         except Exception as e:
             self.logger.error(f"QuantAgent Fehler: {e}")
