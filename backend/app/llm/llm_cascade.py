@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.core.llm_client import ollama_client
+from app.core.llm_provider import llm_provider
 from app.services.regime_config import RegimeManager, REGIME_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -225,7 +225,7 @@ class LLMCascade:
 
         # ── Layer 1: Regime-Klassifikation ──────────────────────────────────
         logger.debug("Cascade: Layer 1 gestartet...")
-        l1_raw = await self._generate_json(
+        l1_raw = await llm_provider.generate_json(
             prompt=_build_layer1_prompt(grss_components, {
                 "btc_price": market_context.get("btc_price"),
                 "funding_rate": market_context.get("funding_rate"),
@@ -261,7 +261,7 @@ class LLMCascade:
         failure_watchlist = await self._get_failure_watchlist()
         decision_history = await self._get_decision_history()
 
-        l2_raw = await self._generate_json(
+        l2_raw = await llm_provider.generate_json(
             prompt=_build_layer2_prompt(
                 layer1_output=l1_raw,
                 market_context=market_context,
@@ -304,7 +304,7 @@ class LLMCascade:
 
         # ── Layer 3: Advocatus Diaboli ───────────────────────────────────────
         logger.debug("Cascade: Layer 3 gestartet...")
-        l3_raw = await self._generate_json(
+        l3_raw = await llm_provider.generate_json(
             prompt=_build_layer3_prompt(l2_raw, market_context),
             layer_name="layer3_devil",
             use_reasoning_model=False,
@@ -350,38 +350,6 @@ class LLMCascade:
         await self._log_to_redis(result)
 
         return result
-
-    # ── JSON Generation Helper ──────────────────────────────────────────────
-
-    async def _generate_json(self, prompt: str, layer_name: str, use_reasoning_model: bool) -> dict:
-        """
-        Generiert JSON-Antwort vom LLM mit robustem Parsing.
-        """
-        try:
-            response = await ollama_client.generate_response(
-                prompt=prompt,
-                use_reasoning=use_reasoning,
-                temperature=0.1 if not use_reasoning else 0.3,
-            )
-            
-            # JSON aus Antwort extrahieren
-            try:
-                # Finde JSON-Block in der Antwort
-                start = response.find('{')
-                end = response.rfind('}') + 1
-                if start != -1 and end > start:
-                    json_str = response[start:end]
-                    return json.loads(json_str)
-                else:
-                    # Fallback: ganze Antwort parsen
-                    return json.loads(response)
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON Parse Error in {layer_name}: {e}")
-                return {"_parse_error": True, "raw_response": response}
-                
-        except Exception as e:
-            logger.error(f"LLM Error in {layer_name}: {e}")
-            return {"_parse_error": True, "error": str(e)}
 
     # ── Redis Helpers ────────────────────────────────────────────────────────
 

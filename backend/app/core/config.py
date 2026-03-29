@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # Ollama (natively on Windows host by default)
     OLLAMA_HOST: str = "http://host.docker.internal:11434"
     
+    # LLM Provider (Phase C)
+    LLM_PROVIDER: str = "ollama"  # ollama | cloud
+    DEEPSEEK_API_KEY: Optional[str] = None
+    GROQ_API_KEY: Optional[str] = None
+    
     # API
     API_V1_STR: str = "/api/v1"
     
