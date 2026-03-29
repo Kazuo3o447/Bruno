@@ -15,6 +15,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/llm", tags=["llm-cascade"])
 
 
+def _get_regime_config_summary(regime_name: str) -> Dict[str, Any]:
+    """Gibt Zusammenfassung der Regime-Konfiguration zurück."""
+    from app.services.regime_config_v2 import REGIME_CONFIGS
+    
+    config = REGIME_CONFIGS.get(regime_name)
+    if not config:
+        return {"error": "Unknown regime"}
+    
+    return {
+        "grss_threshold": config.grss_threshold,
+        "ofi_threshold": config.ofi_threshold,
+        "stop_loss_pct": config.stop_loss_pct,
+        "take_profit_pct": config.take_profit_pct,
+        "rr_ratio": config.rr_ratio,
+        "position_size_multiplier": config.position_size_multiplier,
+        "allow_longs": config.allow_longs,
+        "allow_shorts": config.allow_shorts,
+    }
+
+
 @router.get("/cascade/status")
 async def get_cascade_status(redis=Depends(get_redis_client)) -> Dict[str, Any]:
     """Gibt Status der LLM-Kaskade und letzten Run zurück."""
@@ -31,6 +51,9 @@ async def get_cascade_status(redis=Depends(get_redis_client)) -> Dict[str, Any]:
         # Failure Watchlist
         failure_watchlist = await redis.get_cache("bruno:failure_watchlist") or []
         
+        # Transition Buffer Status
+        transition_active = regime_state.get("transition_cycle", 0) > 0
+        
         return {
             "status": "active",
             "last_run": {
@@ -43,12 +66,17 @@ async def get_cascade_status(redis=Depends(get_redis_client)) -> Dict[str, Any]:
                 "layer1_confidence": last_cascade.get("layer1_confidence", 0.0),
                 "layer2_decision": last_cascade.get("layer2_decision"),
                 "layer3_blocker": last_cascade.get("layer3_blocker"),
+                "transition_active": last_cascade.get("transition_active", False),
+                "transition_cycles_left": last_cascade.get("transition_cycles_left", 0),
+                "effective_grss_threshold": last_cascade.get("effective_grss_threshold", 50),
             },
             "regime": {
                 "current": regime_state.get("regime", "unknown"),
                 "confirmed": regime_state.get("confirmed", False),
                 "confirmation_count": regime_state.get("confirmation_count", 0),
-                "config": regime_state.get("config", {}),
+                "transition_cycle": regime_state.get("transition_cycle", 0),
+                "transition_active": transition_active,
+                "config": _get_regime_config_summary(regime_state.get("regime", "unknown")),
                 "updated_at": regime_state.get("updated_at"),
             },
             "decision_history": decision_history[-5:],  # Letzte 5 Entscheidungen
@@ -107,15 +135,18 @@ async def force_regime(
 ) -> Dict[str, Any]:
     """Setzt Regime manuell (für Testing/Debug)."""
     try:
-        from app.services.regime_config import RegimeManager
+        from app.services.regime_config_v2 import RegimeManager
         
         regime_manager = RegimeManager(redis)
-        await regime_manager.force_regime(regime)
+        regime_manager._current_regime = regime
+        regime_manager._transition_cycle = 0
+        await regime_manager._persist()
         
         return {
             "status": "success",
             "regime": regime,
             "message": f"Regime manuell gesetzt auf: {regime}",
+            "config": _get_regime_config_summary(regime),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:

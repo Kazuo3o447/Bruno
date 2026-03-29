@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.core.llm_provider import llm_provider
-from app.services.regime_config import RegimeManager, REGIME_CONFIGS
+from app.services.regime_config_v2 import RegimeManager, REGIME_CONFIGS
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +223,19 @@ class LLMCascade:
 
         result = CascadeResult()
 
+        # ── GRSS Gate (vor Cascade) ───────────────────────────────────────
+        effective_threshold = self.regime_manager.get_effective_grss_threshold()
+        if grss_score < effective_threshold:
+            result.aborted_at = "grss_gate"
+            result.duration_ms = (time.perf_counter() - t_start) * 1000
+            logger.info(
+                f"Cascade HOLD @ GRSS Gate: {grss_score:.1f} < {effective_threshold} "
+                f"(Regime: {self.regime_manager._current_regime}, "
+                f"Transition: {self.regime_manager.is_in_transition()})"
+            )
+            await self._log_to_redis(result)
+            return result
+
         # ── Layer 1: Regime-Klassifikation ──────────────────────────────────
         logger.debug("Cascade: Layer 1 gestartet...")
         l1_raw = await llm_provider.generate_json(
@@ -393,6 +406,9 @@ class LLMCascade:
                 "layer1_confidence": result.layer1.get("confidence"),
                 "layer2_decision": result.layer2.get("decision"),
                 "layer3_blocker": result.layer3.get("blocker"),
+                "transition_active": self.regime_manager.is_in_transition(),
+                "transition_cycles_left": self.regime_manager._transition_cycle,
+                "effective_grss_threshold": self.regime_manager.get_effective_grss_threshold(),
             },
             ttl=600,  # 10 Minuten
         )
