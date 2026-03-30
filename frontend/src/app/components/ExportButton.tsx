@@ -47,7 +47,7 @@ export function ExportButton() {
           : "border-zinc-700 text-zinc-400 hover:border-zinc-500"
         }`}
     >
-      {loading ? "..." : copied ? "✓ Kopiert" : "📋 Export für Claude"}
+      {loading ? "..." : copied ? "✓ Kopiert" : "📋 Export"}
     </button>
   );
 }
