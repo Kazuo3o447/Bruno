@@ -29,6 +29,9 @@ AsyncSessionLocal = async_sessionmaker(
 
 Base = declarative_base()
 
+# Legacy compatibility - SessionLocal alias for AsyncSessionLocal
+SessionLocal = AsyncSessionLocal
+
 
 async def get_db() -> AsyncSession:
     """Dependency für FastAPI Endpoints."""

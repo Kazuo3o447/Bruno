@@ -91,6 +91,10 @@ class ContextAgent(PollingAgent):
         self._retail_score: float = 0.0
         self._retail_fomo_warning: bool = False
 
+        # RSS Feeds für System-Test (Legacy Support)
+        self.macro_feeds = ["https://feeds.finance.yahoo.com/rss/2.0/headline"]
+        self.crypto_feeds = ["https://cointelegraph.com/rss"]
+
     def get_interval(self) -> float:
         """
         5-Minuten-Intervall für Medium-Frequency Trading.
@@ -1033,3 +1037,38 @@ class ContextAgent(PollingAgent):
 
         except Exception as e:
             self.logger.error(f"ContextAgent process() Fehler: {e}", exc_info=True)
+
+    async def _fetch_rss(self, feed_url: str) -> dict:
+        """
+        Legacy RSS-Methode für System-Tests.
+        Einfacher Feed-Parser mit Timeout.
+        """
+        try:
+            import feedparser
+            import httpx
+            
+            start = time.perf_counter()
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(feed_url)
+                latency = (time.perf_counter() - start) * 1000
+                
+                if resp.status_code == 200:
+                    feed = feedparser.parse(resp.content)
+                    return {
+                        "status": "success",
+                        "entries": len(feed.entries),
+                        "title": feed.feed.get("title", "Unknown"),
+                        "latency_ms": round(latency, 2)
+                    }
+                else:
+                    return {
+                        "status": "error", 
+                        "error": f"HTTP {resp.status_code}",
+                        "latency_ms": round(latency, 2)
+                    }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "latency_ms": 0
+            }
