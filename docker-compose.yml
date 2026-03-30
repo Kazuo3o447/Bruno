@@ -61,11 +61,18 @@ services:
       - DB_NAME=${DB_NAME:-bruno_trading}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - FRED_API_KEY=${FRED_API_KEY}
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - DRY_RUN=${DRY_RUN:-true}
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - ./backups:/app/backups
+      - ./.env:/app/.env:ro
     logging:
       driver: "json-file"
       options:
@@ -91,8 +98,15 @@ services:
       - DB_NAME=${DB_NAME:-bruno_trading}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
+      - FRED_API_KEY=${FRED_API_KEY}
+      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - DRY_RUN=${DRY_RUN:-true}
     volumes:
       - ./backend:/app
+      - ./.env:/app/.env:ro
     logging:
       driver: "json-file"
       options:
