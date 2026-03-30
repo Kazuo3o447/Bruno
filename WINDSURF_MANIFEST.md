@@ -61,23 +61,11 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 - NLP-Pipeline: BART-MNLI (Bouncer) → FinBERT (Makro) → CryptoBERT (Crypto)
 - Dashboard: WebSocket-Streaming, Agent-Control (Pulse-Ready), Log-Terminal
 
-### Was existiert aber KAPUTT ist ⚠️
-- **ContextAgent: ~70% der GRSS-Inputs sind `random.uniform()` — KRITISCHER BUG**
-- **ExecutionAgent: Kein Position-Tracker, keine Exit-Logik, kein Stop-Loss-Handler**
-- **CVD in QuantAgent: `self.cvd_cumulative` verliert bei jedem Restart den State**
-- **offline_optimizer.py: Dummy-Implementation auf Mock-Daten — kein echter Backtest**
-- **QuantAgent: Polling-Intervall 5 Sekunden — muss auf 300 Sekunden**
-
-### Was fehlt ❌
-- Position Tracker (kritischer Pfad für Live-Trading)
-- Stop-Loss / Take-Profit Handler
-- Deribit-Integration (Put/Call Ratio, Max Pain, DVOL)
-- CoinGlass-Integration (Cross-Exchange Funding, ETF Flows, Liquidation Maps)
-- Perp Basis Signal (Binance Spot vs Futures — kostenlos)
-- Open Interest Delta (OI-Veränderung als Signal — kostenlos von Binance)
-- Post-Trade LLM Debrief (automatisches Lern-System)
-- Backtest Engine (echte historische Daten)
-- Telegram-Notifications
+### Was aktuell offen ist ⚠️
+- **Frontend Phase E:** Open Position Panel, Kill-Switch und GRSS Breakdown fehlen noch
+- **Dashboard-Integration:** Phase-E-Komponenten sind noch nicht in `dashboard/page.tsx` verdrahtet
+- **Phase G:** Backtest Engine / Optuna-Kalibrierung ist noch offen
+- **Phase H:** Live-Freigabe (`DRY_RUN=False`) ist noch offen
 
 ---
 
@@ -129,10 +117,9 @@ pcr = puts_oi / calls_oi
 # PCR > 1.0 → extremes Hedging → potentieller Boden
 ```
 
-#### BEZAHLT — CoinGlass API (Hobbyist: $29/Monat — PFLICHT)
+#### BEZAHLT — CoinGlass API (Hobbyist: $29/Monat — optional / später)
 | Endpoint | Signal | Priorität |
 |----------|--------|-----------|
-| `/api/futures/funding-rates` | Cross-Exchange Funding Divergenz (Binance vs Bybit vs OKX) | P1 |
 | `/api/futures/openInterest/chart` | OI cross-exchange aggregiert | P1 |
 | `/api/etf/list` | Bitcoin ETF Net Flows (IBIT, FBTC) 3-Tages-Aggregat | P1 |
 | `/api/futures/liquidation/chart` | Liquidation Heatmap / Cluster Map | P2 |
@@ -146,15 +133,20 @@ pcr = puts_oi / calls_oi
 divergence = abs(binance_funding - bybit_funding)
 ```
 
+**Hinweis:** Cross-Exchange Funding Divergenz wird jetzt kostenlos über Bybit + OKX Public APIs berechnet und benötigt keinen CoinGlass-Key mehr.
+
 #### KOSTENLOS — Bestehende Quellen (bereits geplant/implementiert)
 | Quelle | Signal | Status |
 |--------|--------|--------|
 | FRED API `DGS10` | US 10Y Treasury Yields | ✅ implementiert |
+| FRED API `WM2NS` | US M2 Money Supply YoY% | ✅ implementiert |
 | CBOE CSV `VIX_History` | VIX Index | ✅ implementiert (31.05 aktuell) |
 | Yahoo Finance `^NDX` | Nasdaq SMA200 | ✅ implementiert (429-anfällig) |
 | Alternative.me | Fear & Greed Index | ✅ implementiert |
 | CryptoPanic API | Breaking News | ✅ v2 implementiert |
 | 8x RSS Feeds | FinBERT/CryptoBERT Input | ✅ implementiert |
+| CoinGecko `coins/markets` | Stablecoin Supply Delta (USDT + USDC, 7d) | ✅ implementiert |
+| Bybit Public + OKX Public | Cross-Exchange Funding Divergenz | ✅ implementiert |
 
 **VIX Implementierung (✅ FIXED 30.03.2026):** CBOE CSV als primäre Quelle mit 3-Stufen-Fallback:
 1. CBOE CSV (offiziell, keine Rate Limits) - VIX 31.05
@@ -647,43 +639,41 @@ Ziel erreicht: Der Bot ist ehrlich. Kein Trade auf Basis von Zufallsdaten.
 10. **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
 11. **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
 
-**PHASE B — Daten-Erweiterung (Woche 2–3) — AKTIV**
+**PHASE B — Daten-Erweiterung (Woche 2–3) ✅ COMPLETED**
 
-1. CoinGlass API integrieren: Funding cross-exchange, ETF Flows (echter Wert)
-2. Telegram-Notifications: Jeder Trade, jedes Veto mit Reasoning
-3. yFinance-Fix: Staggered calls, Stooq-Fallback für VIX
-4. Velocity-Layer: GRSS-Veränderungsrate als eigenes Signal
+1. CoinGlass wird nur noch für ETF Flows / OI / Liquidationen / Coinbase Premium genutzt
+2. Telegram-Notifications laufen im Backend für Trade/Veto-Events
+3. yFinance-Fix: Nasdaq-Fallback ist umgesetzt
+4. Velocity-Layer: GRSS-Veränderungsrate ist integriert
 
-**PHASE C — LLM-Kaskade (Woche 3–5)**
+**PHASE C — LLM-Kaskade (Woche 3–5) ✅ COMPLETED**
 
-1. LLM-Kaskade (3 Layer) implementieren wie Abschnitt 3.3
-2. Rolling Decision History in Redis (letzte 3 Entscheidungen)
-3. LLM-Output → `llm_reasoning` Column in trade_audit_logs
-4. Regime-Detection + 4 Regime-Configs implementieren
+1. LLM-Kaskade (3 Layer) ist implementiert
+2. Rolling Decision History in Redis ist vorhanden
+3. LLM-Output wird in `trade_audit_logs` / Reasoning-Pfad geführt
+4. Regime-Detection + Regime-Configs sind im Backend vorhanden
 
-**PHASE D — Position Tracker + Exit-Logik (parallel zu C)**
+**PHASE D — Position Tracker + Exit-Logik (parallel zu C) ✅ COMPLETED**
 
-1. Position Tracker Redis-Schema implementieren (Abschnitt 3.4)
-2. Stop-Loss Watcher als separaten asyncio Task
-3. Take-Profit Handler
-4. Position Sizing Funktion
-5. DB Migrations für neue Columns
+1. Position Tracker Redis-Schema ist implementiert
+2. Stop-Loss Watcher ist vorhanden
+3. Take-Profit Handler ist vorhanden
+4. Position Sizing ist vorhanden
+5. DB-Migrations für die neuen Columns sind deployed
 
-**PHASE E — Frontend Cockpit (parallel zu C/D)**
+**PHASE E — Frontend Cockpit (parallel zu C/D) ❌ OFFEN**
+1. Open Position Panel fehlt noch
+2. Kill-Switch fehlt noch
+3. GRSS Breakdown Widget fehlt noch
+4. Daten-Frische-Monitor fehlt noch
+5. Reasoning Trail in Trade-History fehlt noch
+6. Daily P&L + Drawdown Widget fehlt noch
 
-1. Open Position Panel (höchste Priorität)
-2. Kill-Switch (Sicherheitskritisch)
-3. GRSS Breakdown Widget
-4. Daten-Frische-Monitor
-5. Reasoning Trail in Trade-History
-6. Daily P&L + Drawdown Widget
-
-**PHASE F — Lern-System (Woche 5–7)**
-
-1. Post-Trade LLM Debrief implementieren
-2. trade_debriefs Tabelle + Migration
-3. Manuelles Feedback-UI im Dashboard
-4. Debrief-Analyse im MLOps-Dashboard visualisieren
+**PHASE F — Lern-System (Woche 5–7) ✅ COMPLETED (Backend)**
+1. Post-Trade LLM Debrief ist implementiert
+2. `trade_debriefs` Tabelle + Migration sind vorhanden
+3. Manuelles Feedback-UI im Dashboard ist noch offen
+4. Debrief-Analyse im MLOps-Dashboard ist noch offen
 
 **PHASE G — Backtest + Kalibrierung (Woche 7–9)**
 
