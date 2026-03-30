@@ -86,6 +86,14 @@
 ### ⚠️ Bekannte Probleme
 - **ExecutionAgentV3**: Reale Exchange-Live-Exits und SL/TP-Fahrten sind noch nicht produktiv im Live-Modus validiert
 
+### ✅ Kürzlich Gelöst (2026-03-30)
+- **API Rate Limit Probleme**: Alle API-Blockaden behoben
+  - VIX: CBOE CSV Fallback (offizielle Quelle, kein Rate Limit)
+  - Reddit: OAuth + Anonym Fallback (kein 429 mehr)
+  - StockTwits: Graceful Skip (keine 403-Fehler mehr)
+  - Alpha Vantage: NDX Fallback implementiert (QQQ als Proxy)
+  - HuggingFace: Token-Integration für schnellere Model-Downloads
+
 ### ❌ Fehlt Noch (nach Phase D)
 - LLM-Kaskade Testing mit echten Daten (Phase C)
 - Failure WatchList Mechanismus (Phase C)
@@ -254,4 +262,4 @@ Die Implementierung erfolgt in den Phasen A-H wie im Manifest definiert:
 
 ---
 
-*Letzte Aktualisierung: 2026-03-29 — Phase A COMPLETED, Phase B COMPLETED, Phase C ACTIVE*
+*Letzte Aktualisierung: 2026-03-30 — API-Stabilität erreicht, alle 6 Agenten laufen stabil*
