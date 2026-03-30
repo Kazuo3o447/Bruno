@@ -13,6 +13,7 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const [priceChange, setPriceChange] = useState<number>(0);
 
   useEffect(() => {
     if (!chartContainerRef.current) return;
@@ -57,13 +58,19 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
     if (initialData && initialData.length > 0) {
       candlestickSeries.setData(initialData);
       const lastCandle = initialData[initialData.length - 1];
+      const firstCandle = initialData[0];
       setCurrentPrice(lastCandle.close);
+      const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+      setPriceChange(change);
     } else {
       // Demo-Daten generieren
       const demoData = generateDemoData();
       candlestickSeries.setData(demoData);
       const lastCandle = demoData[demoData.length - 1];
+      const firstCandle = demoData[0];
       setCurrentPrice(lastCandle.close);
+      const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+      setPriceChange(change);
     }
 
     // Chart auf Fenstergröße anpassen
@@ -92,8 +99,11 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
   useEffect(() => {
     if (initialData && initialData.length > 0 && seriesRef.current) {
       const lastCandle = initialData[initialData.length - 1];
+      const firstCandle = initialData[0];
       seriesRef.current.update(lastCandle);
       setCurrentPrice(lastCandle.close);
+      const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+      setPriceChange(change);
     }
   }, [initialData]);
 
@@ -108,7 +118,9 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
           <p className="text-2xl font-bold text-white">
             {currentPrice ? `$${currentPrice.toLocaleString()}` : "Loading..."}
           </p>
-          <p className="text-sm text-green-400">+2.34%</p>
+          <p className={`text-sm ${priceChange >= 0 ? "text-green-400" : "text-red-400"}`}>
+            {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)}%
+          </p>
         </div>
       </div>
       <div ref={chartContainerRef} className="w-full h-[400px]" />
