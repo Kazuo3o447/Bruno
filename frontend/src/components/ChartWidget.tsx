@@ -98,7 +98,7 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
     // Trade-Historie abrufen für Marker
     const fetchTradeMarkers = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/v1/trades/history?symbol=${symbol}`);
+        const res = await fetch(`http://localhost:8001/api/v1/trades/history?symbol=${symbol}`);
         if (!res.ok) return;
         const trades = await res.json();
         
@@ -121,7 +121,7 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
 
     fetchTradeMarkers();
 
-    const ws = new WebSocket(`ws://localhost:8000/ws/market/${symbol}`);
+    const ws = new WebSocket(`ws://localhost:8001/ws/market/${symbol}`);
 
     ws.onmessage = (event) => {
       try {

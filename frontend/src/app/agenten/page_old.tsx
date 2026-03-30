@@ -48,7 +48,7 @@ export default function AgentenPage() {
   const loadAgentsStatus = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:8000/api/v1/agents/status");
+      const response = await fetch("http://localhost:8001/api/v1/agents/status");
       const data = await response.json();
       setAgentsData(data);
     } catch (error) {
@@ -60,7 +60,7 @@ export default function AgentenPage() {
 
   const loadAgentInfo = async (agentId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/agents/info/${agentId}`);
+      const response = await fetch(`http://localhost:8001/api/v1/agents/info/${agentId}`);
       const data = await response.json();
       setSelectedAgent(data);
       setInfoModalOpen(true);
@@ -71,7 +71,7 @@ export default function AgentenPage() {
 
   const restartAgent = async (agentId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/agents/restart/${agentId}`, {
+      const response = await fetch(`http://localhost:8001/api/v1/agents/restart/${agentId}`, {
         method: "POST"
       });
       const data = await response.json();

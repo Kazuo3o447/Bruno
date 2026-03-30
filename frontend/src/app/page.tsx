@@ -9,7 +9,10 @@ import {
   ArrowRight, MessageSquare, Eye
 } from "lucide-react";
 
-const PriceLineChart = dynamic(() => import("../components/PriceLineChart"), { ssr: false });
+const LightweightChart = dynamic(() => import("../components/LightweightChart"), { ssr: false });
+const SystemMatrix = dynamic(() => import("../components/SystemMatrix"), { ssr: false });
+const ActivePositions = dynamic(() => import("../components/ActivePositions"), { ssr: false });
+
 
 /* ─── Types ─── */
 interface HealthData {
@@ -53,7 +56,7 @@ export default function HomePage() {
 
   // Realtime price via WS
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8000/ws/market/BTCUSDT");
+    const ws = new WebSocket("ws://localhost:8001/ws/market/BTCUSDT");
     ws.onmessage = (e) => {
       try {
         const p = JSON.parse(e.data);
@@ -74,7 +77,7 @@ export default function HomePage() {
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch("http://localhost:8000/health");
+        const res = await fetch("http://localhost:8001/health");
         if (res.ok) {
           const d = await res.json();
           setHealth({
@@ -97,7 +100,7 @@ export default function HomePage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/agents/status");
+        const res = await fetch("http://localhost:8001/api/v1/agents/status");
         if (res.ok) {
           const d = await res.json();
           setAgents(d.agents || []);
@@ -113,7 +116,7 @@ export default function HomePage() {
   useEffect(() => {
     const loadHealth = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/systemtest/news_health");
+        const res = await fetch("http://localhost:8001/api/v1/systemtest/news_health");
         if (res.ok) {
           const d = await res.json();
           const feeds = Object.values(d.feeds || {});
@@ -131,7 +134,7 @@ export default function HomePage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("http://localhost:8000/api/v1/systemtest/health/sources");
+        const res = await fetch("http://localhost:8001/api/v1/systemtest/health/sources");
         if (res.ok) {
           setSourceHealth(await res.json());
         }
@@ -145,7 +148,7 @@ export default function HomePage() {
   // Live log stream for activity feed
   useEffect(() => {
     const connect = () => {
-      const ws = new WebSocket("ws://localhost:8000/api/v1/logs/ws");
+      const ws = new WebSocket("ws://localhost:8001/api/v1/logs/ws");
       wsLogRef.current = ws;
       ws.onmessage = (event) => {
         try {
@@ -177,14 +180,7 @@ export default function HomePage() {
 
   return (
     <div className="p-6 lg:p-8 animate-page-in min-h-screen relative">
-      {/* Matrix Rain Background */}
-      <MatrixRain />
-      
-      {/* 3D BTC Bull - Top Right */}
-      <BTCBull />
-      
-      {/* Breaking Wave - Bottom */}
-      <BreakingWave />
+
       {/* Header */}
       <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-8 relative z-10">
         <div>
@@ -193,35 +189,8 @@ export default function HomePage() {
           </p>
           <h1 className="text-3xl font-extrabold tracking-tight relative">
             {/* Neon BRUNO Effect */}
-            <span className="relative">
-              <span 
-                className="absolute inset-0 text-cyan-400 blur-lg opacity-50"
-                style={{ 
-                  textShadow: "0 0 20px #22d3ee, 0 0 40px #22d3ee, 0 0 80px #22d3ee",
-                  animation: "flicker 3s infinite alternate"
-                }}
-              >
-                BRUNO
-              </span>
-              <span 
-                className="absolute inset-0 text-pink-500 blur-md opacity-30"
-                style={{ 
-                  transform: "translateX(2px) translateY(2px)"
-                }}
-              >
-                BRUNO
-              </span>
-              <span 
-                className="relative"
-                style={{
-                  background: "linear-gradient(180deg, #22d3ee 0%, #0891b2 50%, #164e63 100%)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  textShadow: "0 0 30px rgba(34, 211, 238, 0.5)",
-                }}
-              >
-                BRUNO
-              </span>
+            <span className="relative text-cyan-400">
+              BRUNO
             </span>
           </h1>
           <p className="text-xs text-cyan-200/60 font-mono mt-1">
@@ -284,65 +253,23 @@ export default function HomePage() {
                 </span>
               </div>
             </div>
-            {/* Mini stats */}
-            <div className="flex flex-wrap gap-3">
-              <MiniStat label="Portfolio" value="$1,000.00" color="text-white" />
-              <MiniStat label="Open PnL" value="+$0.00" color="text-slate-400" />
-              <MiniStat label="Trades (24h)" value="0" color="text-slate-400" />
-              <MiniStat label="Win Rate" value="—" color="text-slate-500" />
             </div>
-          </div>
-
-          {/* BTC Price Line Chart */}
-          <div className="flex-1 min-w-0">
-            <PriceLineChart symbol="BTCUSDT" />
-          </div>
-        </div>
-      </div>
-
-      {/* Main Grid: Health + Agents + Market + Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
-
-        {/* Data Sources Health (Phase 6) */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6 shadow-glow-emerald/5">
-          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
-            <Wifi className="w-4 h-4 text-emerald-400" />
-            Data Sources
-          </h2>
-          <div className="space-y-3">
-            <SourceHealthRow label="FRED Yields (DGS10)" data={sourceHealth?.FRED_Yields} />
-            <SourceHealthRow label="yFinance Nasdaq" data={sourceHealth?.yFinance_NDX} />
-            <SourceHealthRow label="yFinance VIX" data={sourceHealth?.yFinance_VIX} />
-            <SourceHealthRow label="Binance OB Feed" data={sourceHealth?.Binance_OB} />
-            <SourceHealthRow label="SQL Clusters" data={sourceHealth?.Liquidation_Cluster_SQL} />
-          </div>
-        </div>
-
-        {/* System Health */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
-          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
-            <Radio className="w-4 h-4 text-indigo-400" />
-            System Health
-          </h2>
-          <div className="space-y-3">
-            <HealthRow label="Backend API" ok={health.api} />
-            <HealthRow label="PostgreSQL" ok={health.db} />
-            <HealthRow label="Redis" ok={health.redis} />
-            <HealthRow label="Ollama LLM" ok={health.ollama} warn />
-            <div className="pt-2 mt-2 border-t border-[#1a1a2e]">
-              <div className="flex items-center justify-between py-1">
-                <span className="text-sm text-slate-400">News-Quellen</span>
-                {newsHealth ? (
-                  <span className={`flex items-center gap-1.5 text-xs font-medium ${newsHealth.active === newsHealth.total ? "text-emerald-400" : "text-amber-400"}`}>
-                     {newsHealth.active}/{newsHealth.total} Aktiv
-                  </span>
-                ) : (
-                  <span className="text-xs text-slate-600">Initialisiere…</span>
-                )}
-              </div>
+            
+            <div className="flex-1 min-w-0">
+               <LightweightChart symbol="BTCUSDT" />
             </div>
           </div>
         </div>
+
+        <div className="mb-8">
+          <ActivePositions />
+        </div>
+
+        <div className="mb-8">
+          <SystemMatrix />
+        </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
 
         {/* Agent Pipeline — now with more info */}
         <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
@@ -717,280 +644,4 @@ function formatUptime(sec: number): string {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
 
-/* ─── Visual Effects Components ─── */
 
-function MatrixRain() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    
-    const chars = "0123456789ABCDEF$€¥£฿₿";
-    const fontSize = 14;
-    const columns = Math.floor(canvas.width / fontSize);
-    const drops: number[] = [];
-    
-    for (let i = 0; i < columns; i++) {
-      drops[i] = Math.random() * -100;
-    }
-    
-    const draw = () => {
-      ctx.fillStyle = "rgba(10, 10, 15, 0.05)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      ctx.fillStyle = "#00ff41";
-      ctx.font = `${fontSize}px monospace`;
-      
-      for (let i = 0; i < drops.length; i++) {
-        const text = chars[Math.floor(Math.random() * chars.length)];
-        ctx.fillText(text, i * fontSize, drops[i] * fontSize);
-        
-        if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
-          drops[i] = 0;
-        }
-        drops[i]++;
-      }
-    };
-    
-    const interval = setInterval(draw, 35);
-    
-    const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    
-    window.addEventListener("resize", handleResize);
-    
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener("resize", handleResize);
-    };
-  }, []);
-  
-  return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 pointer-events-none z-0"
-      style={{ opacity: 0.15 }}
-    />
-  );
-}
-
-function BTCBull() {
-  return (
-    <div className="fixed top-20 right-8 w-48 h-48 z-10 pointer-events-none" style={{ perspective: "1000px" }}>
-      <div 
-        className="absolute inset-0"
-        style={{ 
-          transformStyle: "preserve-3d",
-          animation: "float 6s ease-in-out infinite"
-        }}
-      >
-        {/* Bull Body */}
-        <div 
-          className="absolute w-28 h-20 bg-gradient-to-br from-orange-500 via-orange-600 to-orange-800 rounded-2xl left-4 top-12"
-          style={{ 
-            transform: "rotateX(-10deg) rotateY(15deg)",
-            boxShadow: "0 20px 40px rgba(249, 115, 22, 0.5), inset 0 -10px 20px rgba(0,0,0,0.3)"
-          }}
-        />
-        
-        {/* Head */}
-        <div 
-          className="absolute w-20 h-16 bg-gradient-to-br from-orange-400 via-orange-500 to-orange-700 rounded-xl right-2 top-8"
-          style={{ 
-            boxShadow: "0 10px 30px rgba(249, 115, 22, 0.4)"
-          }}
-        />
-        
-        {/* Nose */}
-        <div 
-          className="absolute w-8 h-6 bg-gradient-to-b from-orange-600 to-orange-800 rounded-full right-0 top-10"
-        />
-        
-        {/* Horns */}
-        <div 
-          className="absolute w-3 h-14 bg-gradient-to-t from-orange-700 to-yellow-400 rounded-full right-8 top-0"
-          style={{ 
-            transform: "rotateZ(-20deg)",
-            boxShadow: "0 0 15px rgba(250, 204, 21, 0.6)"
-          }}
-        />
-        <div 
-          className="absolute w-3 h-12 bg-gradient-to-t from-orange-700 to-yellow-400 rounded-full right-16 top-2"
-          style={{ 
-            transform: "rotateZ(-35deg)",
-            boxShadow: "0 0 15px rgba(250, 204, 21, 0.6)"
-          }}
-        />
-        
-        {/* Legs */}
-        <div className="absolute w-6 h-14 bg-gradient-to-b from-orange-600 to-orange-800 rounded-full left-4 bottom-0" />
-        <div className="absolute w-6 h-14 bg-gradient-to-b from-orange-600 to-orange-800 rounded-full left-14 bottom-0" />
-        <div className="absolute w-6 h-14 bg-gradient-to-b from-orange-600 to-orange-800 rounded-full left-24 bottom-0" />
-        <div className="absolute w-6 h-14 bg-gradient-to-b from-orange-600 to-orange-800 rounded-full left-32 bottom-0" />
-        
-        {/* Bitcoin Symbol */}
-        <div 
-          className="absolute w-10 h-10 bg-gradient-to-br from-yellow-300 to-yellow-600 rounded-full flex items-center justify-center font-bold text-lg text-orange-900 left-16 top-16"
-          style={{ 
-            boxShadow: "0 0 25px rgba(250, 204, 21, 0.8)"
-          }}
-        >
-          ₿
-        </div>
-        
-        {/* Glow */}
-        <div 
-          className="absolute inset-0 rounded-full"
-          style={{ 
-            background: "radial-gradient(circle, rgba(249,115,22,0.3) 0%, transparent 70%)",
-            filter: "blur(20px)",
-            animation: "pulse 4s ease-in-out infinite"
-          }}
-        />
-      </div>
-      
-      <style jsx>{`
-        @keyframes float {
-          0%, 100% { transform: translateY(0) rotateY(0deg); }
-          25% { transform: translateY(-15px) rotateY(5deg); }
-          50% { transform: translateY(-8px) rotateY(0deg); }
-          75% { transform: translateY(-20px) rotateY(-5deg); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.3; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.05); }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-function BreakingWave() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    
-    canvas.width = window.innerWidth;
-    canvas.height = 150;
-    
-    let time = 0;
-    const particles: { x: number; y: number; vx: number; vy: number; life: number }[] = [];
-    
-    const createSplash = (x: number, y: number) => {
-      for (let i = 0; i < 15; i++) {
-        particles.push({
-          x,
-          y,
-          vx: (Math.random() - 0.5) * 6,
-          vy: -Math.random() * 6 - 1,
-          life: 1,
-        });
-      }
-    };
-    
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Main wave
-      ctx.beginPath();
-      ctx.moveTo(0, canvas.height);
-      
-      for (let x = 0; x < canvas.width; x += 5) {
-        const y = 80 + 
-          Math.sin((x + time * 2) * 0.01) * 20 +
-          Math.sin((x + time * 3) * 0.02) * 10 +
-          Math.sin((x + time) * 0.005) * 30;
-        ctx.lineTo(x, y);
-        
-        if (Math.sin((x + time * 2) * 0.01) > 0.8 && Math.random() > 0.97) {
-          createSplash(x, y);
-        }
-      }
-      
-      ctx.lineTo(canvas.width, canvas.height);
-      ctx.closePath();
-      
-      const gradient = ctx.createLinearGradient(0, 50, 0, canvas.height);
-      gradient.addColorStop(0, "rgba(0, 200, 255, 0.4)");
-      gradient.addColorStop(0.5, "rgba(0, 100, 200, 0.3)");
-      gradient.addColorStop(1, "rgba(0, 50, 150, 0.6)");
-      ctx.fillStyle = gradient;
-      ctx.fill();
-      
-      // Secondary wave
-      ctx.beginPath();
-      ctx.moveTo(0, canvas.height);
-      
-      for (let x = 0; x < canvas.width; x += 5) {
-        const y = 100 + 
-          Math.sin((x + time * 2.5) * 0.008) * 15 +
-          Math.sin((x + time * 2) * 0.015) * 12;
-        ctx.lineTo(x, y);
-      }
-      
-      ctx.lineTo(canvas.width, canvas.height);
-      ctx.closePath();
-      
-      const gradient2 = ctx.createLinearGradient(0, 80, 0, canvas.height);
-      gradient2.addColorStop(0, "rgba(100, 0, 255, 0.2)");
-      gradient2.addColorStop(1, "rgba(50, 0, 150, 0.4)");
-      ctx.fillStyle = gradient2;
-      ctx.fill();
-      
-      // Draw particles
-      particles.forEach((p, i) => {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.vy += 0.15;
-        p.life -= 0.02;
-        
-        if (p.life > 0) {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 2 * p.life, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(0, 200, 255, ${p.life})`;
-          ctx.fill();
-        }
-      });
-      
-      for (let i = particles.length - 1; i >= 0; i--) {
-        if (particles[i].life <= 0) {
-          particles.splice(i, 1);
-        }
-      }
-      
-      time += 1;
-      requestAnimationFrame(draw);
-    };
-    
-    draw();
-    
-    const handleResize = () => {
-      canvas.width = window.innerWidth;
-    };
-    
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-  
-  return (
-    <canvas
-      ref={canvasRef}
-      className="fixed bottom-0 left-0 right-0 pointer-events-none z-0"
-      style={{ opacity: 0.6 }}
-    />
-  );
-}

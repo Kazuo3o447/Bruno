@@ -51,8 +51,12 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ## 2. AKTUELLER PROJEKTSTATUS (Ehrlicher Ist-Stand)
 
 ### Was funktioniert ✅
-- **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse) — NEU**
-- LLM-Kaskade (3-Layer Entscheidungslogik mit qwen2.5/deepseek-r1) — **NEU**
+- **Bruno — Strategie-Rewrite: VOM FILTER ZUM TRADER (Phase 2026-03-30) — NEU**
+- **VETO-RELAXATION: VIX Limit 45, NDX Bearish blockiert nicht mehr — NEU**
+- **INSTITUTIONALE SIGNALE: ETF Flows (Farside), OI-Trend (Binance), Max Pain (Deribit) — NEU**
+- **FULL-DEPTH QUANT: 20-Level OFI & Liquidation Asymmetry — NEU**
+- **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse)**
+- LLM-Kaskade (3-Layer Entscheidungslogik mit qwen2.5/deepseek-r1)
 - Docker Compose Stack (PostgreSQL/TimescaleDB, Redis Stack, FastAPI, Next.js)
 - IngestionAgent: Binance WebSocket Multiplex (5 Streams), Batching, DB-Flush
 - AgentOrchestrator: Supervision Tree, Staged Startup, Restart-Logic mit Agent Heartbeats (15s)
@@ -155,104 +159,60 @@ divergence = abs(binance_funding - bybit_funding)
 
 ---
 
-### 3.2 Der echte GRSS-Score (Keine random.uniform() erlaubt)
+### 3.2 Der echte GRSS-Score v2 (Opportunity-Driven)
 
 **GRSS = Global Risk Sentiment Score (0–100)**
-Dieser Score ist das primäre Go/No-Go-Signal. Ab `GRSS < 40` → Veto aktiv.
+Paradigma: "Handeln wenn eine Gelegenheit besteht — mit dem Risiko das die Bedingungen vorgeben."
 
 ```python
 def calculate_grss(data: dict) -> float:
     score = 50.0  # Neutral-Basis
 
-    # === MAKRO LAYER (30% Gewicht, max ±30 Punkte) ===
-    # Nasdaq SMA200
-    if data['ndx_status'] == 'BULLISH':
-        score += 15.0
-    elif data['ndx_status'] == 'BEARISH':
-        score -= 20.0  # Asymmetrische Bestrafung
-
-    # 10Y Yields
-    if data['yields_10y'] < 4.0:
-        score += 8.0
-    elif data['yields_10y'] > 4.5:
-        score -= 10.0
-
-    # VIX
-    if data['vix'] < 15:
-        score += 7.0
-    elif data['vix'] > 25:
-        score -= 15.0
-    elif data['vix'] > 20:
-        score -= 7.0
-
-    # DXY Decoupling (BTC steigt trotz starkem Dollar)
-    if data['dxy_change'] > 0.005 and data['btc_change_24h'] > 0:
-        score += 10.0
-
-    # === DERIVATIVES LAYER (40% Gewicht, max ±40 Punkte) ===
+    # === 1. DERIVATIVES LAYER (40% Gewicht) ===
     # Funding Rate (Binance)
-    funding = data['funding_rate']
-    if -0.01 <= funding <= 0.03:
-        score += 10.0   # Gesundes Niveau
-    elif funding > 0.05:
-        score -= 15.0   # Überhitzt — Long-Squeeze Risiko
-    elif funding < -0.01:
-        score += 5.0    # Short-dominiert — Reversal-Potenzial
+    if -0.01 <= data['funding_rate'] <= 0.03: score += 10.0
+    elif data['funding_rate'] > 0.05: score -= 15.0
+    
+    # OI-Delta + Preis-Richtung
+    if data['oi_delta_pct'] > 0 and data['price_change_1h'] > 0: score += 10.0
+    # Put/Call Ratio
+    if data['put_call_ratio'] < 0.45: score += 10.0
+    elif data['put_call_ratio'] > 0.85: score -= 10.0
 
-    # Cross-Exchange Funding Divergenz (CoinGlass)
-    if data['funding_divergence'] < 0.01:
-        score += 8.0
-    elif data['funding_divergence'] > 0.03:
-        score -= 10.0
+    # === 2. INSTITUTIONAL LAYER (20% Gewicht) ===
+    # ETF Flows (Farside Investors)
+    if data['etf_flow_3d_m'] > 300: score += 10.0
+    elif data['etf_flow_3d_m'] < -300: score -= 15.0
+    # OI-Trend 7d
+    if data['oi_7d_change_pct'] > 5: score += 5.0
+    # Stablecoin Delta
+    if data['stablecoin_delta_bn'] > 1.0: score += 5.0
 
-    # Open Interest Delta (Richtung)
-    if data['oi_delta_pct'] > 0 and data['price_change_1h'] > 0:
-        score += 10.0   # OI steigt + Preis steigt = echte Akkumulation
-    elif data['oi_delta_pct'] > 0 and data['price_change_1h'] < 0:
-        score -= 8.0    # OI steigt + Preis fällt = Short-Aufbau
+    # === 3. SENTIMENT LAYER (20% Gewicht) ===
+    score += ((data['fear_greed'] - 50) / 50) * 10.0
+    score += data['llm_news_sentiment'] * 10.0
 
-    # Put/Call Ratio (Deribit)
-    pcr = data['put_call_ratio']
-    if pcr < 0.5:
-        score += 12.0   # Call-Dominanz = bullish
-    elif pcr > 0.8:
-        score -= 10.0   # Hedge-Druck
+    # === 4. MAKRO LAYER (20% Gewicht) — RELAXED ===
+    if data['vix'] < 15: score += 5.0
+    elif data['vix'] > 30: score -= 10.0  # Kein Veto mehr bei 25!
+    if data['ndx_status'] == 'BULLISH': score += 5.0
 
-    # Perp Basis (Binance Spot vs Futures)
-    basis = data['perp_basis_pct']
-    if 0.01 <= basis <= 0.05:
-        score += 5.0    # Gesundes Futures-Premium
-    elif basis > 0.1:
-        score -= 10.0   # Überhitztes Futures-Premium
+    # === 5. PATTERN BONUS (Additive) ===
+    score += data.get('pattern_score', 0)
 
-    # === SENTIMENT LAYER (30% Gewicht, max ±30 Punkte) ===
-    # Fear & Greed Index
-    fng = data['fear_greed']  # 0–100
-    fng_normalized = (fng - 50) / 50  # -1.0 bis +1.0
-    score += fng_normalized * 15.0
-
-    # ETF Flows 3-Tages-Aggregat (CoinGlass)
-    etf_flows = data['etf_flows_3d_m']  # in Mio USD, echte Daten
-    if etf_flows > 500:
-        score += 10.0
-    elif etf_flows < -500:
-        score -= 15.0
-
-    # LLM News Sentiment (aggregierter FinBERT/CryptoBERT Score)
-    # Dieser ist das einzige erlaubte "weiche" Signal
-    # Muss aus echten RSS-Feed-Analysen kommen, nicht random
-    llm_sentiment = data['llm_news_sentiment']  # -1.0 bis +1.0
-    score += llm_sentiment * 10.0
-
-    # === HARD VETOES (überschreiben alles) ===
-    if data['news_silence_seconds'] > 3600:
-        return 0.0  # Kein Datenstrom = kein Trading
-    if data['vix'] > 35:
-        return 10.0  # Markt-Crash-Modus
-    if data['ndx_status'] == 'BEARISH' and data['funding_rate'] > 0.05:
-        return 5.0  # Bärenmarkt + überhitzte Longs = maximales Risiko
-
+    # === HARD VETOES (Nur Extreme) ===
+    if data['vix'] > 45: return 5.0
+    if data['news_silence_seconds'] > 3600: return 0.0
+    
     return max(0.0, min(100.0, score))
+```
+
+**VOLATILITY-ADAPTIVE SIZING (RiskAgent):**
+- VIX < 15: 1.0x Größe
+- VIX 15-25: 0.8x Größe
+- VIX 25-35: 0.6x Größe
+- VIX 35-45: 0.3x Größe
+- VIX > 45: VETO
 ```
 
 ---

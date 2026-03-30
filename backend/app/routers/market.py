@@ -1,8 +1,12 @@
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc
 from app.core.redis_client import get_redis_client
-from typing import Dict, Any, Optional
+from app.core.database import get_db
+from app.schemas.models import MarketCandle
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -119,3 +123,40 @@ async def get_grss_full(redis=Depends(get_redis_client)):
     except Exception as e:
         logger.error(f"Error fetching GRSS full: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/klines/{symbol}")
+async def get_klines(
+    symbol: str, 
+    limit: int = 1440, 
+    db: AsyncSession = Depends(get_db)
+) -> List[Dict[str, Any]]:
+    """Gibt historische Kerzen-Daten für ein Symbol zurück (TimescaleDB)."""
+    try:
+        # Symbol-Format anpassen (z.B. BTC/USDT -> BTCUSDT)
+        db_symbol = symbol.replace("/", "").upper()
+        
+        query = (
+            select(MarketCandle)
+            .where(MarketCandle.symbol == db_symbol)
+            .order_by(desc(MarketCandle.time))
+            .limit(limit)
+        )
+        
+        result = await db.execute(query)
+        candles = result.scalars().all()
+        
+        # In chronologische Reihenfolge bringen (für Chart)
+        return [
+            {
+                "time": int(c.time.timestamp()),
+                "open": c.open,
+                "high": c.high,
+                "low": c.low,
+                "close": c.close,
+                "volume": c.volume
+            }
+            for c in reversed(candles)
+        ]
+    except Exception as e:
+        logger.error(f"Error fetching klines for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

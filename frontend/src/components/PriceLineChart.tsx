@@ -75,7 +75,7 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
 
-    const ws = new WebSocket(`ws://localhost:8000/ws/market/${symbol}`);
+    const ws = new WebSocket(`ws://localhost:8001/ws/market/${symbol}`);
 
     ws.onmessage = (event) => {
       try {

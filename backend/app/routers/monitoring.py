@@ -33,11 +33,11 @@ async def get_live_telemetry():
         last_event = json.loads(last_event_raw) if last_event_raw else None
 
         # Agent Heartbeats aus agent_status
-        from app.core.database import get_session
+        from app.core.database import AsyncSessionLocal
         from sqlalchemy import text
         agent_heartbeats = {}
         try:
-            async with get_session() as session:
+            async with AsyncSessionLocal() as session:
                 result = await session.execute(text("""
                     SELECT agent_id, status, last_heartbeat,
                            EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) as age_seconds

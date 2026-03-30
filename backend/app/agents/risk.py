@@ -102,27 +102,30 @@ class RiskAgent(PollingAgent):
                 # 3. Market Metrics & GRSS
                 grss = context.get("GRSS_Score", 0.0)
                 vix = context.get("VIX", 0.0)
-                yields = context.get("Yields_10Y", 0.0)
-                
-                # Neue Keys aus erweitertem ContextAgent-Payload
+                yields = context.get("Yields_10Y", 4.3)
                 dvol = context.get("DVOL", 55.0)
-                pcr = context.get("Put_Call_Ratio", 0.6)
                 
+                # --- VETO LOGIK (New Paradigm: Opportunity-Driven) ---
                 if grss < 40:
-                    veto, reason, leverage = True, f"VETO: Low GRSS ({grss}). Risk-Off Mode.", 0.0
-                elif vix > 25:
-                    veto, reason, leverage = True, f"VETO: Market Stress High (VIX: {vix}).", 0.0
-                elif yields > 4.5:
-                    veto, reason, leverage = True, f"VETO: Yields High (10Y: {yields}%).", 0.0
+                    veto, reason, leverage = True, f"VETO: Low GRSS ({grss}). Standby.", 0.0
+                elif vix > 45:
+                    veto, reason, leverage = True, f"VETO: Extreme Panic (VIX: {vix}).", 0.0
+                elif yields > 5.0:
+                    veto, reason, leverage = True, f"VETO: Yields Extreme (10Y: {yields}%).", 0.0
                 
-                # DVOL > 80: Hohe implizite Vola → Leverage halbieren (kein harter Veto)
-                if not veto and dvol > 80:
-                    leverage = leverage * 0.5 if leverage > 0 else 0
-                    dvol_note = f"DVOL hoch ({dvol:.0f}) — Leverage auf 50% reduziert"
-                    reason_notes.append(dvol_note)
-                    self.logger.warning(dvol_note)
+                # --- VOLATILITY-ADAPTIVE SIZING (The "Multiplier") ---
+                vol_multiplier = 1.0
+                if vix < 15: vol_multiplier = 1.0
+                elif vix < 25: vol_multiplier = 0.8
+                elif vix < 35: vol_multiplier = 0.6
+                elif vix < 45: vol_multiplier = 0.3
+                else: vol_multiplier = 0.0
                 
-                # 4. Nasdaq SMA200 Hard Veto (Longs ONLY)
+                leverage = leverage * vol_multiplier
+                if not veto and vol_multiplier < 1.0:
+                    reason_notes.append(f"Vola-Sizing: {vol_multiplier:.1f}x (VIX {vix:.1f})")
+
+                # 4. Nasdaq SMA200 (Informational only in v2, no Veto)
                 macro_status = context.get("Macro_Status", "BULLISH")
                 
                 # 5. Todeszonen-Filter (<0.5% Distanz zu Liq-Wall)
@@ -138,17 +141,15 @@ class RiskAgent(PollingAgent):
                     price_dir = 1 if price > self.last_price else -1 if price < self.last_price else 0
                     cvd_dir = 1 if cvd > self.last_cvd else -1 if cvd < self.last_cvd else 0
                     if price_dir == 1 and cvd_dir == -1:
-                        # CVD Veto ist weicher (Abwertung statt Sperre)
-                        leverage *= 0.5
+                        leverage *= 0.7  # Etwas sanftere Abwertung
                 
                 self.last_price, self.last_cvd = price, cvd
 
-            # 7. Finale Entscheidung mit Nasdaq Filter-Check (Institutional 2026)
-            long_veto = veto or (macro_status == "BEARISH")
-            short_veto = veto # Shorts bleiben erlaubt bei Nasdaq Bear-State
+            # 7. Finale Entscheidung (Nasdaq BEARISH blockiert NICHT mehr)
+            long_veto = veto 
+            short_veto = veto
             
-            # 7. Finale Entscheidung
-            final_reason = reason if veto else ("Nasdaq BEARISH: Longs blocked." if long_veto else "All clear.")
+            final_reason = reason if veto else "All clear."
             if reason_notes:
                 final_reason = f"{final_reason} | {'; '.join(reason_notes)}"
 
@@ -157,9 +158,9 @@ class RiskAgent(PollingAgent):
                 "Long_Veto_Active": long_veto,
                 "Short_Veto_Active": short_veto,
                 "Reason": final_reason,
-                "Max_Leverage": leverage if not long_veto else (leverage * 0.5 if not veto else 0.0),
+                "Max_Leverage": round(leverage, 2),
+                "Volatility_Size_Multiplier": round(vol_multiplier, 2),
                 "DVOL_At_Decision": round(dvol, 1),
-                "PCR_At_Decision": round(pcr, 3),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             
@@ -172,8 +173,8 @@ class RiskAgent(PollingAgent):
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "veto_active": veto,
                     "reason": final_reason,
-                    "grss": decision.get("GRSS_Score") if not veto else None,
-                    "vix": decision.get("VIX"),
+                    "grss": final_decision.get("GRSS_Score") if not veto else None,
+                    "vix": final_decision.get("VIX"),
                     "change": "VETO_ON" if veto else "VETO_OFF",
                 }
                 await self.deps.redis.redis.lpush(

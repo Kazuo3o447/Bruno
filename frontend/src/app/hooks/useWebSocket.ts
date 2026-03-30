@@ -35,7 +35,7 @@ export function useWebSocket({
   }>({});
 
   const connectWebSocket = useCallback((endpoint: string, onMessage: (data: any) => void) => {
-    const wsUrl = `ws://localhost:8000${endpoint}`;
+    const wsUrl = `ws://localhost:8001${endpoint}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {

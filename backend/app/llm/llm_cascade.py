@@ -80,22 +80,26 @@ class CascadeResult:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_layer1_prompt(grss_components: dict, market_snapshot: dict) -> str:
-    return f"""Analysiere das aktuelle Bitcoin-Marktregime.
+    return f"""Analysiere das aktuelle Bitcoin-Marktregime mit Fokus auf institutionelle Flows.
 
-GRSS-Komponenten (Global Risk Sentiment Score):
+GRSS-Komponenten & Neue Signale:
 {json.dumps(grss_components, ensure_ascii=False, indent=2)}
 
-Markt-Snapshot:
+Markt-Snapshot (Micro/Liquidity):
 {json.dumps(market_snapshot, ensure_ascii=False, indent=2)}
 
-Bestimme das aktuelle Regime und deine Konfidenz.
+Institutionelle Kontexte:
+- ETF Flows: {market_snapshot.get('etf_flows_3d_m', 'N/A')}
+- OI-Trend: {market_snapshot.get('oi_trend', 'N/A')}
+- Market Patterns: {market_snapshot.get('active_patterns', 'N/A')}
 
+Bestimme das aktuelle Regime und deine Konfidenz.
 Gib zurück als JSON:
 {{
-    "regime": "trending_bull|ranging|high_vola|bear",
+    "regime": "trending_bull|ranging|high_vola|bear|capitulation_rebound",
     "confidence": 0.0 bis 1.0,
     "key_signals": ["Signal 1", "Signal 2", "Signal 3"],
-    "reasoning": "Ein Satz warum dieses Regime (max 30 Wörter)"
+    "reasoning": "Warum dieses Regime? (max 30 Wörter)"
 }}"""
 
 
@@ -148,11 +152,13 @@ Sei hart. Sei kritisch. Keine Höflichkeit.
 TRADE-ENTSCHEIDUNG (Layer 2):
 {json.dumps(layer2_output, ensure_ascii=False, indent=2)}
 
-MARKTKONTEXT (Schlüsselwerte):
+MARKTDATEN (Bear-Case Suche):
 Funding: {market_context.get('funding_rate', 'N/A')}
 GRSS: {market_context.get('grss', 'N/A')}
-PCR: {market_context.get('put_call_ratio', 'N/A')}
-OI-Delta: {market_context.get('oi_delta_pct', 'N/A')}
+ETF Flows: {market_context.get('etf_flow_today_m', 'N/A')}
+OI-7d: {market_context.get('oi_7d_change_pct', 'N/A')}
+OI-Trend: {market_context.get('oi_trend', 'N/A')}
+Max Pain Distance: {market_context.get('max_pain_dist_pct', 'N/A')}%
 VIX: {market_context.get('vix', 'N/A')}
 
 Gib zurück als JSON:
@@ -250,6 +256,9 @@ class LLMCascade:
                 "oi_delta_pct": market_context.get("oi_delta_pct"),
                 "put_call_ratio": market_context.get("put_call_ratio"),
                 "ndx_status": market_context.get("ndx_status"),
+                "etf_flows_3d_m": market_context.get("etf_flow_3d_m"),
+                "oi_trend": market_context.get("oi_trend"),
+                "active_patterns": market_context.get("active_patterns")
             }),
             layer_name="layer1_regime",
             use_reasoning_model=False,

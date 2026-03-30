@@ -24,7 +24,7 @@ class QuantAgent(PollingAgent):
         self.cvd_cumulative = 0.0
         self.exm = PublicExchangeClient(redis=deps.redis)
         self.prev_ob = None
-        self.ofi_threshold = 500.0 # Schwellenwert für Signale
+        self.ofi_threshold = 50.0  # Full-Depth OFI. Nach 1 Woche Beobachtung kalibrieren.
         self.cascade = LLMCascade(deps.redis)  # Phase C: LLM Cascade
         
     async def setup(self) -> None:
@@ -104,27 +104,121 @@ class QuantAgent(PollingAgent):
         current_map[source] = health_data
         await self.deps.redis.set_cache("bruno:health:sources", current_map)
 
-    def _calculate_ofi(self, current_ob: Dict) -> float:
-        """Berechnet den Order Flow Imbalance (OFI) basierend auf dem Vorzustand."""
-        if not self.prev_ob:
-            self.prev_ob = current_ob
+    def _calculate_ofi(self, current_ob: dict, prev_ob: dict | None = None) -> float:
+        """
+        Order Flow Imbalance über alle verfügbaren Orderbook-Levels.
+
+        Summiert Volumen-Imbalancen über alle bid/ask-Levels statt nur Top-of-Book.
+        Produziert Werte typischerweise zwischen -500 und +500 auf BTC/USDT Futures.
+
+        Positive Werte → Kauf-Druck dominiert
+        Negative Werte → Verkauf-Druck dominiert
+
+        Threshold-Empfehlung: 50 (Startwert, nach einer Woche Beobachtung kalibrieren)
+        """
+        if prev_ob is None:
             return 0.0
-        
-        # Best Bid
-        p_b, v_b = current_ob['bids'][0][0], current_ob['bids'][0][1]
-        p_b_prev, v_b_prev = self.prev_ob['bids'][0][0], self.prev_ob['bids'][0][1]
-        
-        wif_b = v_b if p_b > p_b_prev else (v_b - v_b_prev if p_b == p_b_prev else -v_b_prev)
-        
-        # Best Ask
-        p_a, v_a = current_ob['asks'][0][0], current_ob['asks'][0][1]
-        p_a_prev, v_a_prev = self.prev_ob['asks'][0][0], self.prev_ob['asks'][0][1]
-        
-        wif_a = -v_a if p_a < p_a_prev else (v_a_prev - v_a if p_a == p_a_prev else v_a_prev)
-        
-        ofi = wif_b - wif_a
-        self.prev_ob = current_ob
-        return ofi
+
+        bids_curr = current_ob.get('bids', [])
+        asks_curr = current_ob.get('asks', [])
+        bids_prev = prev_ob.get('bids', [])
+        asks_prev = prev_ob.get('asks', [])
+
+        if not bids_curr or not asks_curr or not bids_prev or not asks_prev:
+            return 0.0
+
+        ofi = 0.0
+        depth = min(20, len(bids_curr), len(bids_prev))
+
+        # Bid-Seite: Kauf-Druck
+        for i in range(depth):
+            try:
+                p_curr, v_curr = float(bids_curr[i][0]), float(bids_curr[i][1])
+                p_prev, v_prev = float(bids_prev[i][0]), float(bids_prev[i][1])
+
+                if p_curr > p_prev:
+                    ofi += v_curr          # Preis gestiegen → neues Volumen zählt voll
+                elif p_curr == p_prev:
+                    ofi += (v_curr - v_prev)  # Gleiches Level → Delta
+                # p_curr < p_prev: Bid hat sich entfernt → kein positiver Beitrag
+            except (IndexError, ValueError, TypeError):
+                continue
+
+        # Ask-Seite: Verkauf-Druck (negiert)
+        depth_a = min(20, len(asks_curr), len(asks_prev))
+        for i in range(depth_a):
+            try:
+                p_curr, v_curr = float(asks_curr[i][0]), float(asks_curr[i][1])
+                p_prev, v_prev = float(asks_prev[i][0]), float(asks_prev[i][1])
+
+                if p_curr < p_prev:
+                    ofi -= v_curr          # Ask gesunken → Verkaufsdruck steigt
+                elif p_curr == p_prev:
+                    ofi -= (v_curr - v_prev)
+            except (IndexError, ValueError, TypeError):
+                continue
+
+        return round(ofi, 2)
+
+    def _calculate_liquidation_asymmetry(
+        self, walls: list, current_price: float
+    ) -> dict:
+        """
+        Berechnet Richtungs-Asymmetrie der Liquidations-Cluster.
+
+        Shorts oberhalb = Long-Positionen die beim Preisstieg liquidiert werden
+        (= Short-Squeeze-Fuel → Preis steigt schneller)
+
+        Longs unterhalb = Long-Positionen die beim Preisfall liquidiert werden
+        (= Long-Liquidation-Fuel → Preis fällt schneller)
+
+        Rückgabe:
+        {
+            "shorts_above_m": float,     # Short-Liquidationen oberhalb, in Mio. USD
+            "longs_below_m": float,      # Long-Liquidationen unterhalb, in Mio. USD
+            "asymmetry_ratio": float,    # shorts_above / longs_below
+            "bias": str,                 # "upside" | "downside" | "balanced"
+            "squeeze_potential": bool    # True wenn ratio > 2.0
+        }
+        """
+        if not walls or not current_price:
+            return {
+                "shorts_above_m": 0.0, "longs_below_m": 0.0,
+                "asymmetry_ratio": 1.0, "bias": "balanced",
+                "squeeze_potential": False
+            }
+
+        # In der Liquidations-DB sind Force-Orders gespeichert
+        # Zone > current_price → Short-Liquidationen (Shorts die squeezed werden)
+        # Zone < current_price → Long-Liquidationen (Longs die ausgestoppt werden)
+        shorts_above = sum(
+            w.get("amount", 0) for w in walls
+            if w.get("zone", 0) > current_price * 1.001  # mind. 0.1% oberhalb
+        )
+        longs_below = sum(
+            w.get("amount", 0) for w in walls
+            if w.get("zone", 0) < current_price * 0.999  # mind. 0.1% unterhalb
+        )
+
+        if longs_below == 0:
+            ratio = 3.0 if shorts_above > 0 else 1.0
+        else:
+            ratio = shorts_above / longs_below
+
+        if ratio > 1.5:
+            bias = "upside"    # Short-Squeeze-Potential dominiert
+        elif ratio < 0.67:
+            bias = "downside"  # Long-Liquidation-Potential dominiert
+        else:
+            bias = "balanced"
+
+        return {
+            "shorts_above_m": round(shorts_above / 1e6, 1),
+            "longs_below_m": round(longs_below / 1e6, 1),
+            "asymmetry_ratio": round(ratio, 2),
+            "bias": bias,
+            "squeeze_potential": ratio > 2.0,
+        }
 
     async def _get_liquidation_walls(self) -> List[Dict]:
         """Aggregiert Liquidations-Cluster via SQL (Rounding -2)."""
@@ -163,7 +257,8 @@ class QuantAgent(PollingAgent):
             # 2. HFT Metriken
             self.state.sub_state = "calculating metrics"
             vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
-            ofi = self._calculate_ofi(ob)
+            ofi = self._calculate_ofi(ob, self.prev_ob)
+            self.prev_ob = ob
             
             # 3. CVD & Liq Walls
             self.state.sub_state = "fetching trades & liq"
@@ -190,6 +285,7 @@ class QuantAgent(PollingAgent):
                 await self._report_health("Binance_Trades", "offline", 0.0)
 
             liq_walls = await self._get_liquidation_walls()
+            liq_asymmetry = self._calculate_liquidation_asymmetry(liq_walls, best_bid_p)
 
             # 4. Payload & Signal Generation
             payload = {
@@ -199,6 +295,7 @@ class QuantAgent(PollingAgent):
                 "CVD": round(self.cvd_cumulative, 2),
                 "OFI": round(ofi, 2),
                 "Liquidation_Walls": liq_walls,
+                "Liq_Asymmetry": liq_asymmetry,
                 "Source": ob.get('source', 'unknown'),
                 "latency_ms": ob.get('latency_ms', 0),
                 "timestamp": datetime.now(timezone.utc).isoformat()

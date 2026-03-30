@@ -52,23 +52,31 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
   useEffect(() => {
     if (!isOpen) return;
 
-    const websocket = new WebSocket("ws://localhost:8000/api/v1/logs/ws");
+    console.log("Attempting to connect to Log WebSocket...");
+    const websocket = new WebSocket("ws://localhost:8001/api/v1/logs/ws");
     
     websocket.onopen = () => {
-      console.log("Log WebSocket connected");
+      console.log("Log WebSocket connected successfully");
     };
     
     websocket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      
-      if (data.type === "history") {
-        setLogs(data.logs);
-        updateSources(data.logs);
-      } else if (data.type === "new_log") {
-        setLogs((prev) => [data.log, ...prev].slice(0, 10000));
-        if (!sources.includes(data.log.source)) {
-          setSources((prev) => [...prev, data.log.source]);
+      try {
+        const data = JSON.parse(event.data);
+        console.log("Log WebSocket received:", data);
+        
+        if (data.type === "history") {
+          console.log("Setting log history:", data.logs);
+          setLogs(data.logs);
+          updateSources(data.logs);
+        } else if (data.type === "new_log") {
+          console.log("Adding new log:", data.log);
+          setLogs((prev) => [data.log, ...prev].slice(0, 10000));
+          if (!sources.includes(data.log.source)) {
+            setSources((prev) => [...prev, data.log.source]);
+          }
         }
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
       }
     };
     
@@ -76,12 +84,17 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
       console.error("Log WebSocket error:", error);
     };
     
+    websocket.onclose = (event) => {
+      console.log("Log WebSocket closed:", event.code, event.reason);
+    };
+    
     setWs(websocket);
     
     return () => {
+      console.log("Closing Log WebSocket...");
       websocket.close();
     };
-  }, [isOpen]);
+  }, [isOpen, sources]);
 
   // Update sources list
   const updateSources = (logData: LogEntry[]) => {
@@ -133,7 +146,7 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
   // Clear logs
   const handleClear = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/v1/logs/clear", {
+      const response = await fetch("http://localhost:8001/api/v1/logs/clear", {
         method: "POST",
       });
       const data = await response.json();

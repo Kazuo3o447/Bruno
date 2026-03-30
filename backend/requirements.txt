@@ -20,3 +20,4 @@ ntplib
 optuna
 python-telegram-bot==20.8
 huggingface_hub
+beautifulsoup4

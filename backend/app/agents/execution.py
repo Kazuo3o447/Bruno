@@ -21,6 +21,7 @@ class ExecutionAgentV3(StreamingAgent):
         self.exm = AuthenticatedExchangeClient(redis=deps.redis)
         self._local_veto_active = True # Default safe State
         self._last_veto_reason = "Initialisierung..."
+        self._volatility_multiplier = 1.0
         
         # ── ATR Calculator ───────────────────────────────────────
         from app.services.atr_calculator import ATRCalculator
@@ -37,6 +38,7 @@ class ExecutionAgentV3(StreamingAgent):
             data = json.loads(veto_raw)
             self._local_veto_active = data.get("Veto_Active", True)
             self._last_veto_reason = data.get("Reason", "Redis Cache")
+            self._volatility_multiplier = data.get("Volatility_Size_Multiplier", 1.0)
 
         # Simulated Portfolio initialisieren (DRY_RUN)
         if self.deps.config.DRY_RUN:
@@ -86,6 +88,7 @@ class ExecutionAgentV3(StreamingAgent):
                     data = json.loads(msg['data'])
                     self._local_veto_active = data.get("Veto_Active", True)
                     self._last_veto_reason = data.get("Reason", "PubSub Update")
+                    self._volatility_multiplier = data.get("Volatility_Size_Multiplier", 1.0)
                     if self._local_veto_active:
                         self.logger.warning(f"LOCAL VETO AKTIV: {self._last_veto_reason}")
             except Exception as e:
@@ -150,9 +153,12 @@ class ExecutionAgentV3(StreamingAgent):
             "capital_eur", self.deps.config.SIMULATED_CAPITAL_EUR
         )
 
-        # Basisgröße: 2% des Kapitals, angepasst durch ATR-Multiplikator
+        # Basisgröße: 2% des Kapitals, angepasst durch ATR-Multiplikator UND Risiko-Vola-Multiplikator
         base_risk_eur = capital * 0.02
-        adjusted_risk_eur = base_risk_eur * vol_multiplier
+        # ATR-Multiplier * Risk-Vola-Multiplier (v2)
+        total_vol_multiplier = vol_multiplier * self._volatility_multiplier
+        adjusted_risk_eur = base_risk_eur * total_vol_multiplier
+        
         position_size_btc = max(
             0.001,  # Bybit Minimum
             min(
@@ -162,11 +168,11 @@ class ExecutionAgentV3(StreamingAgent):
         )
         amount = max(0.001, min(amount, position_size_btc))
 
-        if vol_multiplier < 1.0:
+        if total_vol_multiplier < 1.0:
             self.logger.info(
-                f"ATR-Anpassung: Multiplikator={vol_multiplier:.2f} | "
-                f"Position={position_size_btc:.4f} BTC | "
-                f"Dynamic SL={dynamic_sl_pct:.2%}"
+                f"VOLA-ADJUSTMENT: Total={total_vol_multiplier:.2f} "
+                f"(ATR={vol_multiplier:.2f}, Risk={self._volatility_multiplier:.2f}) | "
+                f"Pos={position_size_btc:.4f} BTC"
             )
 
         # 2. IMMEDIATE ORDER FIRING (OR SHADOW SIMULATION)
