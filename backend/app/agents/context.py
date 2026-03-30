@@ -82,7 +82,8 @@ class ContextAgent(PollingAgent):
         from app.services.sentiment_analyzer import analyzer as nlp_analyzer
         self.retail_sentiment_service = RetailSentimentService(
             redis_client=deps.redis,
-            sentiment_analyzer=nlp_analyzer
+            sentiment_analyzer=nlp_analyzer,
+            config=deps.config
         )
         # Phase B: Erstmal nur loggen, Gewicht=0
         # Nach 2 Wochen Beobachtung auf 8.0 erhöhen (manuell in config)
@@ -202,35 +203,76 @@ class ContextAgent(PollingAgent):
             return self.yields_10y
 
     async def _fetch_nasdaq_status(self) -> str:
-        """Berechnet Nasdaq SMA200 Trend (Daily) via yfinance/httpx."""
+        """
+        Nasdaq SMA200 via Yahoo Finance.
+        Fallback: Alpha Vantage (QQQ als NDX-Proxy).
+        Kostenlos: 25 req/day — reicht für 6h-Intervall.
+        """
         start = time.perf_counter()
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/^NDX?range=250d&interval=1d"
         headers = {"User-Agent": self._user_agent}
+
+        # ── Primär: Yahoo Finance ──────────────────────────────────
         try:
             async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-                resp = await client.get(url)
-                if resp.status_code == 429:
-                    self.logger.warning("yFinance NDX Rate Limit (429). Nutze Cache.")
+                resp = await client.get(
+                    "https://query1.finance.yahoo.com/v8/finance/chart/^NDX?range=250d&interval=1d"
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    closes = [
+                        c for c in
+                        data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+                        if c is not None
+                    ]
+                    if len(closes) >= 200:
+                        sma200 = sum(closes[-200:]) / 200
+                        status = "BULLISH" if closes[-1] >= sma200 else "BEARISH"
+                    else:
+                        status = "BULLISH"
                     latency = (time.perf_counter() - start) * 1000
-                    await self._report_health("yFinance_NDX", "offline", latency)
-                    return self.ndx_status
-                
-                resp.raise_for_status()
-                latency = (time.perf_counter() - start) * 1000
-                data = resp.json()
-                closes = [c for c in data['chart']['result'][0]['indicators']['quote'][0]['close'] if c is not None]
-                if len(closes) < 200:
-                    status = "BULLISH"
-                else:
-                    sma200 = sum(closes[-200:]) / 200
-                    status = "BULLISH" if closes[-1] >= sma200 else "BEARISH"
-                await self._report_health("yFinance_NDX", "online", latency)
-                return status
+                    await self._report_health("yFinance_NDX", "online", latency)
+                    return status
+                elif resp.status_code == 429:
+                    self.logger.warning("yFinance NDX 429 — versuche Alpha Vantage")
         except Exception as e:
-            latency = (time.perf_counter() - start) * 1000
-            self.logger.warning(f"yFinance NDX Fehler: {e}. Nutze Cache: {self.ndx_status}")
-            await self._report_health("yFinance_NDX", "offline", latency)
-            return self.ndx_status
+            self.logger.warning(f"yFinance NDX Fehler: {e}")
+
+        # ── Fallback: Alpha Vantage (QQQ ≈ NDX-Proxy) ─────────────
+        av_key = self.deps.config.ALPHA_VANTAGE_API_KEY
+        if av_key:
+            try:
+                av_url = (
+                    "https://www.alphavantage.co/query"
+                    f"?function=TIME_SERIES_DAILY_ADJUSTED&symbol=QQQ"
+                    f"&outputsize=full&apikey={av_key}"
+                )
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.get(av_url)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        ts = data.get("Time Series (Daily)", {})
+                        if not ts:
+                            self.logger.warning("Alpha Vantage NDX: leere Antwort (Rate Limit?)")
+                        else:
+                            # ts ist newest-first geordnet
+                            closes = [float(v["4. close"]) for v in list(ts.values())[:250]]
+                            if len(closes) >= 200:
+                                sma200 = sum(closes[:200]) / 200
+                                status = "BULLISH" if closes[0] >= sma200 else "BEARISH"
+                            else:
+                                status = "BULLISH"
+                            latency = (time.perf_counter() - start) * 1000
+                            await self._report_health("yFinance_NDX", "degraded", latency)
+                            self.logger.info(f"NDX via Alpha Vantage (QQQ): {status}")
+                            return status
+            except Exception as e:
+                self.logger.warning(f"Alpha Vantage NDX Fehler: {e}")
+
+        # ── Letzter Ausweg: gecachter Wert ────────────────────────
+        latency = (time.perf_counter() - start) * 1000
+        await self._report_health("yFinance_NDX", "offline", latency)
+        self.logger.warning(f"NDX: alle Quellen offline — Cache-Wert: {self.ndx_status}")
+        return self.ndx_status
 
     async def _fetch_vix_and_dxy(self) -> dict:
         """
@@ -272,25 +314,22 @@ class ContextAgent(PollingAgent):
                 except Exception as e:
                     self.logger.warning(f"yFinance VIX Fehler: {e}")
 
-                # Stooq-Fallback für VIX
+                # CBOE-Fallback für VIX (offizielle Quelle, kein Rate Limit)
                 if not vix_fetched:
                     try:
-                        import pandas_datareader as pdr
-                        from datetime import date, timedelta
-                        df = await asyncio.to_thread(
-                            pdr.get_data_stooq,
-                            "^VIX.US",
-                            date.today() - timedelta(days=5),
-                            date.today()
+                        cboe_resp = await client.get(
+                            "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
+                            timeout=10.0
                         )
-                        if not df.empty:
-                            results["VIX"] = float(df["Close"].iloc[-1])
+                        if cboe_resp.status_code == 200:
+                            lines = cboe_resp.text.strip().split("\n")
+                            # Format: DATE,OPEN,HIGH,LOW,CLOSE — letzte Zeile = aktuellster Tag
+                            last = lines[-1].split(",")
+                            results["VIX"] = float(last[4])  # CLOSE-Spalte
                             vix_fetched = True
-                            self.logger.info(
-                                f"VIX via Stooq: {results['VIX']:.1f}"
-                            )
+                            self.logger.info(f"VIX via CBOE CSV: {results['VIX']:.1f}")
                     except Exception as e:
-                        self.logger.warning(f"Stooq VIX Fehler: {e}")
+                        self.logger.warning(f"CBOE VIX Fehler: {e}")
 
                 await asyncio.sleep(2)  # 429-Schutz
 

@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     BINANCE_SECRET: Optional[str] = None
     CRYPTOPANIC_API_KEY: Optional[str] = None
     FRED_API_KEY: Optional[str] = None
+
+    # Macro Data Fallback
+    ALPHA_VANTAGE_API_KEY: Optional[str] = None  # https://www.alphavantage.co/support/#api-key
+
+    # Reddit OAuth (App-Only, kein User-Login)
+    # App anlegen: https://www.reddit.com/prefs/apps → Typ "script"
+    REDDIT_CLIENT_ID: Optional[str] = None
+    REDDIT_CLIENT_SECRET: Optional[str] = None
+
+    # StockTwits (optional, leer lassen = wird übersprungen)
+    STOCKTWITS_API_KEY: Optional[str] = None
+
+    # HuggingFace Token für schnellere Model-Downloads
+    # https://huggingface.co/settings/tokens → Read-Token
+    HF_TOKEN: Optional[str] = None
     
     # Bybit Execution (Phase D — jetzt vorbereiten)
     BYBIT_API_KEY: Optional[str] = None

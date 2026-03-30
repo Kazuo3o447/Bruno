@@ -1,7 +1,17 @@
 import logging
 import asyncio
+import os
 from typing import Dict, Any, List, Optional
 from transformers import pipeline
+
+# HuggingFace Login für schnellere Model-Downloads (optional)
+_hf_token = os.getenv("HF_TOKEN")
+if _hf_token:
+    try:
+        from huggingface_hub import login
+        login(token=_hf_token, add_to_git_credential=False)
+    except ImportError:
+        pass  # huggingface_hub nicht installiert, ignorieren
 
 class SentimentAnalyzer:
     """

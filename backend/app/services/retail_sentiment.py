@@ -27,11 +27,14 @@ logger = logging.getLogger("retail_sentiment")
 
 class RetailSentimentService:
 
-    def __init__(self, redis_client, sentiment_analyzer=None):
+    def __init__(self, redis_client, sentiment_analyzer=None, config=None):
         self.redis = redis_client
         self.nlp = sentiment_analyzer
+        self.config = config  # Settings-Objekt durchreichen
         self._last_update: float = 0.0
-        self._update_interval: float = 21600.0  # 6 Stunden
+        self._update_interval: float = 21600.0
+        self._reddit_token: Optional[str] = None
+        self._reddit_token_expiry: float = 0.0
 
     async def update(self) -> Dict[str, Any]:
         """
@@ -158,142 +161,117 @@ class RetailSentimentService:
         except:
             return None
 
-    async def _fetch_reddit_sentiment(self) -> Optional[float]:
-        """
-        r/Bitcoin Top Posts der letzten 24h.
-        Sentiment-Analyse mit NLP (wenn verfügbar), sonst simplere Heuristik.
-        """
+    async def _get_reddit_token(self) -> Optional[str]:
+        """App-Only OAuth, kein User-Login. Token gilt 24h."""
+        import time as _time
+        now = _time.time()
+        if self._reddit_token and now < self._reddit_token_expiry - 60:
+            return self._reddit_token
+
+        client_id = getattr(self.config, "REDDIT_CLIENT_ID", None) if self.config else None
+        client_secret = getattr(self.config, "REDDIT_CLIENT_SECRET", None) if self.config else None
+
+        if not client_id or not client_secret:
+            return None  # Kein Key → anonymer Zugriff
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # Reddit API (no auth needed für public posts)
-                resp = await client.get(
-                    "https://www.reddit.com/r/Bitcoin/hot.json",
+                resp = await client.post(
+                    "https://www.reddit.com/api/v1/access_token",
+                    data={"grant_type": "client_credentials"},
+                    auth=(client_id, client_secret),
                     headers={"User-Agent": "BrunoBot/1.0"}
                 )
-                
                 if resp.status_code == 200:
                     data = resp.json()
-                    posts = data.get("data", {}).get("children", [])
-                    
-                    # Top 10 Posts der letzten 24h
-                    recent_posts = []
-                    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-                    
-                    for post in posts[:20]:  # Mehr holen, falls ältere dabei
-                        post_data = post.get("data", {})
-                        created = datetime.fromtimestamp(
-                            post_data.get("created_utc", 0),
-                            timezone.utc
-                        )
-                        
-                        if created > cutoff:
-                            recent_posts.append(post_data)
-                    
-                    if not recent_posts:
-                        return None
-                    
-                    # Sentiment-Analyse
-                    if self.nlp:
-                        # Mit echtem NLP
-                        texts = [
-                            post.get("title", "") + " " + post.get("selftext", "")
-                            for post in recent_posts[:10]
-                        ]
-                        sentiment = await self.nlp.analyze_batch(texts)
-                        avg_sentiment = sum(sentiment) / len(sentiment) if sentiment else 0.0
-                    else:
-                        # Heuristik: bullish/bearish keywords
-                        bullish_words = [
-                            "moon", "pump", "bull", "buy", "hold", "hodl",
-                            "accumulate", "dip", "cheap", "undervalued"
-                        ]
-                        bearish_words = [
-                            "dump", "bear", "sell", "crash", "bubble",
-                            "overvalued", "expensive", "scam", "collapse"
-                        ]
-                        
-                        total_score = 0.0
-                        for post in recent_posts[:10]:
-                            text = (post.get("title", "") + " " + 
-                                   post.get("selftext", "")).lower()
-                            
-                            bullish_count = sum(1 for w in bullish_words if w in text)
-                            bearish_count = sum(1 for w in bearish_words if w in text)
-                            
-                            if bullish_count + bearish_count > 0:
-                                post_score = (bullish_count - bearish_count) / (
-                                    bullish_count + bearish_count
-                                )
-                                total_score += post_score
-                        
-                        avg_sentiment = total_score / min(10, len(recent_posts))
-                    
-                    return max(-1.0, min(1.0, avg_sentiment))
-                
+                    self._reddit_token = data["access_token"]
+                    self._reddit_token_expiry = now + data.get("expires_in", 86400)
+                    logger.info("Reddit OAuth Token erhalten")
+                    return self._reddit_token
+        except Exception as e:
+            logger.warning(f"Reddit OAuth Token Fehler: {e}")
+
+        return None
+
+    async def _fetch_reddit_sentiment(self) -> Optional[float]:
+        """r/Bitcoin mit OAuth (60 req/min) oder anonym als Fallback."""
+        try:
+            token = await self._get_reddit_token()
+
+            if token:
+                url = "https://oauth.reddit.com/r/Bitcoin/hot.json"
+                headers = {"Authorization": f"Bearer {token}", "User-Agent": "BrunoBot/1.0"}
+            else:
+                url = "https://www.reddit.com/r/Bitcoin/hot.json"
+                headers = {"User-Agent": "BrunoBot/1.0"}
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+
+                if resp.status_code == 429:
+                    logger.warning("Reddit 429 — kein OAuth Key konfiguriert oder Limit erreicht")
+                    return None
+
+                if resp.status_code != 200:
+                    return None
+
+                data = resp.json()
+                posts = data.get("data", {}).get("children", [])
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+                recent_posts = [
+                    p["data"] for p in posts[:20]
+                    if datetime.fromtimestamp(p["data"].get("created_utc", 0), timezone.utc) > cutoff
+                ]
+
+                if not recent_posts:
+                    return None
+
+                bullish = ["moon", "pump", "bull", "buy", "hold", "hodl", "accumulate", "dip", "cheap", "undervalued"]
+                bearish = ["dump", "bear", "sell", "crash", "bubble", "overvalued", "expensive", "scam", "collapse"]
+
+                total = 0.0
+                for post in recent_posts[:10]:
+                    text = (post.get("title", "") + " " + post.get("selftext", "")).lower()
+                    b = sum(1 for w in bullish if w in text)
+                    d = sum(1 for w in bearish if w in text)
+                    if b + d > 0:
+                        total += (b - d) / (b + d)
+
+                return max(-1.0, min(1.0, total / min(10, len(recent_posts))))
+
         except Exception as e:
             logger.warning(f"Reddit Sentiment Fehler: {e}")
-        
         return None
 
     async def _fetch_stocktwits_ratio(self) -> Optional[float]:
         """
-        StockTwits Bull/Bear Ratio für $BTC.
-        Kein API-Key nötig für public streams.
+        StockTwits Bull/Bear Ratio.
+        Wird sofort übersprungen wenn kein STOCKTWITS_API_KEY gesetzt.
+        Verhindert den 403-Request beim jedem Zyklus.
         """
+        api_key = getattr(self.config, "STOCKTWITS_API_KEY", None) if self.config else None
+
+        if not api_key:
+            logger.debug("StockTwits: kein API Key — übersprungen")
+            return None  # Graceful skip, kein Request
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # StockTwits API für BTC sentiment
                 resp = await client.get(
                     "https://api.stocktwits.com/api/2/streams/symbol/BTC.json",
-                    headers={"User-Agent": "BrunoBot/1.0"}
+                    headers={"Authorization": f"OAuth {api_key}", "User-Agent": "BrunoBot/1.0"}
                 )
-                
+                if resp.status_code in (401, 403):
+                    logger.warning(f"StockTwits {resp.status_code} — API Key ungültig")
+                    return None
+
                 if resp.status_code == 200:
-                    data = resp.json()
-                    messages = data.get("messages", [])
-                    
-                    if not messages:
-                        return None
-                    
-                    # Letzte 50 Messages analysieren
-                    bull_count = 0
-                    bear_count = 0
-                    
-                    for msg in messages[:50]:
-                        body = msg.get("body", "").lower()
-                        sentiment = msg.get("entities", {}).get("sentiment", {})
-                        
-                        # Explizites Sentiment
-                        if sentiment:
-                            if sentiment.get("basic") == "Bullish":
-                                bull_count += 1
-                            elif sentiment.get("basic") == "Bearish":
-                                bear_count += 1
-                        else:
-                            # Heuristik aus Text
-                            bullish_keywords = [
-                                "bull", "buy", "long", "moon", "pump",
-                                "accumulate", "dip", "cheap"
-                            ]
-                            bearish_keywords = [
-                                "bear", "sell", "short", "dump", "crash",
-                                "bubble", "overvalued"
-                            ]
-                            
-                            bull_words = sum(1 for w in bullish_keywords if w in body)
-                            bear_words = sum(1 for w in bearish_keywords if w in body)
-                            
-                            if bull_words > bear_words:
-                                bull_count += 1
-                            elif bear_words > bull_words:
-                                bear_count += 1
-                    
-                    total = bull_count + bear_count
-                    if total > 0:
-                        ratio = (bull_count - bear_count) / total
-                        return max(-1.0, min(1.0, ratio))
-                
+                    messages = resp.json().get("messages", [])
+                    bull = sum(1 for m in messages[:50] if m.get("entities", {}).get("sentiment", {}).get("basic") == "Bullish")
+                    bear = sum(1 for m in messages[:50] if m.get("entities", {}).get("sentiment", {}).get("basic") == "Bearish")
+                    total = bull + bear
+                    return max(-1.0, min(1.0, (bull - bear) / total)) if total > 0 else None
+
         except Exception as e:
             logger.warning(f"StockTwits Fehler: {e}")
-        
         return None
