@@ -13,14 +13,8 @@ export function ExportButton() {
       const data = await r.json();
 
       const text = [
-        "# Bruno Trading Bot — Snapshot für Claude-Analyse",
-        `# Generiert: ${new Date().toLocaleString("de-DE")}`,
-        "",
-        "Bitte analysiere diesen Snapshot:",
-        "- Warum wurden in letzter Zeit keine Trades gesetzt?",
-        "- Sind die Signale konsistent und plausibel?",
-        "- Gibt es Datenlücken oder Anomalien?",
-        "- Was würdest du als nächstes optimieren?",
+        "# Bruno Trading Bot — Snapshot für Cloud-LLM-Analyse",
+        "Dieser Snapshot ist für die Analyse durch Cloud-LLM bestimmt. Zeigt den aktuellen Zustand des Bruno Trading Bots. Bitte analysiere: Warum wurden keine Trades gesetzt? Sind die Signale konsistent? Gibt es Datenlücken?",
         "",
         "```json",
         JSON.stringify(data, null, 2),
