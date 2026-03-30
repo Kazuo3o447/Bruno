@@ -262,6 +262,49 @@ class QuantAgent(PollingAgent):
                         f"(Regime: {cascade_result.regime})"
                     )
 
+            # ── Decision Event: jeder Zyklus wird dokumentiert ───────────────────
+            decision_event = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "ofi": round(ofi, 1),
+                "ofi_threshold": self.ofi_threshold,
+                "ofi_met": abs(ofi) >= self.ofi_threshold,
+                "grss": None,
+                "outcome": None,
+                "reason": None,
+                "regime": None,
+                "layer1_confidence": None,
+                "layer2_decision": None,
+                "layer3_blocked": None,
+                "price": best_bid_p,
+                "cvd": round(self.cvd_cumulative, 1),
+                "vamp": round(vamp, 2),
+            }
+
+            if not abs(ofi) >= self.ofi_threshold:
+                decision_event["outcome"] = "OFI_BELOW_THRESHOLD"
+                decision_event["reason"] = f"OFI {ofi:.1f} unter Schwelle {self.ofi_threshold}"
+            elif not cascade_result.is_actionable:
+                decision_event["outcome"] = f"CASCADE_{cascade_result.aborted_at.upper()}"
+                decision_event["reason"] = f"Abgebrochen bei {cascade_result.aborted_at}"
+                decision_event["grss"] = grss_score
+                decision_event["regime"] = cascade_result.regime
+                decision_event["layer1_confidence"] = cascade_result.layer1.get("confidence")
+                decision_event["layer2_decision"] = cascade_result.layer2.get("decision")
+                decision_event["layer3_blocked"] = cascade_result.layer3.get("blocker")
+            else:
+                decision_event["outcome"] = f"SIGNAL_{cascade_result.decision}"
+                decision_event["reason"] = f"Signal: {cascade_result.decision}"
+                decision_event["grss"] = grss_score
+                decision_event["regime"] = cascade_result.regime
+                decision_event["layer1_confidence"] = cascade_result.layer1.get("confidence")
+                decision_event["layer2_decision"] = cascade_result.layer2.get("decision")
+                decision_event["layer3_blocked"] = False
+
+            # In Redis-Liste schreiben (neueste zuerst, max 200 Events)
+            event_json = json.dumps(decision_event)
+            await self.deps.redis.redis.lpush("bruno:decisions:feed", event_json)
+            await self.deps.redis.redis.ltrim("bruno:decisions:feed", 0, 199)
+
         except Exception as e:
             self.logger.error(f"QuantAgent Fehler: {e}")
             await self.deps.log_manager.add_log(

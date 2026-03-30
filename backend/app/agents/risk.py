@@ -163,6 +163,28 @@ class RiskAgent(PollingAgent):
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             
+            # Veto-State-Change detektieren und loggen
+            prev_veto_raw = await self.deps.redis.redis.get("bruno:veto:previous")
+            prev_veto = json.loads(prev_veto_raw).get("Veto_Active", None) if prev_veto_raw else None
+
+            if prev_veto != veto:  # Nur bei Zustandswechsel
+                veto_event = {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "veto_active": veto,
+                    "reason": final_reason,
+                    "grss": decision.get("GRSS_Score") if not veto else None,
+                    "vix": decision.get("VIX"),
+                    "change": "VETO_ON" if veto else "VETO_OFF",
+                }
+                await self.deps.redis.redis.lpush(
+                    "bruno:veto:history", json.dumps(veto_event)
+                )
+                await self.deps.redis.redis.ltrim("bruno:veto:history", 0, 49)
+
+            await self.deps.redis.redis.set(
+                "bruno:veto:previous", json.dumps({"Veto_Active": veto})
+            )
+
             # DIRECT REDIS CALLS FOR ZERO LATENCY
             # Wir nutzen das interne redis-Objekt für maximale Performance
             decision_json = json.dumps(final_decision)

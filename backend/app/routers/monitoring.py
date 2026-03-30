@@ -8,28 +8,90 @@ from app.schemas.models import TradeAuditLog
 import json
 import os
 from typing import List, Dict
+from datetime import datetime, timezone
 
 router = APIRouter()
 
 @router.get("/telemetry/live")
 async def get_live_telemetry():
     """
-    Holt Echtzeit-Daten aus Redis: Latenz, Veto-Status und Agenten-Heartbeats.
+    Echtzeit-Systemstatus aus Redis.
+    Kein Hardcoding. Keine Platzhalter.
     """
     try:
-        # Veto Status
         veto_raw = await redis_client.redis.get("bruno:veto:state")
-        veto_data = json.loads(veto_raw) if veto_raw else {"Veto_Active": True, "Reason": "No data"}
-        
-        # Performance & System
-        # Wir simulieren Ping/Latenz-History oder holen sie aus Metrics, falls vorhanden
-        # Aktuell ziehen wir die Latenz des letzten Trades als Referenz
+        veto_data = json.loads(veto_raw) if veto_raw else {
+            "Veto_Active": True, "Reason": "Keine Daten"
+        }
+
+        grss_data = await redis_client.get_cache("bruno:context:grss") or {}
+        quant_data = await redis_client.get_cache("bruno:quant:micro") or {}
+        health_data = await redis_client.get_cache("bruno:health:sources") or {}
+
+        # Letztes Decision Event
+        last_event_raw = await redis_client.redis.lindex("bruno:decisions:feed", 0)
+        last_event = json.loads(last_event_raw) if last_event_raw else None
+
+        # Agent Heartbeats aus agent_status
+        from app.core.database import get_session
+        from sqlalchemy import text
+        agent_heartbeats = {}
+        try:
+            async with get_session() as session:
+                result = await session.execute(text("""
+                    SELECT agent_id, status, last_heartbeat,
+                           EXTRACT(EPOCH FROM (NOW() - last_heartbeat)) as age_seconds
+                    FROM agent_status ORDER BY agent_id
+                """))
+                for row in result.fetchall():
+                    agent_heartbeats[row[0]] = {
+                        "status": row[1],
+                        "last_heartbeat": row[2].isoformat() if row[2] else None,
+                        "age_seconds": round(float(row[3]), 1) if row[3] else None,
+                        "healthy": float(row[3] or 9999) < 60,
+                    }
+        except Exception:
+            pass
+
         return {
             "status": "ARMED" if not veto_data.get("Veto_Active") else "HALTED",
-            "veto_reason": veto_data.get("Reason"),
-            "execution_latency_ms": 1.25, # Placeholder or real value
+            "veto_active": veto_data.get("Veto_Active", True),
+            "veto_reason": veto_data.get("Reason", "Unbekannt"),
             "dry_run": settings.DRY_RUN,
-            "timestamp": "2026-03-27T10:35:00Z"
+            "live_trading_approved": getattr(settings, "LIVE_TRADING_APPROVED", False),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "grss": {
+                "score": grss_data.get("GRSS_Score"),
+                "score_raw": grss_data.get("GRSS_Score_Raw"),
+                "velocity_30min": grss_data.get("GRSS_Velocity_30min"),
+                "veto_active": grss_data.get("Veto_Active"),
+                "last_update": grss_data.get("last_update"),
+            },
+            "market": {
+                "btc_price": quant_data.get("price"),
+                "ofi": quant_data.get("OFI"),
+                "cvd": quant_data.get("CVD"),
+                "vamp": quant_data.get("VAMP"),
+                "btc_change_24h_pct": grss_data.get("BTC_Change_24h_Pct"),
+                "btc_change_1h_pct": grss_data.get("BTC_Change_1h_Pct"),
+                "funding_rate": grss_data.get("Funding_Rate"),
+                "funding_divergence": grss_data.get("Funding_Divergence"),
+                "put_call_ratio": grss_data.get("Put_Call_Ratio"),
+                "dvol": grss_data.get("DVOL"),
+                "oi_delta_pct": grss_data.get("OI_Delta_Pct"),
+                "perp_basis_pct": grss_data.get("Perp_Basis_Pct"),
+                "fear_greed": grss_data.get("Fear_Greed"),
+                "vix": grss_data.get("VIX"),
+                "ndx_status": grss_data.get("Macro_Status"),
+                "yields_10y": grss_data.get("Yields_10Y"),
+                "m2_yoy_pct": grss_data.get("M2_YoY_Pct"),
+                "stablecoin_delta_bn": grss_data.get("Stablecoin_Delta_Bn"),
+                "llm_news_sentiment": grss_data.get("LLM_News_Sentiment"),
+                "news_silence_seconds": grss_data.get("News_Silence_Seconds"),
+            },
+            "data_sources": health_data,
+            "agents": agent_heartbeats,
+            "last_decision": last_event,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
