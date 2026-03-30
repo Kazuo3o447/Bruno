@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
 import { ExportButton } from "../components/ExportButton";
 import { KillSwitch } from "../components/KillSwitch";
+import TradingChart from "../components/TradingChart";
 
 // ── Typen ─────────────────────────────────────────────────────────────────
 
@@ -74,6 +75,20 @@ interface Position {
   grss_at_entry: number; created_at: string;
 }
 
+interface PerformanceMetrics {
+  daily_return: number | null;
+  weekly_return: number | null;
+  monthly_return: number | null;
+  six_month_return: number | null;
+  yearly_return: number | null;
+  ytd_return: number | null;
+  total_pnl: number | null;
+  win_rate: number | null;
+  avg_trade_pnl: number | null;
+  max_drawdown: number | null;
+  sharpe_ratio: number | null;
+}
+
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────
 
 function fmt(n: number | null | undefined, decimals = 2, prefix = ""): string {
@@ -114,10 +129,10 @@ function outcomeLabel(event: DecisionEvent): { text: string; color: string; icon
 
 function HeaderBar({ telemetry }: { telemetry: Telemetry | null }) {
   const armed = telemetry?.status === "ARMED";
-  const grss = telemetry?.grss.score;
-  const price = telemetry?.market.btc_price;
-  const chg24 = telemetry?.market.btc_change_24h_pct;
-  const chg1h = telemetry?.market.btc_change_1h_pct;
+  const grss = telemetry?.grss?.score;
+  const price = telemetry?.market?.btc_price;
+  const chg24 = telemetry?.market?.btc_change_24h_pct;
+  const chg1h = telemetry?.market?.btc_change_1h_pct;
 
   return (
     <div className="flex items-center gap-4 px-4 py-2 border-b border-zinc-800 bg-zinc-950 font-mono text-sm sticky top-0 z-40">
@@ -194,6 +209,73 @@ function OpenPositionPanel({ position, currentPrice }: {
       <span className="text-zinc-400">TP <span className="text-emerald-400">{fmtPrice(position.take_profit_price)}</span>
         <span className="text-zinc-600 ml-1">(+{tp_dist}%)</span></span>
       <span className="text-zinc-600">GRSS@Entry {position.grss_at_entry?.toFixed(1)}</span>
+    </div>
+  );
+}
+
+function PerformancePanel({ metrics }: { metrics: PerformanceMetrics | null }) {
+  if (!metrics) return (
+    <div className="border border-zinc-800 rounded p-3 font-mono text-xs text-zinc-600">Lade Performance-Daten...</div>
+  );
+
+  const returnItems = [
+    { label: "24h", value: metrics.daily_return, color: true },
+    { label: "7T", value: metrics.weekly_return, color: true },
+    { label: "30T", value: metrics.monthly_return, color: true },
+    { label: "6M", value: metrics.six_month_return, color: true },
+    { label: "1J", value: metrics.yearly_return, color: true },
+    { label: "YTD", value: metrics.ytd_return, color: true },
+  ];
+
+  const statItems = [
+    { label: "Total P&L", value: metrics.total_pnl, prefix: "$", isCurrency: true },
+    { label: "Win Rate", value: metrics.win_rate, suffix: "%" },
+    { label: "Ø Trade", value: metrics.avg_trade_pnl, prefix: "$", isCurrency: true },
+    { label: "Max DD", value: metrics.max_drawdown, suffix: "%", color: "red" },
+    { label: "Sharpe", value: metrics.sharpe_ratio },
+  ];
+
+  return (
+    <div className="border border-zinc-800 rounded p-3 bg-[#0a0a0f]">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-zinc-500 uppercase tracking-widest text-xs font-mono">Performance</span>
+        <span className="text-xs text-zinc-600 font-mono">Live</span>
+      </div>
+      
+      {/* Renditen Zeile */}
+      <div className="grid grid-cols-6 gap-2 mb-4">
+        {returnItems.map((item) => (
+          <div key={item.label} className="text-center">
+            <div className="text-zinc-500 text-xs mb-1">{item.label}</div>
+            <div className={`text-sm font-bold font-mono ${
+              item.value === null ? "text-zinc-600" :
+              item.value > 0 ? "text-emerald-400" : 
+              item.value < 0 ? "text-red-400" : "text-zinc-400"
+            }`}>
+              {item.value === null ? "—" : fmt(item.value, 2) + "%"}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Statistiken */}
+      <div className="grid grid-cols-5 gap-2 pt-3 border-t border-zinc-800">
+        {statItems.map((item) => (
+          <div key={item.label} className="text-center">
+            <div className="text-zinc-500 text-xs mb-1">{item.label}</div>
+            <div className={`text-sm font-bold font-mono ${
+              item.color === "red" && (item.value ?? 0) < 0 ? "text-red-400" :
+              item.color === "red" && (item.value ?? 0) > 0 ? "text-emerald-400" :
+              item.value === null ? "text-zinc-600" : "text-zinc-200"
+            }`}>
+              {item.value === null ? "—" : 
+               item.isCurrency ? fmtPrice(item.value) :
+               item.suffix ? fmt(item.value, 1) + item.suffix :
+               fmt(item.value, 2)}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -277,22 +359,22 @@ function GRSSBreakdown({ grss }: { grss: GRSSFull | null }) {
   }
 
   const macroPts = (
-    (grss.macro.ndx_status === "BULLISH" ? 15 : grss.macro.ndx_status === "BEARISH" ? -20 : 0) +
-    (grss.macro.vix < 15 ? 7 : grss.macro.vix > 25 ? -15 : grss.macro.vix > 20 ? -7 : 0) +
-    (grss.macro.yields_10y < 4.0 ? 8 : grss.macro.yields_10y > 4.5 ? -10 : 0) +
-    ((grss.macro.m2_yoy_pct ?? 0) > 5 ? 8 : (grss.macro.m2_yoy_pct ?? 0) > 2 ? 3 : (grss.macro.m2_yoy_pct ?? 0) < 0 ? -10 : 0)
+    ((grss.macro?.ndx_status === "BULLISH" ? 15 : grss.macro?.ndx_status === "BEARISH" ? -20 : 0)) +
+    ((grss.macro?.vix ?? 20) < 15 ? 7 : (grss.macro?.vix ?? 20) > 25 ? -15 : (grss.macro?.vix ?? 20) > 20 ? -7 : 0) +
+    ((grss.macro?.yields_10y ?? 4.0) < 4.0 ? 8 : (grss.macro?.yields_10y ?? 4.0) > 4.5 ? -10 : 0) +
+    ((grss.macro?.m2_yoy_pct ?? 0) > 5 ? 8 : (grss.macro?.m2_yoy_pct ?? 0) > 2 ? 3 : (grss.macro?.m2_yoy_pct ?? 0) < 0 ? -10 : 0)
   );
 
   const derivPts = (
-    (grss.derivatives.funding_rate > 0.05 ? -15 : grss.derivatives.funding_rate < -0.01 ? 5 : 10) +
-    (grss.derivatives.put_call_ratio < 0.5 ? 12 : grss.derivatives.put_call_ratio > 0.8 ? -10 : 0) +
-    (grss.derivatives.funding_divergence < 0.01 ? 8 : grss.derivatives.funding_divergence > 0.03 ? -10 : 0)
+    ((grss.derivatives?.funding_rate ?? 0) > 0.05 ? -15 : (grss.derivatives?.funding_rate ?? 0) < -0.01 ? 5 : 10) +
+    ((grss.derivatives?.put_call_ratio ?? 0.7) < 0.5 ? 12 : (grss.derivatives?.put_call_ratio ?? 0.7) > 0.8 ? -10 : 0) +
+    ((grss.derivatives?.funding_divergence ?? 0) < 0.01 ? 8 : (grss.derivatives?.funding_divergence ?? 0) > 0.03 ? -10 : 0)
   );
 
   const sentPts = (
-    ((grss.sentiment.fear_greed - 50) / 50) * 15 +
-    ((grss.sentiment.stablecoin_delta_bn ?? 0) > 2 ? 8 : (grss.sentiment.stablecoin_delta_bn ?? 0) < -2 ? -10 : 0) +
-    (grss.sentiment.llm_news_sentiment ?? 0) * 10
+    (((grss.sentiment?.fear_greed ?? 50) - 50) / 50) * 15 +
+    ((grss.sentiment?.stablecoin_delta_bn ?? 0) > 2 ? 8 : (grss.sentiment?.stablecoin_delta_bn ?? 0) < -2 ? -10 : 0) +
+    (grss.sentiment?.llm_news_sentiment ?? 0) * 10
   );
 
   const velPct = grss.velocity_30min ?? 0;
@@ -320,8 +402,8 @@ function GRSSBreakdown({ grss }: { grss: GRSSFull | null }) {
           <div className="flex justify-between text-zinc-500 mb-1 text-xs">
             <span>Makro</span>
             <span className="text-zinc-400">
-              NDX:{grss.macro.ndx_status?.slice(0,4)} VIX:{grss.macro.vix.toFixed(1)} 10Y:{grss.macro.yields_10y.toFixed(2)}%
-              {grss.macro.m2_yoy_pct !== null ? ` M2:${fmt(grss.macro.m2_yoy_pct, 1)}%` : ""}
+              NDX:{grss.macro?.ndx_status?.slice(0,4) ?? "—"} VIX:{(grss.macro?.vix ?? 0).toFixed(1)} 10Y:{(grss.macro?.yields_10y ?? 0).toFixed(2)}%
+              {grss.macro?.m2_yoy_pct !== null && grss.macro?.m2_yoy_pct !== undefined ? ` M2:${fmt(grss.macro.m2_yoy_pct, 1)}%` : ""}
             </span>
           </div>
           <Bar pts={macroPts} max={40} color="#3b82f6" />
@@ -330,9 +412,9 @@ function GRSSBreakdown({ grss }: { grss: GRSSFull | null }) {
           <div className="flex justify-between text-zinc-500 mb-1 text-xs">
             <span>Derivate</span>
             <span className="text-zinc-400">
-              Fund:{(grss.derivatives.funding_rate * 100).toFixed(3)}%
-              PCR:{grss.derivatives.put_call_ratio.toFixed(2)}
-              DVOL:{grss.derivatives.dvol.toFixed(0)}
+              Fund:{((grss.derivatives?.funding_rate ?? 0) * 100).toFixed(3)}%
+              PCR:{(grss.derivatives?.put_call_ratio ?? 0).toFixed(2)}
+              DVOL:{(grss.derivatives?.dvol ?? 0).toFixed(0)}
             </span>
           </div>
           <Bar pts={derivPts} max={45} color="#8b5cf6" />
@@ -341,8 +423,8 @@ function GRSSBreakdown({ grss }: { grss: GRSSFull | null }) {
           <div className="flex justify-between text-zinc-500 mb-1 text-xs">
             <span>Sentiment</span>
             <span className="text-zinc-400">
-              F&G:{grss.sentiment.fear_greed}
-              {grss.sentiment.stablecoin_delta_bn !== null
+              F&G:{grss.sentiment?.fear_greed ?? "—"}
+              {grss.sentiment?.stablecoin_delta_bn !== null && grss.sentiment?.stablecoin_delta_bn !== undefined
                 ? ` USDT:${fmt(grss.sentiment.stablecoin_delta_bn, 1)}B` : ""}
             </span>
           </div>
@@ -356,7 +438,7 @@ function GRSSBreakdown({ grss }: { grss: GRSSFull | null }) {
         </div>
       )}
       <div className="text-zinc-700 text-xs mt-1">
-        Update: {timeAgo(grss.data_quality.last_update)} | Quellen: {grss.data_quality.fresh_source_count} aktiv
+        Update: {timeAgo(grss.data_quality?.last_update)} | Quellen: {grss.data_quality?.fresh_source_count ?? 0} aktiv
       </div>
     </div>
   );
@@ -459,15 +541,18 @@ export default function Dashboard() {
   const [position, setPosition] = useState<Position | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
 
+  const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
+
   const API = "/api/v1";
 
   async function refresh() {
     try {
-      const [tel, gr, dec, pos] = await Promise.allSettled([
+      const [tel, gr, dec, pos, perf] = await Promise.allSettled([
         fetch(`${API}/telemetry/live`).then(r => r.json()),
         fetch(`${API}/market/grss-full`).then(r => r.json()),
         fetch(`${API}/decisions/feed?limit=20`).then(r => r.json()),
         fetch(`${API}/positions/open`).then(r => r.json()),
+        fetch(`${API}/performance/metrics`).then(r => r.json()),
       ]);
 
       if (tel.status === "fulfilled") setTelemetry(tel.value);
@@ -477,6 +562,7 @@ export default function Dashboard() {
         setPosition(pos.value.position ?? null);
         setCurrentPrice(pos.value.current_price ?? null);
       }
+      if (perf.status === "fulfilled") setMetrics(perf.value);
     } catch (e) {
       console.error("Dashboard fetch error", e);
     }
@@ -494,17 +580,30 @@ export default function Dashboard() {
       <div className="flex-1 flex flex-col">
         <HeaderBar telemetry={telemetry} />
         <div className="flex-1 p-4 space-y-3 overflow-y-auto">
-          <OpenPositionPanel position={position} currentPrice={currentPrice} />
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <MarketOverview market={telemetry?.market} />
-            <GRSSBreakdown grss={grss} />
+          {/* TRADING BEREICH - Oben */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div className="lg:col-span-2 h-[400px]">
+              <TradingChart symbol="BTCUSDT" />
+            </div>
+            <div className="space-y-3">
+              <PerformancePanel metrics={metrics} />
+              <OpenPositionPanel position={position} currentPrice={currentPrice} />
+            </div>
           </div>
 
-          <DecisionFeed events={decisions} />
+          {/* MONITORING BEREICH - Unten */}
+          <div className="border-t border-zinc-800 pt-3 mt-6">
+            <h2 className="text-zinc-500 uppercase tracking-widest text-xs font-mono mb-3">System Monitoring</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <MarketOverview market={telemetry?.market} />
+              <GRSSBreakdown grss={grss} />
+            </div>
 
-          <AgentStatusRow agents={telemetry?.agents ?? {}} />
-          <DataFreshnessBar sources={telemetry?.data_sources ?? {}} />
+            <DecisionFeed events={decisions} />
+
+            <AgentStatusRow agents={telemetry?.agents ?? {}} />
+            <DataFreshnessBar sources={telemetry?.data_sources ?? {}} />
+          </div>
         </div>
       </div>
     </div>

@@ -69,7 +69,7 @@ async def get_price(symbol: str, redis=Depends(get_redis_client)) -> Dict[str, A
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.get("/market/grss-full")
+@router.get("/grss-full")
 async def get_grss_full(redis=Depends(get_redis_client)):
     """Vollständiger GRSS-State mit allen Inputs für Dashboard."""
     try:

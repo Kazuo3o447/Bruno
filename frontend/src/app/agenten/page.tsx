@@ -89,11 +89,14 @@ export default function AgentenPage() {
           Agenten-Zentrale — Röntgenblick
         </h1>
 
-        <AgentCard
-          title="Context Agent"
-          healthy={agents.context?.healthy}
-          lastUpdate={grss?.data_quality?.last_update}
-        >
+        {!grss ? (
+          <div className="border border-zinc-800 rounded p-3 font-mono text-xs text-zinc-600">Lade GRSS-Daten...</div>
+        ) : (
+          <AgentCard
+            title="Context Agent"
+            healthy={agents.context?.healthy}
+            lastUpdate={grss?.data_quality?.last_update}
+          >
           <div className="flex flex-wrap gap-y-1">
             <KV label="NDX" value={grss?.macro?.ndx_status}
               color={grss?.macro?.ndx_status === "BULLISH" ? "text-emerald-400" : "text-red-400"} />
@@ -136,6 +139,7 @@ export default function AgentenPage() {
             <div className="text-amber-400">⚠ Funding-Settlement-Fenster aktiv</div>
           )}
         </AgentCard>
+        )}
 
         <AgentCard
           title="Quant Agent"
