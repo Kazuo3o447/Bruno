@@ -301,39 +301,69 @@ class ContextAgent(PollingAgent):
                 # ── VIX ──────────────────────────────────────────
                 vix_fetched = False
                 try:
-                    vix_resp = await client.get(
-                        "https://query1.finance.yahoo.com/v8/finance/chart/"
-                        "^VIX?range=1d&interval=1m"
+                    # CBOE CSV als primäre Quelle (zuverlässig und aktuell)
+                    cboe_resp = await client.get(
+                        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
+                        timeout=10.0
                     )
-                    if vix_resp.status_code == 200:
-                        vix_data = vix_resp.json()
-                        results["VIX"] = float(
-                            vix_data["chart"]["result"][0]["meta"][
-                                "regularMarketPrice"
-                            ]
-                        )
+                    if cboe_resp.status_code == 200:
+                        lines = cboe_resp.text.strip().split("\n")
+                        # Format: DATE,OPEN,HIGH,LOW,CLOSE — letzte Zeile = aktuellster Tag
+                        last = lines[-1].split(",")
+                        results["VIX"] = float(last[4])  # CLOSE-Spalte
                         vix_fetched = True
-                    elif vix_resp.status_code == 429:
-                        self.logger.warning("yFinance VIX: 429 — versuche Stooq")
+                        self.logger.info(f"VIX via CBOE CSV: {results['VIX']:.1f}")
+                    else:
+                        self.logger.warning(f"CBOE CSV HTTP {cboe_resp.status_code}")
                 except Exception as e:
-                    self.logger.warning(f"yFinance VIX Fehler: {e}")
+                    self.logger.warning(f"CBOE CSV VIX Fehler: {e}")
 
-                # CBOE-Fallback für VIX (offizielle Quelle, kein Rate Limit)
+                # Yahoo Finance Fallback (wenn CBOE nicht funktioniert)
                 if not vix_fetched:
                     try:
-                        cboe_resp = await client.get(
-                            "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
-                            timeout=10.0
+                        vix_resp = await client.get(
+                            "https://query1.finance.yahoo.com/v8/finance/chart/"
+                            "^VIX?range=1d&interval=1m"
                         )
-                        if cboe_resp.status_code == 200:
-                            lines = cboe_resp.text.strip().split("\n")
-                            # Format: DATE,OPEN,HIGH,LOW,CLOSE — letzte Zeile = aktuellster Tag
-                            last = lines[-1].split(",")
-                            results["VIX"] = float(last[4])  # CLOSE-Spalte
+                        if vix_resp.status_code == 200:
+                            vix_data = vix_resp.json()
+                            results["VIX"] = float(
+                                vix_data["chart"]["result"][0]["meta"][
+                                    "regularMarketPrice"
+                                ]
+                            )
                             vix_fetched = True
-                            self.logger.info(f"VIX via CBOE CSV: {results['VIX']:.1f}")
+                            self.logger.info(f"VIX via Yahoo Finance: {results['VIX']:.1f}")
+                        elif vix_resp.status_code == 429:
+                            self.logger.warning("yFinance VIX: 429 — Rate limit")
                     except Exception as e:
-                        self.logger.warning(f"CBOE VIX Fehler: {e}")
+                        self.logger.warning(f"yFinance VIX Fehler: {e}")
+
+                # Alpha Vantage als letzter Fallback
+                if not vix_fetched:
+                    try:
+                        av_resp = await client.get(
+                            "https://www.alphavantage.co/query",
+                            params={
+                                "function": "TIME_SERIES_DAILY",
+                                "symbol": "VIX",
+                                "apikey": self.deps.config.ALPHA_VANTAGE_API_KEY,
+                                "outputsize": "compact"
+                            }
+                        )
+                        if av_resp.status_code == 200:
+                            av_data = av_resp.json()
+                            time_series = av_data.get("Time Series (Daily)", {})
+                            if time_series:
+                                latest_date = list(time_series.keys())[0]
+                                latest_data = time_series[latest_date]
+                                vix_price = latest_data.get("4. close")
+                                if vix_price:
+                                    results["VIX"] = float(vix_price)
+                                    vix_fetched = True
+                                    self.logger.info(f"VIX via Alpha Vantage: {results['VIX']:.1f}")
+                    except Exception as e:
+                        self.logger.warning(f"Alpha Vantage VIX Fehler: {e}")
 
                 await asyncio.sleep(2)  # 429-Schutz
 
