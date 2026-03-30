@@ -71,8 +71,8 @@ open http://localhost:3000/dashboard
 
 ## 📊 Dashboard Features
 
+- **Echtzeit-Agenten-Monitor** mit "Bruno Pulse" (Sub-States & LLM-Cascade Tracking)
 - **Live Trading Chart** mit BTC/USD Candlesticks
-- **Echtzeit-Agenten-Monitor** mit CPU/RAM Metriken
 - **System-Status** für API, DB, Redis, WebSocket
 - **Backup-Management** mit pg_dump Komprimierung
 
@@ -150,10 +150,10 @@ open http://localhost:3000/dashboard
 **Aktuell: Phase D — Position Tracker & Stop-Loss (Core implementiert)**
 - [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
 - [x] Phase B ✅ COMPLETED — Daten-Erweiterung & Hardening
-- [x] Phase C ✅ COMPLETED — LLM-Kaskade (3 Layer)
+- [x] Phase C ✅ COMPLETED — LLM-Kaskade (3 Layer) & Bruno Pulse
 - [x] Phase D — Position Tracker + Stop-Loss im Worker verdrahtet
+- [x] Phase E — Frontend Cockpit (Bruno Pulse Dashboard Integration)
 - [ ] Phase D — SL/TP Tests mit echten Preisen validieren
-- [ ] Phase E — Frontend Cockpit
 - [ ] Phase F — Lern-System
 - [ ] Phase G — Backtest (6 Monate, PF > 1.5)
 - [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)

@@ -51,14 +51,15 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ## 2. AKTUELLER PROJEKTSTATUS (Ehrlicher Ist-Stand)
 
 ### Was funktioniert ✅
+- **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse) — NEU**
+- LLM-Kaskade (3-Layer Entscheidungslogik mit qwen2.5/deepseek-r1) — **NEU**
 - Docker Compose Stack (PostgreSQL/TimescaleDB, Redis Stack, FastAPI, Next.js)
 - IngestionAgent: Binance WebSocket Multiplex (5 Streams), Batching, DB-Flush
-- AgentOrchestrator: Supervision Tree, Staged Startup, Restart-Logic mit Exponential Backoff
+- AgentOrchestrator: Supervision Tree, Staged Startup, Restart-Logic mit Agent Heartbeats (15s)
 - ExecutionAgent: RAM-Veto-Check, DRY_RUN-Schutz, Shadow-Trading mit Fee-Simulation (0.04%)
 - Security Isolation: PublicExchangeClient vs AuthenticatedExchangeClient
 - NLP-Pipeline: BART-MNLI (Bouncer) → FinBERT (Makro) → CryptoBERT (Crypto)
-- trade_audit_logs: Slippage-BPS, Latenz-Tracking, Fee-Simulation
-- Dashboard: WebSocket-Streaming, Agent-Control, Log-Terminal
+- Dashboard: WebSocket-Streaming, Agent-Control (Pulse-Ready), Log-Terminal
 
 ### Was existiert aber KAPUTT ist ⚠️
 - **ContextAgent: ~70% der GRSS-Inputs sind `random.uniform()` — KRITISCHER BUG**
@@ -70,13 +71,10 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ### Was fehlt ❌
 - Position Tracker (kritischer Pfad für Live-Trading)
 - Stop-Loss / Take-Profit Handler
-- LLM-Kaskade (3-Layer Entscheidungslogik) — LLM wird derzeit nicht für Handelsentscheidungen genutzt
 - Deribit-Integration (Put/Call Ratio, Max Pain, DVOL)
 - CoinGlass-Integration (Cross-Exchange Funding, ETF Flows, Liquidation Maps)
 - Perp Basis Signal (Binance Spot vs Futures — kostenlos)
 - Open Interest Delta (OI-Veränderung als Signal — kostenlos von Binance)
-- Frontend: Open Position Widget, Kill-Switch, GRSS-Breakdown, Reasoning Trail
-- Regime-Detection (4 Marktregimes mit eigenen Parameter-Sets)
 - Post-Trade LLM Debrief (automatisches Lern-System)
 - Backtest Engine (echte historische Daten)
 - Telegram-Notifications

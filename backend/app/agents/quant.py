@@ -151,18 +151,22 @@ class QuantAgent(PollingAgent):
     async def process(self) -> None:
         try:
             # 1. Redundantes L2-Orderbuch (Public)
+            self.state.sub_state = "fetching orderbook"
             ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
             if not ob or not ob.get('bids') or not ob.get('asks'):
+                self.state.sub_state = "error (no orderbook)"
                 return
 
             best_bid_p, best_bid_v = ob['bids'][0][0], ob['bids'][0][1]
             best_ask_p, best_ask_v = ob['asks'][0][0], ob['asks'][0][1]
 
             # 2. HFT Metriken
+            self.state.sub_state = "calculating metrics"
             vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
             ofi = self._calculate_ofi(ob)
             
             # 3. CVD & Liq Walls
+            self.state.sub_state = "fetching trades & liq"
             start_trades = time.perf_counter()
             try:
                 # Nutze binance öffentlich
@@ -228,6 +232,7 @@ class QuantAgent(PollingAgent):
                 }
                 
                 # LLM Cascade ausführen
+                self.state.sub_state = "running llm cascade"
                 cascade_result = await self.cascade.run(
                     grss_components=grss_components,
                     market_context=market_context,

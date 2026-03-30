@@ -50,8 +50,9 @@
 - [x] Phase-B Verifikationsendpoint mit echten Checks
 - [x] Bybit Live-Trading bleibt gesperrt, bis `LIVE_TRADING_APPROVED=True`
 
-### Phase C ✅ COMPLETED (2026-03-29)
-- [x] LLM Cascade Core (3-Layer) implementiert
+### Phase C ✅ COMPLETED (2026-03-30)
+- [x] LLM Cascade Core (3-Layer) implementiert & verifiziert
+- [x] **Bruno Pulse**: Echtzeit-Transparency für Agenten & Kaskade
 - [x] Regime Manager mit 2-Bestätigungs-Logik
 - [x] QuantAgent Integration mit Cascade-Aufruf
 - [x] LLM Cascade API Router für Monitoring
@@ -74,20 +75,13 @@
 ## System-Status (Ist-Stand)
 
 ### ✅ Funktioniert
-- Docker Compose Stack (PostgreSQL/TimescaleDB, Redis, FastAPI, Next.js)
+- **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse)**
+- **Background Heartbeat Architecture** (robuster gegen LLM-Blockaden)
+- Docker Compose Stack (Postgres, Redis, FastAPI, Next.js)
 - 6 Agenten registriert und startfähig
 - IngestionAgent: Binance WebSocket (5 Streams)
-- Frontend Dashboard mit Agenten-Zentrale
 - LLM-Infrastruktur (Ollama, qwen2.5:14b, deepseek-r1:14b)
-- DRY_RUN-Schutz aktiv
-- Max-Leverage hart auf `1.0` begrenzt
-- **Phase A COMPLETE**: Alle `random.uniform()` entfernt, 100% echte Daten
-- **Data-Freshness Fail-Safe**: GRSS bricht bei stale data auf 0.0 ab
-- **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
-- **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
-- **Phase B Hardening**: CoinGlass, Telegram, Profit Factor und Phase-B Status-Endpoint aktiv
-- **Phase C LLM Cascade**: 3-Layer Entscheidungslogik implementiert
-- **Phase D Position Tracker**: Redis Live-State + DB Audit Trail implementiert und im Worker aktiv
+- **Phase A/B/C Complete**: 100% echte Daten + LLM-Kaskade
 
 ### ⚠️ Bekannte Probleme
 - **ExecutionAgentV3**: Reale Exchange-Live-Exits und SL/TP-Fahrten sind noch nicht produktiv im Live-Modus validiert

@@ -712,8 +712,10 @@ class ContextAgent(PollingAgent):
         """
         try:
             # ── 1. Makro-Daten (15-Min-Cache intern) ─────────────
+            self.state.sub_state = "checking macro requirements"
             now_t = time.time()
             if now_t - self._last_macro_fetch > self._macro_interval:
+                self.state.sub_state = "fetching macro data (VIX/DXY/Yields)"
                 self.logger.info("Makro-Update gestartet...")
                 self.yields_10y = await self._fetch_fred_yields()
                 macro_data = await self._fetch_vix_and_dxy()
@@ -728,16 +730,20 @@ class ContextAgent(PollingAgent):
                 )
 
             # ── 2. Binance REST (bei jedem Cycle) ────────────────
+            self.state.sub_state = "fetching binance derivatives data"
             await self._fetch_binance_rest_data()
 
             # ── 3. Deribit Public (15-Min-Cache intern) ──────────
+            self.state.sub_state = "fetching deribit options data"
             await self._fetch_deribit_data()
 
             # ── 4. CoinGlass (15-Min-Cache, graceful wenn kein Key) ──
+            self.state.sub_state = "fetching coinglass metrics"
             await self._fetch_coinglass_data()
 
             # ── Retail Sentiment (Google Trends + Reddit + StockTwits) ──
             try:
+                self.state.sub_state = "fetching retail sentiment (Reddit/Trends)"
                 retail_data = await self.retail_sentiment_service.update()
                 self._retail_score = retail_data.get("retail_score", 0.0)
                 self._retail_fomo_warning = retail_data.get(

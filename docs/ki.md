@@ -14,14 +14,16 @@
 
 > 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
 
-### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
-
-**Ziel:** Phase A abgeschlossen — Bot ist "ehrlich". Jetzt Daten-Erweiterung.
-
-**Aufgaben:**
-- [ ] CoinGlass API Integration ($29/Monat)
-- [ ] Telegram Notifications
-- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+### Phase C ✅ COMPLETED (2026-03-30)
+- [x] LLM Cascade (3 Layer) implementiert & verifiziert
+- [x] **Bruno Pulse**: Echtzeit-Transparency (Sub-States & LLM Pulse)
+- [x] **Background Heartbeat Loop**: Unabhängige Vitalzeichen-Übermittlung (15s)
+- [x] Regime Manager mit 2-Bestätigungs-Logik + Transition Buffer
+- [x] PositionTracker/PositionMonitor im Worker verdrahtet
+- [x] CoinGlass Graceful Degradation ohne API-Key
+- [x] Telegram Notifications mit Chat-ID-Auth
+- [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+- [x] Profit-Factor-Tracking aus realisierter P&L-Historie
 
 ### Phase A — Fundament ✅ COMPLETED (2026-03-29)
 

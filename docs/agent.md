@@ -53,6 +53,8 @@ Ziel: Phase A/B abgeschlossen — Bot ist "ehrlich" und regime-aware. Jetzt lauf
 
 **Aufgaben:**
 - [x] LLM Cascade (3 Layer) im QuantAgent integriert
+- [x] **Bruno Pulse**: Echtzeit-Transparency (Sub-States & LLM Pulse)
+- [x] **Background Heartbeat Loop**: Unabhängige Vitalzeichen-Übermittlung (15s)
 - [x] Regime Manager mit 2-Bestätigungs-Logik + Transition Buffer
 - [x] PositionTracker/PositionMonitor im Worker verdrahtet
 - [x] CoinGlass Graceful Degradation ohne API-Key
@@ -99,5 +101,12 @@ Ziel erreicht: Den Bot ehrlich machen. Keine Zufallsdaten mehr.
 
 ---
 
-*Referenz: WINDSURF_MANIFEST.md v2.0 — Phase A: Fundament*
+---
+## Agenten-Vitalzeichen (Bruno Pulse)
+Jeder Agent erbt von `BaseAgent` und nutzt:
+- `_heartbeat_loop`: Ein Hintergrund-Task, der alle 15s Vitalzeichen an Redis sendet.
+- `self.state.sub_state`: Ein Feld für granulare Status-Meldungen (z.B. "Analyzing 5/20").
+- `_report_pulse` (LLMCascade): Echtzeit-Tracking der Entscheidungs-Schritte.
+
+*Referenz: WINDSURF_MANIFEST.md v2.0 — Phase C: Bruno Pulse*
 

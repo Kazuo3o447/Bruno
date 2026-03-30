@@ -224,6 +224,7 @@ class LLMCascade:
         result = CascadeResult()
 
         # ── GRSS Gate (vor Cascade) ───────────────────────────────────────
+        await self._report_pulse("gate_grss", "checking")
         effective_threshold = self.regime_manager.get_effective_grss_threshold()
         if grss_score < effective_threshold:
             result.aborted_at = "grss_gate"
@@ -233,10 +234,13 @@ class LLMCascade:
                 f"(Regime: {self.regime_manager._current_regime}, "
                 f"Transition: {self.regime_manager.is_in_transition()})"
             )
+            await self._report_pulse("gate_grss", "aborted", {"reason": f"{grss_score:.1f} < {effective_threshold}"})
             await self._log_to_redis(result)
             return result
+        await self._report_pulse("gate_grss", "passed")
 
         # ── Layer 1: Regime-Klassifikation ──────────────────────────────────
+        await self._report_pulse("layer1", "running")
         logger.debug("Cascade: Layer 1 gestartet...")
         l1_raw = await llm_provider.generate_json(
             prompt=_build_layer1_prompt(grss_components, {
@@ -266,10 +270,13 @@ class LLMCascade:
                 f"Cascade HOLD @ Gate1: confidence={l1_confidence:.2f} "
                 f"(min={GATE1_MIN_CONFIDENCE}) | regime={raw_regime}"
             )
+            await self._report_pulse("layer1", "aborted", {"reason": f"confidence {l1_confidence:.2f} < {GATE1_MIN_CONFIDENCE}"})
             await self._log_to_redis(result)
             return result
+        await self._report_pulse("layer1", "passed", {"regime": confirmed_regime})
 
         # ── Layer 2: Strategisches Reasoning ────────────────────────────────
+        await self._report_pulse("layer2", "running")
         logger.debug("Cascade: Layer 2 gestartet...")
         failure_watchlist = await self._get_failure_watchlist()
         decision_history = await self._get_decision_history()
@@ -299,8 +306,10 @@ class LLMCascade:
                 f"Cascade HOLD @ Gate2: decision={l2_decision} "
                 f"confidence={l2_confidence:.2f} (min={GATE2_MIN_CONFIDENCE})"
             )
+            await self._report_pulse("layer2", "aborted", {"decision": l2_decision, "confidence": l2_confidence})
             await self._log_to_redis(result)
             return result
+        await self._report_pulse("layer2", "passed", {"decision": l2_decision})
 
         # Regime-Config validieren: erlaubt das Regime diese Richtung?
         regime_cfg = self.regime_manager.get_config()
@@ -308,14 +317,17 @@ class LLMCascade:
             logger.info(f"Cascade HOLD: Longs im Regime '{confirmed_regime}' nicht erlaubt.")
             result.aborted_at = "regime_gate"
             result.duration_ms = (time.perf_counter() - t_start) * 1000
+            await self._report_pulse("layer2", "aborted", {"reason": "regime avoids longs"})
             return result
         if l2_decision == "SELL" and not regime_cfg.allow_shorts:
             logger.info(f"Cascade HOLD: Shorts im Regime '{confirmed_regime}' nicht erlaubt.")
             result.aborted_at = "regime_gate"
             result.duration_ms = (time.perf_counter() - t_start) * 1000
+            await self._report_pulse("layer2", "aborted", {"reason": "regime avoids shorts"})
             return result
 
         # ── Layer 3: Advocatus Diaboli ───────────────────────────────────────
+        await self._report_pulse("layer3", "running")
         logger.debug("Cascade: Layer 3 gestartet...")
         l3_raw = await llm_provider.generate_json(
             prompt=_build_layer3_prompt(l2_raw, market_context),
@@ -330,8 +342,10 @@ class LLMCascade:
             result.duration_ms = (time.perf_counter() - t_start) * 1000
             reasons = l3_raw.get("blocking_reasons", [])
             logger.info(f"Cascade HOLD @ Layer3 Blocker: {reasons}")
+            await self._report_pulse("layer3", "aborted", {"reasons": reasons})
             await self._log_to_redis(result)
             return result
+        await self._report_pulse("layer3", "passed")
 
         # ── Alles grün — Signal produzieren ─────────────────────────────────
         result.decision = l2_decision
@@ -361,6 +375,7 @@ class LLMCascade:
         # Rolling Decision History aktualisieren
         await self._update_decision_history(result)
         await self._log_to_redis(result)
+        await self._report_pulse("signal", "generated", {"decision": result.decision})
 
         return result
 
@@ -409,6 +424,18 @@ class LLMCascade:
                 "transition_active": self.regime_manager.is_in_transition(),
                 "transition_cycles_left": self.regime_manager._transition_cycle,
                 "effective_grss_threshold": self.regime_manager.get_effective_grss_threshold(),
+                "timestamp": datetime.now(timezone.utc).isoformat()
             },
             ttl=600,  # 10 Minuten
         )
+
+    async def _report_pulse(self, step: str, status: str, data: Optional[dict] = None) -> None:
+        """Sendet Echtzeit-Fortschritt an Redis für das Dashboard."""
+        pulse = {
+            "step": step,
+            "status": status,
+            "data": data or {},
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        await self.redis.set_cache("bruno:llm:pulse", pulse, ttl=120)
+        logger.debug(f"Cascade Pulse: {step} -> {status}")

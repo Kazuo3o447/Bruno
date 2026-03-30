@@ -101,5 +101,21 @@ class SentimentAnalyzer:
             self.logger.error(f"CryptoBERT Fehler: {e}")
             return {"score": 0.0, "confidence": 0.0, "label": "error"}
 
+    async def analyze_batch(self, texts: List[str], mode: str = "crypto") -> List[float]:
+        """Analysiert eine Liste von Texten parallel und gibt die Scores zurück."""
+        if not texts:
+            return []
+        
+        tasks = []
+        for text in texts:
+            if mode == "crypto":
+                tasks.append(self.analyze_crypto(text))
+            else:
+                tasks.append(self.analyze_macro(text))
+                
+        results = await asyncio.gather(*tasks)
+        return [r["score"] for r in results]
+
 # Singleton Instance
 analyzer = SentimentAnalyzer()
+

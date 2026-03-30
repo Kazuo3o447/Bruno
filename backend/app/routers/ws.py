@@ -165,17 +165,32 @@ async def websocket_agent_status(websocket: WebSocket):
     
     try:
         while True:
-            # Lade Agenten-Status aus Redis oder DB
-            agents_data = await redis_client.get_cache("agents:status")
-            
-            if agents_data:
+            # 1. Agenten-Status aggregieren
+            from app.routers.agents_status import get_agents_status
+            try:
+                # Wir rufen direkt die Logik aus dem Router auf für Konsistenz
+                agents_response = await get_agents_status()
                 await manager.send_personal_message(websocket, {
                     "type": "agents_status",
-                    "data": agents_data,
+                    "data": {
+                        "agents": [a.dict() for a in agents_response.agents],
+                        "overall_status": agents_response.overall_status
+                    },
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+            except Exception as e:
+                logger.error(f"WS Agents Status Error: {e}")
+
+            # 2. LLM Cascade Pulse (Echtzeit)
+            pulse_data = await redis_client.get_cache("bruno:llm:pulse")
+            if pulse_data:
+                await manager.send_personal_message(websocket, {
+                    "type": "llm_pulse",
+                    "data": pulse_data,
                     "timestamp": datetime.utcnow().isoformat()
                 })
             
-            await asyncio.sleep(2.0)  # 2 Sekunden Update-Intervall
+            await asyncio.sleep(1.0)  # 1 Sekunde für flüssigere Pulse-Anzeige
             
     except WebSocketDisconnect:
         logger.info("Agents WebSocket getrennt")

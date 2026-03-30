@@ -90,10 +90,11 @@ function OverviewSection() {
           Jeder Agent besitzt eine exklusive Zuständigkeit und kommuniziert asynchron über den Redis Message-Broker. 
           Diese Architektur gewährleistet Fehlertoleranz, modulare Skalierbarkeit und latenzarme Datenverarbeitung.
         </p>
-        <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="grid grid-cols-4 gap-4 text-center">
           <StatBox number="6" label="Aktive Agenten" color="text-indigo-400" />
           <StatBox number="0ms" label="RAM-Veto Latenz" color="text-emerald-400" />
-          <StatBox number="5s" label="Heartbeat-Intervall" color="text-blue-400" />
+          <StatBox number="15s" label="Pulse-Intervall" color="text-blue-400" />
+          <StatBox number="Live" label="Cascade-Tracking" color="text-purple-400" />
         </div>
       </div>
 
@@ -151,23 +152,23 @@ function OverviewSection() {
         <div className="grid grid-cols-2 gap-4">
           <StatusExplanation 
             badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">running</span>}
-            title="Agent läuft"
-            desc="Der Agent ist aktiv und verarbeitet Daten. Heartbeats werden regelmäßig gesendet."
+            title="Agent Aktiv"
+            desc="Der Agent bearbeitet gerade einen Task (z.B. 'Analyzing News' oder 'Running LLM Cascade')."
           />
           <StatusExplanation 
-            badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-red-500/10 border border-red-500/20 text-red-400">stopped</span>}
-            title="Agent gestoppt"
-            desc="Der Agent wurde manuell oder durch einen Fehler gestoppt. Keine Datenverarbeitung."
+            badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-sky-500/10 border border-sky-500/20 text-sky-400">IDLE</span>}
+            title="Wartemodus"
+            desc="Der Agent ist gesund, wartet aber auf das nächste Intervall (Polling) oder neue Daten (Stream)."
           />
           <StatusExplanation 
-            badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-yellow-500/10 border border-yellow-500/20 text-yellow-500">DEGRADED</span>}
+            badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-amber-500/10 border border-amber-500/20 text-amber-500">DEGRADED</span>}
             title="Eingeschränkter Modus"
-            desc="Der Agent läuft, aber mit Fallback-Mechanismen (z.B. LLM nicht erreichbar → Keyword-Fallback)."
+            desc="Der Agent läuft, aber mit Fallback-Mechanismen oder hoher Latenz."
           />
           <StatusExplanation 
-            badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-red-500/10 border border-red-500/20 text-red-400">error</span>}
+            badge={<span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-widest bg-red-500/10 border border-red-500/20 text-red-400">ERROR</span>}
             title="Fehlerzustand"
-            desc="Kritischer Fehler aufgetreten. Der Orchestrator versucht automatisch einen Restart."
+            desc="Kritischer Fehler. Der Agent pausiert kurzzeitig oder wird vom Orchestrator neu gestartet."
           />
         </div>
       </div>

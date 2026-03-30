@@ -21,6 +21,7 @@ class AgentState:
         self.last_process_time: Optional[datetime] = None
         self.last_error: Optional[str] = None
         self.health: str = "healthy" # healthy, degraded, error
+        self.sub_state: str = "initializing" # Status-Details für das Dashboard
 
 class BaseAgent(ABC):
     """
@@ -66,6 +67,7 @@ class BaseAgent(ABC):
             heartbeat = {
                 "agent_id": self.agent_id,
                 "status": "running" if self.state.running else "stopped",
+                "sub_state": self.state.sub_state,
                 "uptime_seconds": (datetime.now(timezone.utc) - self.state.start_time).total_seconds() if self.state.start_time else 0,
                 "processed_count": self.state.processed_count,
                 "error_count": self.state.error_count,
@@ -78,6 +80,13 @@ class BaseAgent(ABC):
                 await self.deps.redis.set_cache(f"heartbeat:{self.agent_id}", heartbeat, ttl=60)
         except Exception as e:
             self.logger.warning(f"Heartbeat-Fehler: {e}")
+
+    async def _heartbeat_loop(self) -> None:
+        """Sende Heartbeats im Hintergrund, während der Agent läuft."""
+        while self.state.running:
+            await self._send_heartbeat()
+            # Alle 15 Sekunden ein Lebenszeichen für maximale Transparenz im Dashboard
+            await asyncio.sleep(15)
 
     async def _report_error(self, error: Exception) -> None:
         """Meldet einen Crash an das System."""
@@ -121,9 +130,12 @@ class PollingAgent(BaseAgent):
         self.state.running = True
         self.state.start_time = datetime.now(timezone.utc)
 
+        # Starte Heartbeat-Task im Hintergrund (Universal Pulse)
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
         while self.state.running:
             try:
-                await self._send_heartbeat()
+                # Heartbeat wird jetzt parallel im _heartbeat_loop gesendet
                 await self.process()
                 self.state.processed_count += 1
                 self.state.last_process_time = datetime.now(timezone.utc)
@@ -139,12 +151,18 @@ class PollingAgent(BaseAgent):
 
                 if self.state.consecutive_errors >= self._max_consecutive_errors:
                     self.logger.critical(f"Agent pausiert für 5m nach {self._max_consecutive_errors} Fehlern.")
+                    self.state.sub_state = "error_paused"
                     await asyncio.sleep(300)
                     self.state.consecutive_errors = 0
 
             if self.state.running:
-                await asyncio.sleep(self.get_interval())
+                interval = self.get_interval()
+                self.state.sub_state = f"idle (waiting {int(interval)}s)"
+                await asyncio.sleep(interval)
 
+        # Cleanup
+        self.state.running = False
+        heartbeat_task.cancel()
         self.logger.info("PollingAgent beendet.")
 
 class StreamingAgent(BaseAgent):
@@ -158,14 +176,24 @@ class StreamingAgent(BaseAgent):
         """
         pass
 
+    async def _heartbeat_loop(self) -> None:
+        """Sende Heartbeats im Hintergrund, während der Stream läuft."""
+        while self.state.running:
+            await self._send_heartbeat()
+            await asyncio.sleep(30)
+
     async def run(self) -> None:
         self.state.running = True
         self.state.start_time = datetime.now(timezone.utc)
+        self.state.sub_state = "streaming"
         backoff = 1
+
+        # Starte Heartbeat-Task im Hintergrund (Universal Pulse)
+        heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         while self.state.running:
             try:
-                await self._send_heartbeat()
+                # Der Stream blockiert hier, daher brauchen wir den Background-Heartbeat
                 await self.run_stream()
                 break  # Normales Ende
             except asyncio.CancelledError:
@@ -174,11 +202,13 @@ class StreamingAgent(BaseAgent):
                 self.state.error_count += 1
                 self.state.consecutive_errors += 1
                 self.state.last_error = str(e)
+                self.state.sub_state = "reconnecting"
                 self.logger.error(f"Stream-Fehler: {e}")
                 await self._report_error(e)
 
                 if self.state.consecutive_errors >= self._max_consecutive_errors:
                     self.logger.critical(f"Agent pausiert für 5m nach {self._max_consecutive_errors} Fehlern.")
+                    self.state.sub_state = "error_paused"
                     await asyncio.sleep(300)
                     self.state.consecutive_errors = 0
                     backoff = 1
@@ -188,4 +218,8 @@ class StreamingAgent(BaseAgent):
                     await asyncio.sleep(wait_time)
                     backoff = min(backoff * 2, 60)
 
+        # Cleanup
+        self.state.running = False
+        heartbeat_task.cancel()
         self.logger.info("StreamingAgent beendet.")
+

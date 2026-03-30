@@ -21,6 +21,7 @@ class AgentStatus(BaseModel):
     name: str
     type: str
     status: str
+    sub_state: Optional[str] = "initializing"
     last_activity: str
     uptime_seconds: Optional[float] = 0.0
     processed_count: int = 0
@@ -73,6 +74,7 @@ async def get_agents_status():
                         name=info["name"],
                         type=info["type"],
                         status=status,
+                        sub_state=hb.get("sub_state", "unknown"),
                         last_activity=hb.get("timestamp", datetime.now(timezone.utc).isoformat()),
                         uptime_seconds=hb.get("uptime_seconds", 0.0),
                         processed_count=hb.get("processed_count", 0),

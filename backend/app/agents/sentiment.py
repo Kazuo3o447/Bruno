@@ -76,6 +76,7 @@ class SentimentAgent(PollingAgent):
             headlines = []   # Liste von (source, headline) Tuples
 
             # ── 1. CryptoPanic API (primäre Quelle) ──────────────
+            self.state.sub_state = "fetching news (cryptopanic)"
             api_key = self.deps.config.CRYPTOPANIC_API_KEY
             if api_key:
                 try:
@@ -119,6 +120,7 @@ class SentimentAgent(PollingAgent):
                 )
 
             # ── 2. RSS Feeds (Fallback + Ergänzung) ──────────────
+            self.state.sub_state = "fetching news (rss)"
             rss_feeds = [
                 ("coindesk",      "https://www.coindesk.com/arc/outboundfeeds/rss/"),
                 ("cointelegraph", "https://cointelegraph.com/rss"),
@@ -155,7 +157,9 @@ class SentimentAgent(PollingAgent):
 
             # ── 4. NLP-Analyse ────────────────────────────────────
             sentiment_scores = []
-            for source, headline in headlines[:20]:   # Max 20 analysieren
+            total_headlines = len(headlines[:20])
+            for i, (source, headline) in enumerate(headlines[:20]):   # Max 20 analysieren
+                self.state.sub_state = f"analyzing news ({i+1}/{total_headlines})"
                 # CryptoPanic und Makro-Quellen → FinBERT
                 # Krypto-spezifische Quellen → CryptoBERT
                 mode = "macro" if source == "coindesk" else "crypto"
@@ -169,10 +173,12 @@ class SentimentAgent(PollingAgent):
                     self.logger.debug(f"NLP Fehler: {e}")
 
             if not sentiment_scores:
+                self.state.sub_state = "error (no sentiment scores)"
                 self.logger.warning("NLP-Analyse ergab keine verwertbaren Ergebnisse")
                 return
 
             # ── 5. Aggregation ────────────────────────────────────
+            self.state.sub_state = "aggregating sentiment"
             avg_score = sum(s["score"] for s in sentiment_scores) / len(sentiment_scores)
             avg_confidence = sum(
                 s["confidence"] for s in sentiment_scores
