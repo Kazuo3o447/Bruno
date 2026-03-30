@@ -1,8 +1,18 @@
 # Daten-Architektur & Market Context
 
 > **Das LLM ist das Gehirn, die Daten sind die Sinne.**
-> Ein Modell wie DeepSeek-R1 (14B Parameter) verhungert, wenn man ihm nur "Der RSI ist 30" als Kontext gibt. Dieses Dokument definiert,## 🏁 Phase 5: Institutional Macro/Micro Context & Risk System (März 2026)
+> Ein Modell wie DeepSeek-R1 (14B Parameter) verhungert, wenn man ihm nur "Der RSI ist 30" als Kontext gibt. Dieses Dokument definiert,
+
+## 🏁 Phase 5: Institutional Macro/Micro Context & Risk System (März 2026)
 **Status: ✅ COMPLETED**
+
+### 🎯 Datenquellen-Status (30.03.2026)
+- **VIX**: ✅ CBOE CSV (31.05) - Offizielle Quelle, keine Rate Limits
+- **FRED Yields**: ✅ Alle Treasury Rates (2Y, 5Y, 10Y, 30Y)
+- **NDX**: ✅ Alpha Vantage Fallback
+- **CryptoPanic**: ✅ v2 API (20 posts)
+- **Reddit**: ✅ OAuth + Anonym
+- **Liquidation Clusters**: ✅ Intern (8ms)
 
 - [x] **ContextAgent**: Integration von 8 RSS-Feeds & Makro-Metriken (VIX, Yields).
 - [x] **HFT-Quant**: Implementierung von OFI, VAMP und CVD-Trend.

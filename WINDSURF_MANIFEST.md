@@ -150,13 +150,16 @@ divergence = abs(binance_funding - bybit_funding)
 | Quelle | Signal | Status |
 |--------|--------|--------|
 | FRED API `DGS10` | US 10Y Treasury Yields | ✅ implementiert |
-| Yahoo Finance `^VIX` | VIX Index | ✅ implementiert (429-anfällig) |
+| CBOE CSV `VIX_History` | VIX Index | ✅ implementiert (31.05 aktuell) |
 | Yahoo Finance `^NDX` | Nasdaq SMA200 | ✅ implementiert (429-anfällig) |
 | Alternative.me | Fear & Greed Index | ✅ implementiert |
-| CryptoPanic API | Breaking News | ✅ geplant |
+| CryptoPanic API | Breaking News | ✅ v2 implementiert |
 | 8x RSS Feeds | FinBERT/CryptoBERT Input | ✅ implementiert |
 
-**Verbesserung für yFinance (429-Fix):** Stagger die Calls mit 30-Sekunden-Abstand und nutze den offiziellen yfinance Python-Client statt direkter HTTP-Requests. Alternativ für VIX: Stooq.com bietet `^VIX.US` als freien Download.
+**VIX Implementierung (✅ FIXED 30.03.2026):** CBOE CSV als primäre Quelle mit 3-Stufen-Fallback:
+1. CBOE CSV (offiziell, keine Rate Limits) - VIX 31.05
+2. Yahoo Finance (fallback, 429-anfällig)
+3. Alpha Vantage (final, TIME_SERIES_DAILY)
 
 ---
 

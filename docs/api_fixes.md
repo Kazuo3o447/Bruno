@@ -20,18 +20,30 @@ Das Bruno Trading Bot System litt unter schweren API-Rate-Limit-Problemen:
 
 ---
 
-## ✅ Lösung
+## ✅ Lösung (30.03.2026)
 
 ### 1. VIX: CBOE Offizielle Quelle
 ```python
-# Stooq → CBOE CSV (offiziell, kein Rate Limit)
+# CBOE CSV als primäre Quelle (offiziell, kein Rate Limit)
 cboe_resp = await client.get(
     "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv",
     timeout=10.0
 )
+if cboe_resp.status_code == 200:
+    lines = cboe_resp.text.strip().split("\n")
+    last = lines[-1].split(",")
+    vix = float(last[4])  # CLOSE-Spalte
+    # Ergebnis: VIX 31.05 (echte Marktdaten)
 ```
 
-### 2. Reddit OAuth + Anonym Fallback
+### 2. Fallback-Hierarchie VIX
+```
+1. CBOE CSV (primär) - Offizielle Quelle, keine Rate Limits
+2. Yahoo Finance (fallback) - Real-time aber 429-anfällig  
+3. Alpha Vantage (final) - TIME_SERIES_DAILY
+```
+
+### 3. Reddit OAuth + Anonym Fallback
 ```python
 # OAuth (60 req/min) oder anonym
 if token:
@@ -128,7 +140,7 @@ Total: 6/6 running, 0 errors
 
 | API | Status | Lösung |
 |-----|--------|---------|
-| VIX | ✅ 200 | CBOE CSV (offiziell) |
+| VIX | ✅ 200 | CBOE CSV (offiziell) - VIX 31.05 |
 | Reddit | ✅ 200 | OAuth + Anonym |
 | StockTwits | ✅ Skip | Graceful Skip |
 | Alpha Vantage | ✅ 200 | NDX Fallback aktiv |
@@ -161,8 +173,8 @@ curl http://localhost:8000/api/v1/agents/status
 
 ### Fallback-Hierarchie
 ```
-VIX: Yahoo → CBOE → Redis-Cache → Default
-NDX: Yahoo → Alpha Vantage → Redis-Cache → Default
+VIX: CBOE CSV → Yahoo Finance → Alpha Vantage → Redis-Cache → Default
+NDX: Yahoo Finance → Alpha Vantage → Redis-Cache → Default
 Reddit: OAuth → Anonym → None
 StockTwits: API-Key → Graceful Skip
 ```
