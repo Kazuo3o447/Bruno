@@ -27,6 +27,11 @@ class ContextAgent(PollingAgent):
         self._last_macro_fetch = 0.0
         self._macro_interval = 900 # 15 Minuten
         self._user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        
+        # ── Neue Makro-Datenquellen (Task 2) ─────────────────────
+        self.m2_yoy_pct: float = 0.0
+        self.stablecoin_delta_bn: float = 0.0
+        self.funding_divergence: float = 0.0
 
         # ── Binance REST Cache ──────────────────────────────────
         self.open_interest: float = 0.0
@@ -205,6 +210,206 @@ class ContextAgent(PollingAgent):
             latency = (time.perf_counter() - start) * 1000
             await self._report_health("FRED_Yields", "offline", latency)
             return self.yields_10y
+
+    async def _fetch_m2_supply(self) -> float:
+        """
+        Holt US M2 Money Supply YoY-Wachstumsrate von FRED.
+        Serie: WM2NS (wöchentlich, saisonbereinigt)
+        
+        Rückgabe: YoY% als float (z.B. 3.5 für +3.5%)
+        Cache: 24 Stunden (Signal ändert sich wöchentlich)
+        
+        Signalbedeutung:
+        > +5%  → expansive Geldpolitik, strukturell bullish für BTC
+        0–5%  → neutral
+        < 0%  → kontraktiv, strukturell bearish für BTC
+        """
+        CACHE_KEY = "bruno:macro:m2_yoy"
+        CACHE_TTL = 86400  # 24h
+
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached is not None:
+            return float(cached)
+
+        api_key = self.deps.config.FRED_API_KEY
+        if not api_key:
+            return 0.0
+
+        start_t = time.perf_counter()
+        try:
+            # Letzten 13 Monate holen um YoY zu berechnen
+            from datetime import date, timedelta
+            end_date = date.today().isoformat()
+            start_date = (date.today() - timedelta(days=400)).isoformat()
+
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    "https://api.stlouisfed.org/fred/series/observations",
+                    params={
+                        "series_id": "WM2NS",
+                        "api_key": api_key,
+                        "file_type": "json",
+                        "observation_start": start_date,
+                        "observation_end": end_date,
+                        "sort_order": "asc"
+                    }
+                )
+                if resp.status_code != 200:
+                    return 0.0
+
+                data = resp.json()
+                obs = [o for o in data.get("observations", []) if o["value"] != "."]
+                if len(obs) < 52:  # Weniger als 1 Jahr Daten
+                    return 0.0
+
+                # YoY = (aktuell / vor_52_Wochen - 1) * 100
+                latest = float(obs[-1]["value"])
+                year_ago = float(obs[-52]["value"])
+                yoy_pct = (latest / year_ago - 1) * 100
+
+                latency = (time.perf_counter() - start_t) * 1000
+                await self._report_health("FRED_M2", "online", latency)
+                await self.deps.redis.set_cache(CACHE_KEY, yoy_pct, ttl=CACHE_TTL)
+                self.logger.info(f"M2 YoY: {yoy_pct:.2f}%")
+                return yoy_pct
+
+        except Exception as e:
+            latency = (time.perf_counter() - start_t) * 1000
+            await self._report_health("FRED_M2", "offline", latency)
+            self.logger.warning(f"M2 FRED Fehler: {e}")
+            return 0.0
+
+    async def _fetch_stablecoin_supply(self) -> float:
+        """
+        Kombinierter USDT + USDC Market Cap, 7-Tages-Delta in Mrd. USD.
+        
+        Rückgabe: delta_7d in Mrd. USD (positiv = Zuwachs = Dry Powder steigt)
+        Cache: 6 Stunden
+        
+        Signalbedeutung:
+        > +2 Mrd  → signifikant neues Kapital fließt ins Crypto-System
+        < -2 Mrd  → Kapitalabfluss, Risk-off
+        """
+        CACHE_KEY = "bruno:macro:stablecoin_delta"
+        CACHE_TTL = 21600  # 6h
+
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached is not None:
+            return float(cached)
+
+        start_t = time.perf_counter()
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # USDT + USDC Market Cap
+                resp = await client.get(
+                    "https://api.coingecko.com/api/v3/coins/markets",
+                    params={
+                        "vs_currency": "usd",
+                        "ids": "tether,usd-coin",
+                        "order": "market_cap_desc",
+                        "per_page": 2,
+                        "page": 1,
+                        "sparkline": True,   # 7-Tages-Verlauf
+                        "price_change_percentage": "7d"
+                    },
+                    headers={"Accept": "application/json"}
+                )
+                if resp.status_code != 200:
+                    return 0.0
+
+                coins = resp.json()
+                total_now = 0.0
+                total_7d_ago_approx = 0.0
+
+                for coin in coins:
+                    mc = coin.get("market_cap", 0) or 0
+                    pct_7d = coin.get("price_change_percentage_7d_in_currency", 0) or 0
+                    total_now += mc
+                    # Rückrechnung: mc_7d_ago ≈ mc / (1 + pct/100)
+                    mc_7d_ago = mc / (1 + pct_7d / 100) if pct_7d != -100 else mc
+                    total_7d_ago_approx += mc_7d_ago
+
+                # Delta in Milliarden USD
+                delta_bn = (total_now - total_7d_ago_approx) / 1e9
+
+                latency = (time.perf_counter() - start_t) * 1000
+                await self._report_health("CoinGecko_Stablecoin", "online", latency)
+                await self.deps.redis.set_cache(CACHE_KEY, delta_bn, ttl=CACHE_TTL)
+                self.logger.info(f"Stablecoin Supply Delta 7d: {delta_bn:+.2f}B USD")
+                return delta_bn
+
+        except Exception as e:
+            latency = (time.perf_counter() - start_t) * 1000
+            await self._report_health("CoinGecko_Stablecoin", "offline", latency)
+            self.logger.warning(f"Stablecoin CoinGecko Fehler: {e}")
+            return 0.0
+
+    async def _fetch_cross_exchange_funding(self) -> float:
+        """
+        Cross-Exchange Funding Rate Divergenz: Binance vs. Bybit vs. OKX.
+        Alle drei Exchanges bieten öffentliche Endpoints ohne API-Key.
+        
+        Rückgabe: max_divergence als float (z.B. 0.015 = 0.015%)
+        Cache: 5 Minuten (gleich wie ContextAgent-Zyklus)
+        
+        Signalbedeutung:
+        < 0.01%  → Markt im Gleichgewicht → +8 GRSS
+        > 0.03%  → Arbitrage-Druck, instabiles Setup → -10 GRSS
+        """
+        CACHE_KEY = "bruno:macro:funding_divergence"
+        CACHE_TTL = 300  # 5 Min
+
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached is not None:
+            return float(cached)
+
+        binance_funding = getattr(self, 'funding_rate', 0.0)  # Bereits aus Binance WS
+
+        async def _get_bybit_funding() -> float:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.get(
+                        "https://api.bybit.com/v5/market/tickers",
+                        params={"category": "linear", "symbol": "BTCUSDT"}
+                    )
+                    if r.status_code == 200:
+                        result = r.json().get("result", {}).get("list", [{}])
+                        if result:
+                            return float(result[0].get("fundingRate", 0))
+            except Exception as e:
+                self.logger.debug(f"Bybit funding Fehler: {e}")
+            return binance_funding  # Fallback auf Binance
+
+        async def _get_okx_funding() -> float:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    r = await client.get(
+                        "https://www.okx.com/api/v5/public/funding-rate",
+                        params={"instId": "BTC-SWAP"}
+                    )
+                    if r.status_code == 200:
+                        data_list = r.json().get("data", [{}])
+                        if data_list:
+                            return float(data_list[0].get("fundingRate", 0))
+            except Exception as e:
+                self.logger.debug(f"OKX funding Fehler: {e}")
+            return binance_funding  # Fallback auf Binance
+
+        bybit_f, okx_f = await asyncio.gather(_get_bybit_funding(), _get_okx_funding())
+
+        divergences = [
+            abs(binance_funding - bybit_f),
+            abs(binance_funding - okx_f),
+            abs(bybit_f - okx_f),
+        ]
+        max_div = max(divergences)
+
+        await self.deps.redis.set_cache(CACHE_KEY, max_div, ttl=CACHE_TTL)
+        self.logger.debug(
+            f"Funding: BNC={binance_funding:.4%} BYB={bybit_f:.4%} OKX={okx_f:.4%} "
+            f"MaxDiv={max_div:.4%}"
+        )
+        return max_div
 
     async def _fetch_nasdaq_status(self) -> str:
         """
@@ -681,6 +886,15 @@ class ContextAgent(PollingAgent):
         if dxy_change > 0.5 and btc_change_24h > 0:
             score += 10.0
 
+        # M2 Supply YoY% (strukturelles Makro-Signal, wöchentlich)
+        m2_yoy = data.get("m2_yoy_pct", 0.0)
+        if m2_yoy > 5.0:
+            score += 8.0    # Expansive Geldpolitik — struktureller Rückenwind
+        elif m2_yoy > 2.0:
+            score += 3.0    # Moderates Wachstum — leicht positiv
+        elif m2_yoy < 0.0:
+            score -= 10.0   # Kontraktion — strukturell bearish
+
         # ═══════════════════════════════════════════════════
         # DERIVATIVES LAYER (~40 Punkte)
         # ═══════════════════════════════════════════════════
@@ -729,14 +943,24 @@ class ContextAgent(PollingAgent):
         if data.get("funding_settlement_window", False):
             score = min(score, 42.0)  # Kein Hard Veto, aber unter normaler Schwelle
 
-        # Cross-Exchange Funding Divergenz (CoinGlass)
-        if data.get("coinglass_active", False):
-            div = data.get("funding_divergence", 0.0)
-            if div < 0.010:     score += 8.0   # Konvergent → stabiler Markt
-            elif div > 0.030:   score -= 10.0  # Divergent → instabiles Umfeld
+        # Cross-Exchange Funding Divergenz (Bybit + OKX Public API — kein CoinGlass nötig)
+        funding_div = data.get("funding_divergence", 0.0)
+        if funding_div < 0.010:     score += 8.0   # Konvergent → stabiler Markt
+        elif funding_div > 0.030:   score -= 10.0  # Divergent → instabiles Umfeld
 
         # LLM News Sentiment (aus SentimentAgent, echte CryptoPanic-Daten)
         score += llm_sentiment * 10.0
+
+        # Stablecoin Supply Delta 7d (Dry Powder / Kapitalabfluss)
+        stablecoin_delta = data.get("stablecoin_delta_bn", 0.0)
+        if stablecoin_delta > 2.0:
+            score += 8.0    # Signifikanter Zuwachs → neues Kapital im System
+        elif stablecoin_delta > 0.5:
+            score += 3.0    # Moderater Zuwachs
+        elif stablecoin_delta < -2.0:
+            score -= 10.0   # Signifikanter Abfluss → Risk-off
+        elif stablecoin_delta < -0.5:
+            score -= 4.0    # Moderater Abfluss
 
         # Retail Narrative Score — Gewicht 0.0 für erste 2 Wochen
         # Manuell erhöhen auf 8.0 nach Verifikation der Signal-Qualität
@@ -788,23 +1012,33 @@ class ContextAgent(PollingAgent):
             self.state.sub_state = "checking macro requirements"
             now_t = time.time()
             if now_t - self._last_macro_fetch > self._macro_interval:
-                self.state.sub_state = "fetching macro data (VIX/DXY/Yields)"
+                self.state.sub_state = "fetching macro data (VIX/DXY/Yields/M2/Stablecoin)"
                 self.logger.info("Makro-Update gestartet...")
                 self.yields_10y = await self._fetch_fred_yields()
                 macro_data = await self._fetch_vix_and_dxy()
                 self.vix = macro_data.get("VIX", self.vix)
                 self.dxy_change = macro_data.get("DXY_Change", self.dxy_change)
                 self.ndx_status = await self._fetch_nasdaq_status()
+                
+                # M2 Supply und Stablecoin — gleicher 15-Min-Cache wie VIX/Yields
+                self.m2_yoy_pct = await self._fetch_m2_supply()
+                self.stablecoin_delta_bn = await self._fetch_stablecoin_supply()
+                
                 self._last_macro_fetch = now_t
                 self.logger.info(
                     f"Makro: NDX={self.ndx_status} | "
                     f"VIX={self.vix:.1f} | "
-                    f"Yields={self.yields_10y:.2f}%"
+                    f"Yields={self.yields_10y:.2f}% | "
+                    f"M2={self.m2_yoy_pct:.1f}% | "
+                    f"Stablecoin Δ={self.stablecoin_delta_bn:+.1f}B"
                 )
 
             # ── 2. Binance REST (bei jedem Cycle) ────────────────
             self.state.sub_state = "fetching binance derivatives data"
             await self._fetch_binance_rest_data()
+            
+            # Cross-Exchange Funding Divergenz — jedes Mal im Zyklus
+            self.funding_divergence = await self._fetch_cross_exchange_funding()
 
             # ── 3. Deribit Public (15-Min-Cache intern) ──────────
             self.state.sub_state = "fetching deribit options data"
@@ -963,7 +1197,7 @@ class ContextAgent(PollingAgent):
                 "perp_basis_pct": self.perp_basis_pct,
                 "fear_greed": fear_greed,
                 "etf_flows_3d_m": self._etf_flows_3d,          # 0.0 wenn kein Key
-                "funding_divergence": self._funding_divergence,  # 0.0 wenn kein Key
+                "funding_divergence": self.funding_divergence,  # echte Bybit/OKX Daten
                 "coinglass_active": self.coinglass.is_active,
                 "retail_score": self._retail_score,
                 "retail_fomo_warning": self._retail_fomo_warning,
@@ -973,6 +1207,8 @@ class ContextAgent(PollingAgent):
                 "grss_30min_ago": grss_30min_ago,
                 "fresh_source_count": fresh_source_count,
                 "data_freshness_ok": data_freshness_ok,
+                "m2_yoy_pct": self.m2_yoy_pct,
+                "stablecoin_delta_bn": self.stablecoin_delta_bn,
                 "latency_veto_active": latency_veto_active,
                 "funding_settlement_window": self._is_funding_settlement_window(),
             }
