@@ -575,8 +575,9 @@ Woche: +$127.80           Daily Loss Limit: -$XX (XX% verbleibend)
 | API | Zweck | Kosten | Priorität | Env-Variable |
 |-----|-------|--------|-----------|--------------|
 | **Binance API** | Order Execution (Live) | Kostenlos | P1 | `BINANCE_API_KEY`, `BINANCE_SECRET` |
-| **FRED API** | 10Y Yields | Kostenlos | P1 | `FRED_API_KEY` |
-| **CryptoPanic API** | News Aggregation | Kostenlos | P1 | `CRYPTOPANIC_API_KEY` |
+| **FRED API** | 10Y Yields | Kostenlos | ✅ P1 | `FRED_API_KEY` |
+| **CryptoPanic API** | News Aggregation | Kostenlos | ✅ P1 | `CRYPTOPANIC_API_KEY` |
+| **Alpha Vantage API** | NDX Fallback | Kostenlos | ✅ P1 | `ALPHA_VANTAGE_API_KEY` |
 | **CoinGlass API** | Funding, OI, ETF Flows, Liq Maps | $29/Monat (Hobbyist) | P1 | `COINGLASS_API_KEY` |
 | **Telegram Bot Token** | Notifications | Kostenlos | P2 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
 
