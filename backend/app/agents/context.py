@@ -413,75 +413,82 @@ class ContextAgent(PollingAgent):
 
     async def _fetch_nasdaq_status(self) -> str:
         """
-        Nasdaq SMA200 via Yahoo Finance.
-        Fallback: Alpha Vantage (QQQ als NDX-Proxy).
-        Kostenlos: 25 req/day — reicht für 6h-Intervall.
+        Nasdaq-100 Status vs. SMA200.
+        
+        Fallback-Kette:
+        1. Yahoo Finance (primär, oft 429)
+        2. Alpha Vantage (ALPHA_VANTAGE_API_KEY, finales Fallback)
+        3. Letzter bekannter Wert (Cache/Instanz)
+        
+        Rückgabe: "BULLISH" | "BEARISH" | "UNKNOWN"
+        Cache: 4 Stunden (Tageskurs ändert sich nicht schneller)
         """
+        CACHE_KEY = "bruno:macro:ndx_status"
+        CACHE_TTL = 14400  # 4h
+
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached:
+            return cached
+
         start = time.perf_counter()
         headers = {"User-Agent": self._user_agent}
 
-        # ── Primär: Yahoo Finance ──────────────────────────────────
+        # Stufe 1: Yahoo Finance
         try:
             async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
                 resp = await client.get(
-                    "https://query1.finance.yahoo.com/v8/finance/chart/^NDX?range=250d&interval=1d"
+                    "https://query1.finance.yahoo.com/v8/finance/chart/%5ENDX",
+                    params={"interval": "1d", "range": "300d"}
                 )
                 if resp.status_code == 200:
-                    data = resp.json()
-                    closes = [
-                        c for c in
-                        data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-                        if c is not None
-                    ]
+                    closes = resp.json()["chart"]["result"][0]["indicators"]["adjclose"][0]["adjclose"]
+                    closes = [x for x in closes if x is not None]
                     if len(closes) >= 200:
-                        sma200 = sum(closes[-200:]) / 200
-                        status = "BULLISH" if closes[-1] >= sma200 else "BEARISH"
-                    else:
-                        status = "BULLISH"
-                    latency = (time.perf_counter() - start) * 1000
-                    await self._report_health("yFinance_NDX", "online", latency)
-                    return status
+                        status = "BULLISH" if closes[-1] > sum(closes[-200:]) / 200 else "BEARISH"
+                        await self.deps.redis.set_cache(CACHE_KEY, status, ttl=CACHE_TTL)
+                        await self._report_health("yFinance_NDX", "online", 0)
+                        return status
                 elif resp.status_code == 429:
                     self.logger.warning("yFinance NDX 429 — versuche Alpha Vantage")
         except Exception as e:
             self.logger.warning(f"yFinance NDX Fehler: {e}")
 
-        # ── Fallback: Alpha Vantage (QQQ ≈ NDX-Proxy) ─────────────
-        av_key = self.deps.config.ALPHA_VANTAGE_API_KEY
+        # Stufe 2: Alpha Vantage (QQQ als NDX-Proxy)
+        av_key = getattr(self.deps.config, "ALPHA_VANTAGE_API_KEY", None)
         if av_key:
             try:
-                av_url = (
-                    "https://www.alphavantage.co/query"
-                    f"?function=TIME_SERIES_DAILY_ADJUSTED&symbol=QQQ"
-                    f"&outputsize=full&apikey={av_key}"
-                )
                 async with httpx.AsyncClient(timeout=15.0) as client:
-                    resp = await client.get(av_url)
+                    resp = await client.get(
+                        "https://www.alphavantage.co/query",
+                        params={
+                            "function": "TIME_SERIES_DAILY_ADJUSTED",
+                            "symbol": "QQQ",  # QQQ als NDX-Proxy
+                            "outputsize": "full",
+                            "apikey": av_key
+                        }
+                    )
                     if resp.status_code == 200:
-                        data = resp.json()
-                        ts = data.get("Time Series (Daily)", {})
-                        if not ts:
-                            self.logger.warning("Alpha Vantage NDX: leere Antwort (Rate Limit?)")
-                        else:
-                            # ts ist newest-first geordnet
-                            closes = [float(v["4. close"]) for v in list(ts.values())[:250]]
+                        ts = resp.json().get("Time Series (Daily)", {})
+                        if ts:
+                            closes = [float(v["5. adjusted close"]) for v in
+                                      list(ts.values())[:200]]
                             if len(closes) >= 200:
-                                sma200 = sum(closes[:200]) / 200
-                                status = "BULLISH" if closes[0] >= sma200 else "BEARISH"
-                            else:
-                                status = "BULLISH"
-                            latency = (time.perf_counter() - start) * 1000
-                            await self._report_health("yFinance_NDX", "degraded", latency)
-                            self.logger.info(f"NDX via Alpha Vantage (QQQ): {status}")
-                            return status
+                                status = "BULLISH" if closes[0] > sum(closes) / 200 else "BEARISH"
+                                await self.deps.redis.set_cache(CACHE_KEY, status, ttl=CACHE_TTL)
+                                await self._report_health("AlphaVantage_NDX", "online", 0)
+                                self.logger.info("NDX via Alpha Vantage (QQQ) Fallback geladen")
+                                return status
+                        else:
+                            self.logger.warning("Alpha Vantage NDX: leere Antwort (Rate Limit?)")
+                    else:
+                        self.logger.warning(f"Alpha Vantage NDX HTTP {resp.status_code}")
             except Exception as e:
-                self.logger.warning(f"Alpha Vantage NDX Fehler: {e}")
+                self.logger.warning(f"AlphaVantage NDX Fehler: {e}")
 
-        # ── Letzter Ausweg: gecachter Wert ────────────────────────
-        latency = (time.perf_counter() - start) * 1000
-        await self._report_health("yFinance_NDX", "offline", latency)
-        self.logger.warning(f"NDX: alle Quellen offline — Cache-Wert: {self.ndx_status}")
-        return self.ndx_status
+        # Stufe 3: Letzter bekannter Wert (Fallback)
+        await self._report_health("NDX_AllSources", "offline", 0)
+        self.logger.warning("NDX: Alle Quellen offline — nutze letzten bekannten Wert")
+        return getattr(self, 'ndx_status', 'UNKNOWN')  # letzter bekannter Wert
 
     async def _fetch_vix_and_dxy(self) -> dict:
         """

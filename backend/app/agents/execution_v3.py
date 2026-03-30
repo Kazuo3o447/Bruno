@@ -644,6 +644,44 @@ class ExecutionAgentV3(StreamingAgent):
                     f"Haltezeit: {closed.get('hold_duration_minutes', 0)} Min"
                 )
 
+            # Post-Trade Debrief (Phase F)
+            if closed and self.deps.config.DRY_RUN:
+                try:
+                    from app.services.debrief_service import debrief_service
+                    
+                    # Vollständige Positionsdaten für Debrief vorbereiten
+                    position_data = {
+                        "symbol": symbol,
+                        "side": side,
+                        "entry_price": pos.get("entry_price", 0),
+                        "exit_price": exit_price,
+                        "quantity": qty,
+                        "pnl_eur": closed.get("pnl_eur", 0),
+                        "pnl_pct": closed.get("pnl_pct", 0),
+                        "hold_duration_minutes": closed.get("hold_duration_minutes", 0),
+                        "entry_time": pos.get("entry_time"),
+                        "exit_time": datetime.now(timezone.utc).isoformat(),
+                        "exit_reason": reason,
+                        "grss_at_entry": pos.get("grss_at_entry", 0),
+                        "regime": pos.get("regime", "unknown"),
+                        "layer1_output": pos.get("layer1_output", {}),
+                        "layer2_output": pos.get("layer2_output", {}),
+                        "layer3_output": pos.get("layer3_output", {})
+                    }
+                    
+                    # Debrief asynchron ausführen (nicht blockieren)
+                    asyncio.create_task(
+                        debrief_service.analyze_trade(
+                            trade_id=pos.get("id", trade_id),
+                            position_data=position_data
+                        )
+                    )
+                    
+                    self.logger.info("Post-Trade Debrief gestartet")
+                    
+                except Exception as e:
+                    self.logger.warning(f"Post-Trade Debrief Fehler: {e}")
+
         except Exception as e:
             self.logger.error(f"_close_position Fehler: {e}")
 
