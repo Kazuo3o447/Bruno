@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, llm_cascade, positions, market
+from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, llm_cascade, positions, market, sentiment_test
 from app.core.redis_client import redis_client
 from app.core.llm_client import ollama_client
 from app.core.database import init_db, close_db
@@ -33,6 +33,7 @@ app.include_router(ws.router, tags=["WebSockets"])
 app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(systemtest.router, prefix="/api/v1", tags=["systemtest"])
+app.include_router(sentiment_test.router, prefix="/api/v1", tags=["systemtest"])
 app.include_router(agents_status.router, prefix="/api/v1", tags=["agents_status"])
 app.include_router(trades.router, prefix="/api/v1/trades", tags=["trades"])
 app.include_router(monitoring.router, prefix="/api/v1", tags=["monitoring"])
