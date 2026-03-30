@@ -1,546 +1,290 @@
 "use client";
+import { useEffect, useState } from "react";
+import Sidebar from "../components/Sidebar";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import AgentInfoModal from "../../components/AgentInfoModal";
-import { 
-  MessageSquare, 
-  Terminal, 
-  Settings2, 
-  Play, 
-  Square, 
-  RefreshCw, 
-  Send, 
-  Info, 
-  ShieldAlert, 
-  Cpu, 
-  Activity,
-  Zap,
-  History,
-  CheckCircle2,
-  AlertCircle
-} from "lucide-react";
+const API = "/api/v1";
 
-interface AgentStatus {
-  id: string;
-  name: string;
-  type: string;
-  status: "running" | "stopped" | "error" | "dead" | "unknown";
-  last_activity: string;
-  uptime_seconds?: number;
-  processed_count: number;
-  error_count: number;
-  last_error?: string;
-  description: string;
-  health: "healthy" | "degraded" | "error";
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `vor ${s}s`;
+  if (s < 3600) return `vor ${Math.floor(s / 60)}m ${s % 60}s`;
+  return `vor ${Math.floor(s / 3600)}h`;
 }
 
-interface AgentsResponse {
-  agents: AgentStatus[];
-  overall_status: "success" | "warning" | "error" | "idle";
-  last_check: string;
-  total_agents: number;
-  running_agents: number;
-  error_agents: number;
+function AgentCard({ title, children, healthy, lastUpdate }: {
+  title: string; children: React.ReactNode;
+  healthy?: boolean; lastUpdate?: string | null;
+}) {
+  return (
+    <div className="border border-zinc-800 rounded font-mono text-xs">
+      <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full ${
+            healthy === true ? "bg-emerald-400 animate-pulse" :
+            healthy === false ? "bg-red-400" : "bg-zinc-600"
+          }`} />
+          <span className="text-white font-bold uppercase tracking-wider text-xs">{title}</span>
+        </div>
+        {lastUpdate && (
+          <span className="text-zinc-600">{timeAgo(lastUpdate)}</span>
+        )}
+      </div>
+      <div className="px-3 py-3 space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function KV({ label, value, color }: { label: string; value: string | number | null; color?: string }) {
+  return (
+    <span className="inline-flex gap-1 mr-4">
+      <span className="text-zinc-500">{label}:</span>
+      <span className={color ?? "text-zinc-200"}>{value ?? "—"}</span>
+    </span>
+  );
 }
 
 export default function AgentenPage() {
-  const [agents, setAgents] = useState<AgentStatus[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastCheck, setLastCheck] = useState<string>("");
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [infoModalOpen, setInfoModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "logs" | "control">("chat");
+  const [grss, setGrss] = useState<any>(null);
+  const [telemetry, setTelemetry] = useState<any>(null);
+  const [cascade, setCascade] = useState<any>(null);
+  const [decisions, setDecisions] = useState<any>(null);
+  const [vetoHistory, setVetoHistory] = useState<any[]>([]);
 
-  const fetchAgents = useCallback(async (isInitial = false) => {
-    try {
-      const response = await fetch("http://localhost:8000/api/v1/agents/status");
-      if (!response.ok) throw new Error("Fehler beim Laden der Agenten-Daten");
-      
-      const data: AgentsResponse = await response.json();
-      setAgents(data.agents);
-      setLastCheck(data.last_check);
-      setError(null);
-      
-      // Nur beim ERSTEN Laden oder wenn die Selection ungültig wird, den ersten wählen
-      if (isInitial && data.agents.length > 0) {
-        setSelectedAgentId(prev => prev ?? data.agents[0].id);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unbekannter Fehler");
-      console.error(err);
-    } finally {
-      if (isInitial) setLoading(false);
-    }
+  async function load() {
+    const [tel, gr, cas, dec, veto] = await Promise.allSettled([
+      fetch(`${API}/telemetry/live`).then(r => r.json()),
+      fetch(`${API}/market/grss-full`).then(r => r.json()),
+      fetch(`${API}/llm-cascade/status`).then(r => r.json()),
+      fetch(`${API}/decisions/feed?limit=50`).then(r => r.json()),
+      fetch(`${API}/decisions/veto-history`).then(r => r.json()),
+    ]);
+    if (tel.status === "fulfilled") setTelemetry(tel.value);
+    if (gr.status === "fulfilled") setGrss(gr.value);
+    if (cas.status === "fulfilled") setCascade(cas.value);
+    if (dec.status === "fulfilled") setDecisions(dec.value);
+    if (veto.status === "fulfilled") setVetoHistory(veto.value.events ?? []);
+  }
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 10000);
+    return () => clearInterval(iv);
   }, []);
 
-  useEffect(() => {
-    fetchAgents(true);
-    const interval = setInterval(() => fetchAgents(false), 5000);
-    return () => clearInterval(interval);
-  }, [fetchAgents]);
+  const agents = telemetry?.agents ?? {};
+  const market = telemetry?.market ?? {};
+  const veto = telemetry?.veto_active;
+  const vetoReason = telemetry?.veto_reason;
 
-  const selectedAgent = agents.find(a => a.id === selectedAgentId);
-
-  const handleAgentControl = async (action: "start" | "stop" | "restart", id: string) => {
-    try {
-      const res = await fetch(`http://localhost:8000/api/v1/agents/${action}/${id}`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Konnte Agent nicht ${action}`);
-      fetchAgents(false);
-    } catch (e) {
-      alert(e);
-    }
-  };
+  const stats = decisions?.stats ?? {};
+  const lastDecisions = decisions?.events ?? [];
+  const lastCascadeRun = lastDecisions.find((e: any) => e.ofi_met);
 
   return (
-    <>
-    <div className="w-full p-4 lg:p-8 overflow-hidden h-[calc(100vh-2rem)] flex flex-col">
-        {/* Modern Glass Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 shrink-0 mb-8 bg-[#0a0a14]/40 p-6 rounded-2xl border border-[#1a1a2e] backdrop-blur-sm">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <div className="p-2 bg-indigo-500/10 rounded-lg">
-                <Cpu className="text-indigo-400 w-6 h-6" />
+    <div className="flex min-h-screen bg-[#0a0a0f] text-white">
+      <Sidebar />
+      <div className="flex-1 p-4 space-y-3">
+        <h1 className="font-mono text-zinc-400 uppercase tracking-widest text-xs mb-4">
+          Agenten-Zentrale — Röntgenblick
+        </h1>
+
+        <AgentCard
+          title="Context Agent"
+          healthy={agents.context?.healthy}
+          lastUpdate={grss?.data_quality?.last_update}
+        >
+          <div className="flex flex-wrap gap-y-1">
+            <KV label="NDX" value={grss?.macro?.ndx_status}
+              color={grss?.macro?.ndx_status === "BULLISH" ? "text-emerald-400" : "text-red-400"} />
+            <KV label="VIX" value={grss?.macro?.vix?.toFixed(1)}
+              color={(grss?.macro?.vix ?? 20) > 25 ? "text-red-400" : "text-zinc-200"} />
+            <KV label="10Y" value={grss?.macro?.yields_10y?.toFixed(2) + "%"} />
+            <KV label="Funding" value={grss?.derivatives?.funding_rate !== null
+              ? (grss.derivatives.funding_rate * 100).toFixed(4) + "%" : "—"} />
+            <KV label="PCR" value={grss?.derivatives?.put_call_ratio?.toFixed(2)}
+              color={(grss?.derivatives?.put_call_ratio ?? 1) < 0.5 ? "text-emerald-400" : "text-zinc-200"} />
+            <KV label="DVOL" value={grss?.derivatives?.dvol?.toFixed(0)} />
+            <KV label="OI-Delta" value={grss?.derivatives?.oi_delta_pct !== null
+              ? (grss.derivatives.oi_delta_pct > 0 ? "+" : "") + grss.derivatives.oi_delta_pct.toFixed(1) + "%" : "—"} />
+            <KV label="F&G" value={grss?.sentiment?.fear_greed} />
+            <KV label="M2 YoY" value={grss?.macro?.m2_yoy_pct !== null
+              ? (grss.macro.m2_yoy_pct > 0 ? "+" : "") + grss.macro.m2_yoy_pct?.toFixed(1) + "%" : "—"} />
+            <KV label="USDT Δ7d" value={grss?.sentiment?.stablecoin_delta_bn !== null
+              ? (grss.sentiment.stablecoin_delta_bn > 0 ? "+" : "") + grss.sentiment.stablecoin_delta_bn?.toFixed(1) + "B" : "—"} />
+            <KV label="LLM Sent." value={grss?.sentiment?.llm_news_sentiment?.toFixed(2)}
+              color={(grss?.sentiment?.llm_news_sentiment ?? 0) > 0.3 ? "text-emerald-400" :
+                     (grss?.sentiment?.llm_news_sentiment ?? 0) < -0.3 ? "text-red-400" : "text-zinc-200"} />
+            <KV label="News Silence" value={grss?.data_quality?.news_silence_seconds !== null
+              ? grss.data_quality.news_silence_seconds + "s" : "—"}
+              color={(grss?.data_quality?.news_silence_seconds ?? 0) > 1800 ? "text-red-400" : "text-zinc-200"} />
+            <KV label="Sources" value={`${grss?.data_quality?.fresh_source_count ?? 0}/5`}
+              color={(grss?.data_quality?.fresh_source_count ?? 0) >= 4 ? "text-emerald-400" : "text-amber-400"} />
+          </div>
+          <div className={`text-sm font-bold mt-1 ${
+            (grss?.score ?? 0) >= 48 ? "text-emerald-400" :
+            (grss?.score ?? 0) >= 35 ? "text-amber-400" : "text-red-400"
+          }`}>
+            → GRSS {grss?.score?.toFixed(1) ?? "—"} (EMA) | Raw {grss?.score_raw?.toFixed(1) ?? "—"}
+            {grss?.velocity_30min !== null
+              ? ` | Velocity ${grss.velocity_30min > 0 ? "▲" : "▼"} ${grss.velocity_30min?.toFixed(1)} letzte 30min` : ""}
+          </div>
+          {grss?.veto_active && (
+            <div className="text-red-400">→ Veto aktiv: {grss.reason}</div>
+          )}
+          {grss?.data_quality?.funding_settlement_window && (
+            <div className="text-amber-400">⚠ Funding-Settlement-Fenster aktiv</div>
+          )}
+        </AgentCard>
+
+        <AgentCard
+          title="Quant Agent"
+          healthy={agents.quant?.healthy}
+          lastUpdate={null}
+        >
+          <div className="flex flex-wrap gap-y-1">
+            <KV label="OFI" value={market.ofi !== null ? (market.ofi > 0 ? "+" : "") + market.ofi?.toFixed(0) : "—"}
+              color={Math.abs(market.ofi ?? 0) >= 500 ? "text-white font-bold" : "text-zinc-500"} />
+            <KV label="Threshold" value="500" color="text-zinc-500" />
+            <KV label="CVD" value={market.cvd !== null ? (market.cvd > 0 ? "+" : "") + market.cvd?.toFixed(0) : "—"}
+              color={(market.cvd ?? 0) > 0 ? "text-emerald-400" : "text-red-400"} />
+            <KV label="VAMP" value={market.vamp?.toLocaleString()} />
+            <KV label="BTC" value={"$" + market.btc_price?.toLocaleString()} />
+          </div>
+
+          {market.ofi !== null && (
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-zinc-600 text-xs">OFI</span>
+              <div className="flex-1 h-2 bg-zinc-800 rounded overflow-hidden">
+                <div className="h-full rounded"
+                  style={{
+                    width: `${Math.min(100, Math.abs(market.ofi) / 10)}%`,
+                    backgroundColor: market.ofi > 0 ? "#22c55e" : "#ef4444",
+                    marginLeft: market.ofi < 0 ? "auto" : undefined,
+                  }} />
               </div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Agenten-Zentrale</h1>
+              <span className="text-zinc-600 text-xs">Threshold 500</span>
             </div>
-            <p className="text-slate-500 text-sm">Oversight & Steuerung der aktiven KI-Pipeline</p>
+          )}
+
+          <div className="text-zinc-500 mt-1">
+            {Math.abs(market.ofi ?? 0) < 500
+              ? "→ OFI unter Threshold — kein LLM-Call, kein Trade"
+              : "→ OFI über Threshold — LLM-Cascade wird getriggert"}
           </div>
-          
-          <div className="flex items-center gap-4">
-            <div className="text-right hidden sm:block">
-              <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Letzter Check</p>
-              <p className="text-xs text-indigo-400 font-mono">{lastCheck ? new Date(lastCheck).toLocaleTimeString() : '--:--:--'}</p>
+
+          {stats && (
+            <div className="flex gap-4 mt-1 text-xs">
+              <span className="text-zinc-500">Letzte 50 Zyklen:</span>
+              <span className="text-zinc-400">OFI zu niedrig: <span className="text-zinc-200">{stats.ofi_below_threshold}</span></span>
+              <span className="text-zinc-400">Cascade HOLD: <span className="text-amber-400">{stats.cascade_hold}</span></span>
+              <span className="text-zinc-400">Signals: <span className="text-emerald-400">{stats.signals_generated}</span></span>
             </div>
-            <button
-              onClick={() => setInfoModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-xl transition-all border border-indigo-500/20 text-xs font-bold uppercase tracking-wider h-max"
-            >
-              <Info className="w-4 h-4" />
-              System-Guide
-            </button>
-          </div>
-        </div>
+          )}
+        </AgentCard>
 
-        {loading ? (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4">
-             <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
-             <p className="text-slate-500 text-sm font-medium animate-pulse">Initialisiere Neural Network...</p>
-          </div>
-        ) : error && agents.length === 0 ? (
-          <div className="bg-red-500/5 border border-red-500/20 text-red-400 p-6 rounded-2xl flex items-center gap-4">
-            <ShieldAlert className="w-8 h-8 opacity-50" />
-            <div>
-              <p className="font-bold">Verbindungsfehler</p>
-              <p className="text-sm opacity-80">{error}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 gap-8 overflow-hidden">
-            {/* Left: Premium Master List */}
-            <div className="w-[380px] shrink-0 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar pb-6">
-              {agents.map((agent) => {
-                const isSelected = agent.id === selectedAgentId;
-                const isRunning = agent.status === 'running';
-                
-                return (
-                  <div 
-                    key={agent.id}
-                    onClick={() => setSelectedAgentId(agent.id)}
-                    className={`group relative cursor-pointer p-5 rounded-2xl border transition-all duration-300 ${
-                      isSelected 
-                        ? "bg-indigo-500/5 border-indigo-500/40 shadow-[0_0_20px_rgba(99,102,241,0.1)]" 
-                        : "bg-[#0a0a14] border-[#1a1a2e] hover:border-indigo-500/20 hover:bg-indigo-500/[0.02]"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                       <div className="flex flex-col">
-                         <h3 className={`font-bold transition-colors ${isSelected ? 'text-white' : 'text-slate-300 group-hover:text-white'}`}>
-                           {agent.name}
-                         </h3>
-                         <span className="text-[10px] font-mono text-slate-500 uppercase">{agent.type}</span>
-                       </div>
-                        <div className="flex gap-2">
-                           {agent.health === "degraded" && (
-                             <div className="px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest bg-yellow-500/10 border border-yellow-500/20 text-yellow-500">
-                               DEGRADED
-                             </div>
-                           )}
-                           <div className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-widest border ${
-                             isRunning ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'
-                           }`}>
-                             {agent.status}
-                           </div>
-                        </div>
-                    </div>
-                    
-                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed mb-4 group-hover:text-slate-400 transition-colors">
-                      {agent.description}
-                    </p>
+        <AgentCard title="LLM Cascade" healthy={cascade?.ollama_available}>
+          {cascade ? (
+            <>
+              <div className="flex flex-wrap gap-y-1">
+                <KV label="Ollama" value={cascade.ollama_available ? "online" : "offline"}
+                  color={cascade.ollama_available ? "text-emerald-400" : "text-red-400"} />
+                <KV label="Modell 1" value={cascade.model_layer1 ?? "qwen2.5:14b"} />
+                <KV label="Modell 2" value={cascade.model_layer2 ?? "deepseek-r1:14b"} />
+              </div>
 
-                    <div className="flex items-center gap-4 text-[10px] font-bold text-slate-600">
-                      <div className="flex items-center gap-1.5">
-                        <Activity className="w-3 h-3" />
-                        {agent.processed_count} <span className="text-slate-700">Ops</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <History className="w-3 h-3" />
-                        {formatUptime(agent.uptime_seconds)}
-                      </div>
-                    </div>
-
-                    {isSelected && (
-                      <div className="absolute right-4 bottom-4">
-                        <Zap className="w-4 h-4 text-indigo-500 animate-pulse" />
-                      </div>
+              {lastCascadeRun && (
+                <div className="mt-2 space-y-1">
+                  <div className="text-zinc-500">Letzter Cascade-Run: {timeAgo(lastCascadeRun.ts)}</div>
+                  <div>
+                    <span className="text-zinc-500">L1 (qwen2.5): </span>
+                    <span className="text-zinc-200">regime={lastCascadeRun.regime ?? "—"}</span>
+                    {lastCascadeRun.layer1_confidence !== null && (
+                      <span className={lastCascadeRun.layer1_confidence >= 0.60
+                        ? "text-emerald-400 ml-2" : "text-amber-400 ml-2"}>
+                        conf {lastCascadeRun.layer1_confidence?.toFixed(2)}
+                        {lastCascadeRun.layer1_confidence < 0.60 ? " (< 0.60 Gate)" : " ✓"}
+                      </span>
                     )}
                   </div>
-                )
-              })}
-            </div>
-
-            {/* Right: Premium Detail View */}
-            {selectedAgent ? (
-              <div className="flex-1 bg-[#0a0a14] border border-[#1a1a2e] rounded-3xl flex flex-col overflow-hidden shadow-2xl relative">
-                {/* Header Background Glow */}
-                <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-indigo-500/[0.03] to-transparent pointer-events-none" />
-
-                {/* Tabs Bar */}
-                <div className="flex items-center bg-[#070712] border-b border-[#1a1a2e] z-10 px-4">
-                  <TabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')} icon={<MessageSquare />} label="Agent Chat" />
-                  <TabButton active={activeTab === 'control'} onClick={() => setActiveTab('control')} icon={<Settings2 />} label="Status & Control" />
-                  <TabButton active={activeTab === 'logs'} onClick={() => setActiveTab('logs')} icon={<Terminal />} label="System Logs" />
+                  {lastCascadeRun.layer2_decision && (
+                    <div>
+                      <span className="text-zinc-500">L2 (deepseek-r1): </span>
+                      <span className={lastCascadeRun.layer2_decision === "HOLD"
+                        ? "text-amber-400" : "text-emerald-400"}>
+                        {lastCascadeRun.layer2_decision}
+                      </span>
+                    </div>
+                  )}
+                  {lastCascadeRun.layer3_blocked !== null && (
+                    <div>
+                      <span className="text-zinc-500">L3 (Advocatus): </span>
+                      <span className={lastCascadeRun.layer3_blocked ? "text-red-400" : "text-emerald-400"}>
+                        {lastCascadeRun.layer3_blocked ? "BLOCKIERT" : "Kein Einwand"}
+                      </span>
+                    </div>
+                  )}
                 </div>
+              )}
 
-                {/* Tab Content */}
-                <div className="flex-1 overflow-hidden relative z-0">
-                   {activeTab === 'chat' && <AgentChat agent={selectedAgent} />}
-                   {activeTab === 'logs' && <AgentLogs agent={selectedAgent} />}
-                   {activeTab === 'control' && <AgentControl agent={selectedAgent} handleControl={handleAgentControl} />}
-                   
-                   {/* Health Banner for Degraded State */}
-                   {selectedAgent.health === "degraded" && (
-                     <div className="absolute bottom-6 left-6 right-6 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-2xl flex items-center gap-3 animate-pulse z-20">
-                       <AlertCircle className="text-yellow-500 w-5 h-5 shrink-0" />
-                       <p className="text-xs text-yellow-500 font-medium">
-                         Dieser Agent läuft im **eingeschränkten Modus** (Degraded). 
-                         {selectedAgent.id === 'sentiment' && " LLM nicht erreichbar -> Keyword-Fallback aktiv."}
-                         {selectedAgent.id === 'risk' && " Reasoning-Modell fehlt -> Heuristiken aktiv."}
-                       </p>
-                     </div>
-                   )}
+              {cascade.recent_decisions && (
+                <div className="mt-2">
+                  <div className="text-zinc-500 mb-1">Cascade-Runs (nur wenn OFI erreicht):</div>
+                  {(cascade.recent_decisions as any[]).slice(0, 5).map((d: any, i: number) => (
+                    <div key={i} className="text-xs text-zinc-500">
+                      {new Date(d.timestamp ?? d.ts).toLocaleTimeString("de-DE")} —{" "}
+                      <span className={d.decision === "BUY" || d.decision === "SELL"
+                        ? "text-emerald-400" : "text-amber-400"}>{d.decision ?? d.outcome}</span>
+                      {d.regime ? ` regime=${d.regime}` : ""}
+                    </div>
+                  ))}
                 </div>
+              )}
+            </>
+          ) : (
+            <span className="text-zinc-600">Lade Cascade-Status...</span>
+          )}
+        </AgentCard>
 
-              </div>
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center opacity-20 border-2 border-dashed border-[#1a1a2e] rounded-3xl">
-                <Cpu className="w-16 h-16 mb-4" />
-                <p className="text-lg font-bold tracking-widest uppercase">Wähle einen Agenten</p>
-              </div>
-            )}
+        <AgentCard title="Risk Agent" healthy={agents.risk?.healthy}>
+          <div className="flex flex-wrap gap-y-1">
+            <KV label="Veto" value={veto ? "AKTIV" : "INAKTIV"}
+              color={veto ? "text-red-400 font-bold" : "text-emerald-400"} />
+            {vetoReason && <span className="text-zinc-400">{vetoReason}</span>}
           </div>
-        )}
-      </div>
 
-      <AgentInfoModal isOpen={infoModalOpen} onClose={() => setInfoModalOpen(false)} />
-
-      <style jsx global>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a2e; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #312e81; }
-      `}</style>
-    </>
-  );
-}
-
-// ---------------- Helper Components ----------------
-
-function TabButton({ active, onClick, icon, label }: any) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-2.5 px-6 py-4 text-[11px] font-bold uppercase tracking-widest transition-all relative
-        ${active ? "text-indigo-400" : "text-slate-500 hover:text-slate-300"}
-      `}
-    >
-      <span className="[&>svg]:w-4 [&>svg]:h-4">{icon}</span>
-      {label}
-      {active && <div className="absolute bottom-[-1px] left-0 right-0 h-[2px] bg-indigo-500 shadow-[0_0_10px_#6366f1]" />}
-    </button>
-  );
-}
-
-// --- Premium Agent Chat ---
-function AgentChat({ agent }: { agent: AgentStatus }) {
-  const [messages, setMessages] = useState<{role: string, content: string}[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    // Selection stability fix: only reset if it's a completely different agent
-    setMessages([
-      { role: "agent", content: `System-Check abgeschlossen. Ich bin **${agent.name}**. Mein aktueller Fokus: ${agent.description}. Wie kann ich dich heute unterstützen?` }
-    ]);
-  }, [agent.id]);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
-
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    
-    const userMsg = input.trim();
-    setInput("");
-    setMessages((prev: any) => [...prev, { role: "user", content: userMsg }]);
-    setLoading(true);
-
-    const fullPrompt = `System: Du bist der ${agent.name} eines Krypto Trading-Bots. Dein Aufgabenbereich ist: ${agent.description}. Bleibe strikt in deiner Rolle. Halte Antworten präzise und professionell.\n\nUser: ${userMsg}`;
-
-    try {
-      const res = await fetch("http://localhost:8000/api/v1/chat/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "qwen2.5:14b",
-          prompt: fullPrompt,
-          stream: false
-        })
-      });
-      
-      if (!res.ok) {
-        // Parse the actual backend error
-        let errorMsg = `HTTP ${res.status}`;
-        try {
-          const errData = await res.json();
-          errorMsg = errData.detail || errorMsg;
-        } catch {}
-        
-        if (res.status === 503) {
-          throw new Error(`⚠️ Ollama nicht erreichbar: ${errorMsg}\n\nBitte prüfe:\n• Läuft Ollama auf deinem PC? (ollama serve)\n• Ist das Modell qwen2.5:14b geladen? (ollama list)\n• Firewall blockiert Port 11434?`);
-        } else if (res.status === 504) {
-          throw new Error("⏱️ Zeitüberschreitung: Das Modell braucht zu lange. Versuche es erneut oder wechsle zu einem kleineren Modell.");
-        } else {
-          throw new Error(`❌ Backend-Fehler: ${errorMsg}`);
-        }
-      }
-      
-      const data = await res.json();
-      setMessages((prev: any) => [...prev, { role: "agent", content: data.response }]);
-    } catch (e: any) {
-      const errorContent = e.message?.includes("fetch") || e.message?.includes("Failed")
-        ? "❌ Backend nicht erreichbar. Läuft der API-Container? (docker ps)"
-        : e.message || "❌ Unbekannter Fehler beim LLM-Aufruf.";
-      setMessages((prev: any) => [...prev, { role: "agent", content: errorContent }]);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col h-full bg-[#050510]/50">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] relative ${m.role === 'user' ? 'text-right' : 'text-left'}`}>
-              <div className={`inline-block px-5 py-3 rounded-2xl text-[13px] leading-relaxed transition-all ${
-                m.role === 'user' 
-                  ? 'bg-indigo-600 text-white rounded-tr-none shadow-[0_5px_15px_rgba(79,70,229,0.2)]' 
-                  : 'bg-[#11111d] border border-[#1a1a2e] text-slate-200 rounded-tl-none'
-              }`}>
-                <div className="whitespace-pre-wrap">{m.content}</div>
-              </div>
-              <div className="text-[10px] font-bold text-slate-600 mt-1 uppercase tracking-tighter opacity-50">
-                {m.role === 'user' ? 'Administrator' : agent.name}
-              </div>
-            </div>
-          </div>
-        ))}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-[#11111d] border border-[#1a1a2e] rounded-2xl p-4 flex gap-1.5 items-center">
-              <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce"></div>
-              <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:0.2s]"></div>
-              <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:0.4s]"></div>
-            </div>
-          </div>
-        )}
-      </div>
-      <div className="p-6 border-t border-[#1a1a2e] bg-[#070712]">
-        <div className="relative group">
-          <input 
-            type="text" 
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-            placeholder={`Neuraler Link zu ${agent.name} wird aufgebaut...`}
-            className="w-full bg-[#050510] border border-[#1a1a2e] text-white rounded-xl py-4 pl-5 pr-14 focus:outline-none focus:border-indigo-500/50 transition-all placeholder:text-slate-700 text-sm shadow-inner"
-          />
-          <button 
-            onClick={handleSend}
-            disabled={loading || !input.trim()}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg disabled:opacity-30 transition-all shadow-lg"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- Premium Agent Status & Control ---
-function AgentControl({ agent, handleControl }: { agent: AgentStatus, handleControl: any }) {
-  const isRunning = agent.status === 'running';
-
-  return (
-    <div className="h-full overflow-y-auto p-10 custom-scrollbar relative">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-10">
-        
-        {/* Core Metrics Grid */}
-        <div className="space-y-8">
-           <div className="flex items-center gap-3 mb-2">
-             <Activity className="w-5 h-5 text-indigo-400" />
-             <h3 className="text-lg font-bold text-white tracking-tight">Status & Biometrie</h3>
-           </div>
-           
-           <div className="grid grid-cols-2 gap-4">
-              <MetricBox label="Zustand" value={agent.status} color={isRunning ? 'text-emerald-400' : 'text-slate-500'} />
-              <MetricBox label="Operations" value={agent.processed_count.toString()} />
-              <MetricBox label="Runtime" value={formatUptime(agent.uptime_seconds)} />
-              <MetricBox label="Error Score" value={agent.error_count.toString()} color={agent.error_count > 0 ? 'text-red-400' : 'text-emerald-400'} />
-           </div>
-
-           <div className="bg-[#11111d] rounded-2xl p-6 border border-[#1a1a2e]">
-             <h4 className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-4">Neural Descriptor</h4>
-             <p className="text-sm text-slate-400 leading-relaxed italic">
-               "{agent.description}"
-             </p>
-           </div>
-        </div>
-
-        {/* Action Center */}
-        <div className="space-y-8">
-           <div className="flex items-center gap-3 mb-2">
-             <Settings2 className="w-5 h-5 text-indigo-400" />
-             <h3 className="text-lg font-bold text-white tracking-tight">Override Center</h3>
-           </div>
-
-           <div className="bg-[#11111d] rounded-2xl p-6 border border-[#1a1a2e] space-y-6">
-              <div className="flex gap-4">
-                <button 
-                   onClick={() => handleControl("start", agent.id)}
-                   disabled={isRunning}
-                   className="flex-1 flex items-center justify-center gap-2 py-4 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-all font-bold text-[11px] uppercase tracking-widest disabled:opacity-20"
-                >
-                  <Play className="w-4 h-4" /> Online
-                </button>
-                <button 
-                   onClick={() => handleControl("stop", agent.id)}
-                   disabled={!isRunning}
-                   className="flex-1 flex items-center justify-center gap-2 py-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 rounded-xl transition-all font-bold text-[11px] uppercase tracking-widest disabled:opacity-20"
-                >
-                  <Square className="w-4 h-4" /> Offline
-                </button>
-              </div>
-              <button 
-                 onClick={() => handleControl("restart", agent.id)}
-                 className="w-full flex items-center justify-center gap-2 py-4 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl transition-all font-bold text-[11px] uppercase tracking-widest"
-              >
-                <RefreshCw className="w-4 h-4" /> System Reset
-              </button>
-           </div>
-
-           {agent.last_error && (
-             <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-6">
-                <div className="flex items-center gap-2 text-red-400 mb-3">
-                  <AlertCircle className="w-4 h-4" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest">Kritischer Error Log</span>
+          {vetoHistory.length > 0 && (
+            <div className="mt-2">
+              <div className="text-zinc-500 mb-1">Veto-Zustandswechsel:</div>
+              {vetoHistory.slice(0, 5).map((e, i) => (
+                <div key={i} className="text-xs flex gap-3">
+                  <span className="text-zinc-600">
+                    {new Date(e.ts).toLocaleTimeString("de-DE")}
+                  </span>
+                  <span className={e.change === "VETO_ON" ? "text-red-400" : "text-emerald-400"}>
+                    {e.change === "VETO_ON" ? "VETO AN" : "VETO AUS"}
+                  </span>
+                  <span className="text-zinc-500 truncate">{e.reason}</span>
                 </div>
-                <div className="font-mono text-[11px] text-red-400/80 bg-black/40 p-4 rounded-xl border border-red-500/10 break-all leading-relaxed">
-                  {agent.last_error}
-                </div>
-             </div>
-           )}
-        </div>
+              ))}
+            </div>
+          )}
+        </AgentCard>
 
+        <AgentCard title="Execution Agent" healthy={agents.execution?.healthy}>
+          <div className="flex flex-wrap gap-y-1">
+            <KV label="DRY_RUN" value={telemetry?.dry_run ? "aktiv" : "DEAKTIVIERT"}
+              color={telemetry?.dry_run ? "text-yellow-400" : "text-red-400 font-bold"} />
+            <KV label="LIVE_APPROVED" value={telemetry?.live_trading_approved ? "JA" : "nein"}
+              color={telemetry?.live_trading_approved ? "text-emerald-400" : "text-zinc-500"} />
+          </div>
+          <div className="text-zinc-500 mt-1">
+            {telemetry?.dry_run
+              ? "Kein echtes Kapital. Alle Trades sind simuliert."
+              : "⚠ DRY_RUN ist deaktiviert — echte Orders möglich"}
+          </div>
+        </AgentCard>
       </div>
     </div>
   );
-}
-
-function MetricBox({ label, value, color = 'text-white' }: { label: string, value: string, color?: string }) {
-  return (
-    <div className="bg-[#11111d] p-4 rounded-2xl border border-[#1a1a2e]">
-      <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mb-1">{label}</p>
-      <p className={`text-lg font-bold font-mono uppercase tracking-tight ${color}`}>{value}</p>
-    </div>
-  );
-}
-
-// --- Basic Agent Logs ---
-function AgentLogs({ agent }: { agent: AgentStatus }) {
-  const [logs, setLogs] = useState<any[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    const connectWs = () => {
-      const ws = new WebSocket("ws://localhost:8000/api/v1/logs/ws");
-      wsRef.current = ws;
-      
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "new_log" && (data.log.source === `agent.${agent.id}` || data.log.name?.includes(agent.id))) {
-            setLogs(prev => [data.log, ...prev].slice(0, 100));
-          } else if (data.type === "history" || data.type === "filtered") {
-            const filtered = data.logs.filter((l:any) => l.source === `agent.${agent.id}` || l.name?.includes(agent.id));
-            setLogs(filtered.slice(0, 100));
-          }
-        } catch (e) {}
-      };
-      ws.onclose = () => setTimeout(connectWs, 3000);
-    };
-
-    connectWs();
-    return () => wsRef.current?.close();
-  }, [agent.id]);
-
-  return (
-    <div className="h-full bg-black/80 font-mono text-[11px] overflow-y-auto p-6 custom-scrollbar">
-      {logs.length === 0 ? (
-        <div className="text-slate-700 italic h-full flex items-center justify-center uppercase tracking-widest">
-           Warte auf Datenstrom...
-        </div>
-      ) : (
-        <div className="space-y-1.5">
-          {logs.map((L, i) => {
-            let color = "text-slate-500";
-            if (L.level === "ERROR" || L.level === "CRITICAL") color = "text-red-500";
-            if (L.level === "WARNING") color = "text-amber-500";
-            if (L.level === "INFO") color = "text-indigo-400";
-            return (
-              <div key={i} className={`flex gap-3 items-start ${color}`}>
-                <span className="opacity-30 shrink-0">[{new Date(L.timestamp).toLocaleTimeString()}]</span>
-                <span className="font-bold shrink-0 w-16">[{L.level}]</span>
-                <span className="text-slate-300">{L.message}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function formatUptime(seconds?: number) {
-  if (seconds === undefined || seconds === 0) return "0S";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}H ${m}M`;
-  return `${m}M ${seconds % 60}S`;
 }
