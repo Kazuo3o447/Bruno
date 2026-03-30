@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries, CandlestickData } from "lightweight-charts";
+import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries, CandlestickData, UTCTimestamp } from "lightweight-charts";
 
 interface TradingChartProps {
   symbol?: string;
@@ -131,7 +131,7 @@ function generateDemoData(): CandlestickData[] {
     const close = low + Math.random() * (high - low);
     
     data.push({
-      time: time.getTime() / 1000,
+      time: Math.floor(time.getTime() / 1000) as UTCTimestamp,
       open,
       high,
       low,

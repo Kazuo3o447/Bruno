@@ -477,7 +477,7 @@ export default function HomePage() {
                    <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-500 font-bold uppercase">CVD Trend</span>
                       {contextData?.Veto_Active && contextData.Reason.includes("CVD") && (
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-pulse" title="Divergenz erkannt!" />
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-pulse" />
                       )}
                    </div>
                    <span className={`text-xs font-mono font-bold ${microData?.CVD >= 0 ? "text-emerald-400" : "text-red-400"}`}>

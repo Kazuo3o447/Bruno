@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Sidebar from "../components/Sidebar";
+import { ExportButton } from "../components/ExportButton";
 import { KillSwitch } from "../components/KillSwitch";
 
 // ── Typen ─────────────────────────────────────────────────────────────────
@@ -150,7 +151,8 @@ function HeaderBar({ telemetry }: { telemetry: Telemetry | null }) {
           {telemetry.veto_reason}
         </span>
       )}
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-2">
+        <ExportButton />
         <KillSwitch compact />
       </div>
     </div>
@@ -217,7 +219,8 @@ function MarketOverview({ market }: { market: Telemetry["market"] | undefined })
       (market.vix ?? 20) > 25 ? "red" : (market.vix ?? 20) < 15 ? "emerald" : "zinc"],
     ["NDX", market.ndx_status ?? "—",
       market.ndx_status === "BULLISH" ? "emerald" : market.ndx_status === "BEARISH" ? "red" : "zinc"],
-    ["10Y", market.yields_10y?.toFixed(2) + "%" ?? "—",
+    ["10Y", market.yields_10y !== null && market.yields_10y !== undefined
+      ? market.yields_10y.toFixed(2) + "%" : "—",
       (market.yields_10y ?? 4) > 4.5 ? "red" : (market.yields_10y ?? 4) < 4.0 ? "emerald" : "zinc"],
     ["M2 YoY", market.m2_yoy_pct !== null && market.m2_yoy_pct !== undefined
       ? fmt(market.m2_yoy_pct, 1) + "%" : "—",

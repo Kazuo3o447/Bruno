@@ -85,7 +85,12 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
 
   // Update sources list
   const updateSources = (logData: LogEntry[]) => {
-    const uniqueSources = [...new Set(logData.map((log) => log.source))];
+    const uniqueSources = logData.reduce<string[]>((acc, log) => {
+      if (!acc.includes(log.source)) {
+        acc.push(log.source);
+      }
+      return acc;
+    }, []);
     setSources(uniqueSources);
   };
 
