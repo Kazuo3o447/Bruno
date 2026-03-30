@@ -83,13 +83,10 @@ class SentimentAgent(PollingAgent):
                     cp_start = time.perf_counter()
                     async with httpx.AsyncClient(timeout=8.0) as client:
                         resp = await client.get(
-                            "https://cryptopanic.com/api/v1/posts/",
+                            "https://cryptopanic.com/api/developer/v2/posts/",
                             params={
                                 "auth_token": api_key,
-                                "currencies": "BTC",
-                                "filter": "hot",
-                                "public": "true",
-                                "kind": "news"
+                                "public": "true"
                             }
                         )
                         if resp.status_code == 200:

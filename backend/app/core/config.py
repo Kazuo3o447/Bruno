@@ -3,6 +3,9 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 class Settings(BaseSettings):
     # Database
     DB_HOST: str = "postgres"

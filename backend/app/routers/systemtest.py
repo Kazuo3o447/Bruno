@@ -186,8 +186,8 @@ async def test_news_feeds() -> TestResult:
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                "https://cryptopanic.com/api/v1/posts/",
-                params={"auth_token": token}
+                "https://cryptopanic.com/api/developer/v2/posts/",
+                params={"auth_token": token, "public": "true"}
             )
             response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             
