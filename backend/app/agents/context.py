@@ -290,6 +290,22 @@ class ContextAgent(StreamingAgent):
     async def _fetch_cross_exchange_funding(self) -> float: return 0.0
     def _is_funding_settlement_window(self) -> bool: return False
 
+    @staticmethod
+    def _normalize_health_status(status: object) -> str:
+        return str(status or "").strip().lower()
+
+    @classmethod
+    def _is_fresh_health_status(cls, status: object) -> bool:
+        return cls._normalize_health_status(status) in {
+            "online", "healthy", "connected", "success", "running", "ok",
+        }
+
+    @classmethod
+    def _is_warning_health_status(cls, status: object) -> bool:
+        return cls._normalize_health_status(status) in {
+            "degraded", "warning", "fallback", "partial",
+        }
+
     # ── GRSS Logic ──────────────────────────────────────────────────────────
 
     def calculate_grss(self, data: dict) -> float:
@@ -362,12 +378,42 @@ class ContextAgent(StreamingAgent):
             
             sources = ["Binance_REST", "Deribit_Public", "yFinance_Macro", "Binance_OI_Trend", "ETF_Flows_Farside"]
             health = await self.deps.redis.get_cache("bruno:health:sources") or {}
-            fresh_count = sum(1 for s in sources if health.get(s, {}).get("status") == "online")
+            fresh_count = sum(
+                1
+                for s in sources
+                if self._is_fresh_health_status(health.get(s, {}).get("status"))
+                or self._is_warning_health_status(health.get(s, {}).get("status"))
+            )
+
+            funding_data = await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}
+            sentiment_data = await self.deps.redis.get_cache("bruno:sentiment:aggregate") or {}
+            retail_data = await self.deps.redis.get_cache("bruno:retail:sentiment") or {}
+            ingestion_data = await self.deps.redis.get_cache("bruno:ingestion:last_message") or {}
+
+            funding_rate = float(funding_data.get("rate", self.perp_basis_pct / 100.0))
+            retail_score = float(retail_data.get("retail_score", self._retail_score))
+            retail_fomo_warning = bool(retail_data.get("fomo_warning", self._retail_fomo_warning))
+            self._retail_score = retail_score
+            self._retail_fomo_warning = retail_fomo_warning
+
+            latest_ingestion_ts = ingestion_data.get("timestamp")
+            if latest_ingestion_ts:
+                try:
+                    news_silence_seconds = (
+                        datetime.now(timezone.utc)
+                        - datetime.fromisoformat(latest_ingestion_ts).replace(tzinfo=timezone.utc)
+                    ).total_seconds()
+                except Exception:
+                    news_silence_seconds = 0.0
+            else:
+                news_silence_seconds = 0.0
+
+            oi_delta_pct = ((self.open_interest - self.oi_prev) / self.oi_prev * 100.0) if self.oi_prev > 0 else 0.0
 
             pattern_data = {
                 "oi_7d_change_pct": self.oi_trend.get("oi_7d_change_pct", 0),
                 "etf_flow_3d_m": self.etf_flows.get("flow_3d_m", 0),
-                "funding_rate": float((await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}).get("rate", 0.01)),
+                "funding_rate": funding_rate,
                 "stablecoin_delta_bn": self.stablecoin_delta_bn,
                 "btc_change_24h": self.btc_change_24h,
                 "btc_change_1h": 0.0 # TODO: Implement delta
@@ -378,24 +424,56 @@ class ContextAgent(StreamingAgent):
                 **pattern_data,
                 "vix": self.vix, "ndx_status": self.ndx_status,
                 "fear_greed": int((await self.deps.redis.get_cache("macro:fear_and_greed") or {}).get("value", 50)),
-                "llm_news_sentiment": float((await self.deps.redis.get_cache("bruno:sentiment:aggregate") or {}).get("average_score", 0)),
+                "llm_news_sentiment": float(sentiment_data.get("average_score", 0)),
                 "fresh_source_count": fresh_count,
                 "pattern_score": self.pattern_result["pattern_score"],
                 "put_call_ratio": self.put_call_ratio,
-                "news_silence_seconds": (datetime.now(timezone.utc) - datetime.fromisoformat((await self.deps.redis.get_cache("bruno:ingestion:last_message") or {}).get("timestamp", datetime.now(timezone.utc).isoformat())).replace(tzinfo=timezone.utc)).total_seconds()
+                "news_silence_seconds": news_silence_seconds,
             }
             
             grss = self.calculate_grss(grss_input)
+            current_ts = datetime.now(timezone.utc)
+            self.grss_history.append({"timestamp": current_ts, "score": grss})
+            self.grss_history = [
+                entry for entry in self.grss_history
+                if (current_ts - entry["timestamp"]).total_seconds() <= 1800
+            ]
+            grss_velocity_30min = round(grss - self.grss_history[0]["score"], 1) if self.grss_history else 0.0
             self._grss_ema = self._grss_ema_alpha * grss + (1 - self._grss_ema_alpha) * self._grss_ema
             
             payload = {
+                "GRSS_Score_Raw": round(grss, 1),
                 "GRSS_Score": round(self._grss_ema, 1),
+                "GRSS_Velocity_30min": grss_velocity_30min,
+                "Macro_Status": self.ndx_status,
+                "VIX": round(self.vix, 2),
+                "Yields_10Y": round(self.yields_10y, 2),
+                "DXY_Change_Pct": round(self.dxy_change, 4),
+                "M2_YoY_Pct": round(self.m2_yoy_pct, 2),
+                "Funding_Rate": round(funding_rate, 4),
+                "Funding_Divergence": round(self._funding_divergence, 4),
+                "OI_Delta_Pct": round(oi_delta_pct, 2),
+                "Perp_Basis_Pct": round(self.perp_basis_pct, 4),
+                "Long_Short_Ratio": round(self.long_short_ratio, 4),
+                "Put_Call_Ratio": round(self.put_call_ratio, 4),
+                "DVOL": round(self.dvol, 2),
+                "Stablecoin_Delta_Bn": round(self.stablecoin_delta_bn, 2),
+                "Retail_Score": round(retail_score, 3),
+                "Retail_FOMO_Warning": retail_fomo_warning,
+                "LLM_News_Sentiment": round(float(sentiment_data.get("average_score", 0)), 3),
+                "Fresh_Source_Count": fresh_count,
+                "Data_Freshness_Active": fresh_count > 0,
+                "News_Silence_Seconds": round(news_silence_seconds, 1),
+                "Funding_Settlement_Window": self._is_funding_settlement_window(),
+                "CoinGlass_Active": self.coinglass.is_active,
+                "BTC_Change_24h_Pct": round(self.btc_change_24h, 4),
+                "BTC_Change_1h_Pct": 0.0,
                 "Active_Patterns": self.pattern_result["active_patterns"],
                 "OI_Trend": self.oi_trend,
                 "ETF_Flows": self.etf_flows,
                 "Max_Pain": self.max_pain,
                 "Veto_Active": self._grss_ema < 40,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": current_ts.isoformat()
             }
             await self.deps.redis.set_cache("bruno:context:grss", payload)
             await self.deps.redis.publish_message("bruno:context:grss", json.dumps(payload))

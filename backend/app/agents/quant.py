@@ -309,10 +309,24 @@ class QuantAgent(PollingAgent):
                 grss_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
                 grss_score = grss_data.get("GRSS_Score", 50.0)
                 grss_components = {
-                    "macro_sentiment": grss_data.get("Macro_Sentiment", 0.0),
-                    "derivatives_flow": grss_data.get("Derivatives_Flow", 0.0),
-                    "funding_pressure": grss_data.get("Funding_Pressure", 0.0),
-                    "retail_fomo": grss_data.get("Retail_FOMO", 0.0),
+                    "macro_status": grss_data.get("Macro_Status", "unknown"),
+                    "vix": grss_data.get("VIX", 0.0),
+                    "yields_10y": grss_data.get("Yields_10Y", 0.0),
+                    "dxy_change_pct": grss_data.get("DXY_Change_Pct", 0.0),
+                    "m2_yoy_pct": grss_data.get("M2_YoY_Pct", 0.0),
+                    "funding_rate": grss_data.get("Funding_Rate", 0.0),
+                    "funding_divergence": grss_data.get("Funding_Divergence", 0.0),
+                    "oi_delta_pct": grss_data.get("OI_Delta_Pct", 0.0),
+                    "perp_basis_pct": grss_data.get("Perp_Basis_Pct", 0.0),
+                    "long_short_ratio": grss_data.get("Long_Short_Ratio", 1.0),
+                    "put_call_ratio": grss_data.get("Put_Call_Ratio", 0.0),
+                    "dvol": grss_data.get("DVOL", 0.0),
+                    "stablecoin_delta_bn": grss_data.get("Stablecoin_Delta_Bn", 0.0),
+                    "llm_news_sentiment": grss_data.get("LLM_News_Sentiment", 0.0),
+                    "retail_score": grss_data.get("Retail_Score", 0.0),
+                    "retail_fomo_warning": grss_data.get("Retail_FOMO_Warning", False),
+                    "fresh_source_count": grss_data.get("Fresh_Source_Count", 0),
+                    "news_silence_seconds": grss_data.get("News_Silence_Seconds", 0.0),
                 }
                 
                 # Markt-Kontext für Cascade
@@ -322,7 +336,12 @@ class QuantAgent(PollingAgent):
                     "vix": grss_data.get("VIX", 0.0),
                     "oi_delta_pct": grss_data.get("OI_Delta_Pct", 0.0),
                     "put_call_ratio": grss_data.get("Put_Call_Ratio", 0.0),
-                    "ndx_status": grss_data.get("NDX_Status", "unknown"),
+                    "ndx_status": grss_data.get("Macro_Status", "unknown"),
+                    "llm_news_sentiment": grss_data.get("LLM_News_Sentiment", 0.0),
+                    "retail_score": grss_data.get("Retail_Score", 0.0),
+                    "retail_fomo_warning": grss_data.get("Retail_FOMO_Warning", False),
+                    "fresh_source_count": grss_data.get("Fresh_Source_Count", 0),
+                    "news_silence_seconds": grss_data.get("News_Silence_Seconds", 0.0),
                     "ofi": ofi,
                     "vamp": vamp,
                     "cvd": self.cvd_cumulative,
