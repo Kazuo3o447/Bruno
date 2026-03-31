@@ -304,30 +304,43 @@ class QuantAgent(PollingAgent):
             await self.deps.redis.set_cache("bruno:quant:micro", payload)
             
             # PHASE C: LLM Cascade statt einfacher OFI-Signal-Generation
+            cascade_result = None
+            grss_score = 50.0
+
             if abs(ofi) >= self.ofi_threshold:
-                # GRSS-Daten für Cascade holen
+                # GRSS-Daten für Cascade holen (korrekte Feldnamen aus context.py)
                 grss_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
-                grss_score = grss_data.get("GRSS_Score", 50.0)
+                grss_score = float(grss_data.get("GRSS_Score", 50.0))
+
+                oi_trend = grss_data.get("OI_Trend", {}) or {}
+                etf_flows = grss_data.get("ETF_Flows", {}) or {}
+                funding_data = await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}
+
                 grss_components = {
-                    "macro_sentiment": grss_data.get("Macro_Sentiment", 0.0),
-                    "derivatives_flow": grss_data.get("Derivatives_Flow", 0.0),
-                    "funding_pressure": grss_data.get("Funding_Pressure", 0.0),
-                    "retail_fomo": grss_data.get("Retail_FOMO", 0.0),
+                    "grss_score": grss_score,
+                    "oi_7d_change_pct": oi_trend.get("oi_7d_change_pct", 0.0),
+                    "etf_flow_3d_m": etf_flows.get("flow_3d_m", 0.0),
+                    "active_patterns": grss_data.get("Active_Patterns", []),
+                    "veto_active": grss_data.get("Veto_Active", False),
                 }
-                
-                # Markt-Kontext für Cascade
+
+                # Markt-Kontext für Cascade (korrekte Feldnamen)
                 market_context = {
                     "btc_price": best_bid_p,
-                    "funding_rate": grss_data.get("Funding_Rate", 0.0),
-                    "vix": grss_data.get("VIX", 0.0),
-                    "oi_delta_pct": grss_data.get("OI_Delta_Pct", 0.0),
-                    "put_call_ratio": grss_data.get("Put_Call_Ratio", 0.0),
+                    "funding_rate": float(funding_data.get("rate", 0.0)),
+                    "vix": float(grss_data.get("VIX", 20.0)),
+                    "oi_delta_pct": oi_trend.get("oi_7d_change_pct", 0.0),
+                    "put_call_ratio": float(grss_data.get("Put_Call_Ratio", 1.0)),
                     "ndx_status": grss_data.get("NDX_Status", "unknown"),
+                    "etf_flow_3d_m": etf_flows.get("flow_3d_m", 0.0),
+                    "oi_trend": oi_trend.get("trend_direction", "neutral"),
+                    "max_pain_dist_pct": grss_data.get("Max_Pain", {}).get("distance_pct", 0.0),
+                    "active_patterns": grss_data.get("Active_Patterns", []),
                     "ofi": ofi,
                     "vamp": vamp,
                     "cvd": self.cvd_cumulative,
                 }
-                
+
                 # LLM Cascade ausführen
                 self.state.sub_state = "running llm cascade"
                 cascade_result = await self.cascade.run(
@@ -335,7 +348,7 @@ class QuantAgent(PollingAgent):
                     market_context=market_context,
                     grss_score=grss_score
                 )
-                
+
                 # Nur wenn Cascade ein Signal gibt, senden
                 if cascade_result.is_actionable:
                     signal = {
@@ -344,6 +357,7 @@ class QuantAgent(PollingAgent):
                         "amount": 0.001,   # Bybit Futures Minimum
                         "ofi": ofi,
                         "price": best_bid_p,
+                        "grss": grss_score,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         # Phase C: Cascade-Extras für RiskAgent und ExecutionAgent
                         **cascade_result.to_signal_extras()
@@ -365,7 +379,7 @@ class QuantAgent(PollingAgent):
                 "ofi": round(ofi, 1),
                 "ofi_threshold": self.ofi_threshold,
                 "ofi_met": abs(ofi) >= self.ofi_threshold,
-                "grss": None,
+                "grss": grss_score if cascade_result else None,
                 "outcome": None,
                 "reason": None,
                 "regime": None,
@@ -377,7 +391,7 @@ class QuantAgent(PollingAgent):
                 "vamp": round(vamp, 2),
             }
 
-            if not abs(ofi) >= self.ofi_threshold:
+            if cascade_result is None:
                 decision_event["outcome"] = "OFI_BELOW_THRESHOLD"
                 decision_event["reason"] = f"OFI {ofi:.1f} unter Schwelle {self.ofi_threshold}"
             elif not cascade_result.is_actionable:
