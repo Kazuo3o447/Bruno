@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>WebSocket Connection Test</h1>
+    <div id="status">Status: Disconnected</div>
+    <div id="messages"></div>
+    
+    <script>
+        const statusDiv = document.getElementById('status');
+        const messagesDiv = document.getElementById('messages');
+        
+        function log(message) {
+            console.log(message);
+            messagesDiv.innerHTML += '<p>' + new Date().toLocaleTimeString() + ': ' + message + '</p>';
+        }
+        
+        function connect() {
+            log('Attempting to connect to WebSocket...');
+            
+            const ws = new WebSocket('ws://localhost:8001/ws/agents');
+            
+            ws.onopen = function(event) {
+                log('WebSocket connected successfully!');
+                statusDiv.textContent = 'Status: Connected';
+                statusDiv.style.color = 'green';
+            };
+            
+            ws.onmessage = function(event) {
+                log('Received message: ' + event.data);
+            };
+            
+            ws.onerror = function(error) {
+                log('WebSocket error: ' + error);
+                statusDiv.textContent = 'Status: Error';
+                statusDiv.style.color = 'red';
+            };
+            
+            ws.onclose = function(event) {
+                log('WebSocket closed: ' + event.code + ' - ' + event.reason);
+                statusDiv.textContent = 'Status: Closed';
+                statusDiv.style.color = 'red';
+            };
+        }
+        
+        // Try to connect immediately
+        connect();
+    </script>
+</body>
+</html>

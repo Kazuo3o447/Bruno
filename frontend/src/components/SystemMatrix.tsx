@@ -30,22 +30,29 @@ export default function SystemMatrix() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch("http://localhost:8001/api/v1/telemetry/live");
-        if (res.ok) {
-          const data = await res.json();
-          
-          // API & Core Health
-          setHealth({
-            api: true,
-            db: data.agents ? Object.values(data.agents).length > 0 : true, // Placeholder logic if database field is missing in telemetry
-            redis: true, // If we got data, redis is working
-            ollama: true, // Placeholder
-            bybit: data.live_trading_approved || false
-          });
+        const [healthRes, telemetryRes] = await Promise.allSettled([
+          fetch("http://localhost:8001/health"),
+          fetch("http://localhost:8001/api/v1/telemetry/live"),
+        ]);
 
-          // Agent Heartbeats
-          setAgents(data.agents || {});
-        }
+        const healthData = healthRes.status === "fulfilled" && healthRes.value.ok
+          ? await healthRes.value.json()
+          : null;
+
+        const telemetryData = telemetryRes.status === "fulfilled" && telemetryRes.value.ok
+          ? await telemetryRes.value.json()
+          : null;
+
+        setHealth({
+          api: healthRes.status === "fulfilled" && healthRes.value.ok,
+          db: healthData ? healthData.database === "connected" || healthData.db === "ok" : false,
+          redis: healthData ? healthData.redis === "connected" || healthData.redis === "ok" : false,
+          ollama: healthData ? healthData.ollama === "connected" || healthData.ollama === "ok" : false,
+          bybit: telemetryData?.live_trading_approved || false
+        });
+
+        // Agent Heartbeats
+        setAgents(telemetryData?.agents || {});
       } catch (err) {
         console.error("Telemetry fetch failed:", err);
       } finally {
@@ -69,7 +76,7 @@ export default function SystemMatrix() {
           <HealthNode label="Backend API" status={health.api ? 'ok' : 'error'} icon={<Activity className="w-3.5 h-3.5" />} />
           <HealthNode label="TimescaleDB" status={health.db ? 'ok' : 'error'} icon={<Database className="w-3.5 h-3.5" />} />
           <HealthNode label="Redis Cache" status={health.redis ? 'ok' : 'error'} icon={<Cpu className="w-3.5 h-3.5" />} />
-          <HealthNode label="Ollama (Llama3)" status={health.ollama ? 'warn' : 'ok'} icon={<Cpu className="w-3.5 h-3.5" />} />
+          <HealthNode label="Ollama (Llama3)" status={health.ollama ? 'ok' : 'error'} icon={<Cpu className="w-3.5 h-3.5" />} />
         </div>
       </div>
 

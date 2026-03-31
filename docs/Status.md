@@ -98,6 +98,12 @@
   - ✅ CRYPTOPANIC_API_KEY: v2 API working (20 posts)
   - ✅ ALPHA_VANTAGE_API_KEY: NDX Fallback working
 
+### ✅ Kürzlich Gelöst (2026-03-31)
+- **Dashboard Health-/Status-Mapping**: Frontend normalisiert jetzt `online`, `healthy`, `connected`, `success` und `running` als grüne Zustände
+  - `SystemMatrix` liest den echten Core-Health-Endpoint `/health` statt Platzhalterwerte
+  - Die Datenquellen-Ansicht akzeptiert zusätzlich Warnzustände wie `degraded` und zeigt sie gelb statt rot
+  - `systemtest/news_health` wird jetzt korrekt ausgewertet, auch wenn Feeds `healthy` statt `success` liefern
+
 ### ❌ Fehlt Noch (nach Phase D)
 - LLM-Kaskade Testing mit echten Daten (Phase C)
 - Failure WatchList Mechanismus (Phase C)

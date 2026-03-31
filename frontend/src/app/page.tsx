@@ -120,7 +120,10 @@ export default function HomePage() {
         if (res.ok) {
           const d = await res.json();
           const feeds = Object.values(d.feeds || {});
-          const active = feeds.filter((f: any) => f.status === "success").length;
+          const active = feeds.filter((f: any) => {
+            const status = String(f?.status || "").toLowerCase();
+            return ["success", "healthy", "online", "ok", "connected"].includes(status);
+          }).length;
           setNewsHealth({ active, total: feeds.length });
         }
       } catch {}
@@ -547,8 +550,10 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
 }
 
 function SourceHealthRow({ label, data }: { label: string; data: any }) {
-  const status = data?.status || "offline";
+  const status = String(data?.status || "offline").toLowerCase();
   const latency = data?.latency_ms || 0;
+  const ok = ["online", "ok", "healthy", "connected", "success", "running"].includes(status);
+  const warn = ["degraded", "warning", "fallback", "partial"].includes(status);
   
   const latencyColor = latency < 200 ? "text-emerald-500" : latency < 1000 ? "text-amber-500" : "text-red-500";
   
@@ -556,12 +561,14 @@ function SourceHealthRow({ label, data }: { label: string; data: any }) {
     <div className="flex items-center justify-between py-1">
       <span className="text-sm text-slate-400">{label}</span>
       <div className="flex items-center gap-2">
-        {status === "online" && latency > 0 && (
+        {ok && latency > 0 && (
            <span className={`text-[10px] font-mono ${latencyColor}`}>
               {Math.round(latency)}ms
            </span>
         )}
-        <span className={`w-2 h-2 rounded-full ${status === "online" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-red-500"}`} />
+        <span
+          className={`w-2 h-2 rounded-full ${ok ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : warn ? "bg-amber-500" : "bg-red-500"}`}
+        />
       </div>
     </div>
   );

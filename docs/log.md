@@ -21,6 +21,21 @@ Jeder Eintrag folgt diesem Schema:
 
 ## Log-Einträge
 
+### 2026-03-31 | Dashboard Health-/Status-Mapping — API-Status normalisiert und Doku synchronisiert
+
+**Fehler-Beschreibung:**
+Im Dashboard wurden mehrere Datenquellen und Core-Services rot angezeigt, obwohl die APIs teilweise gesunde Zustände meldeten. Vor allem Statuswerte wie `healthy`, `connected` und `success` wurden nicht durchgehend als grün interpretiert.
+
+**Ursache:**
+- Das Frontend wertete Health-Status zu streng aus und akzeptierte teils nur einzelne Werte wie `online`.
+- `SystemMatrix` nutzte für die Core-Health-Kacheln teilweise Platzhalter-Logik statt den echten `/health`-Endpoint.
+- Die News-/Datenquellen-Auswertung unterschied nicht konsistent zwischen `success`, `healthy`, `connected` und `online`.
+
+**Lösung:**
+- Health- und Datenquellen-Status im Frontend normalisiert.
+- `SystemMatrix` liest jetzt den echten Core-Health-Endpoint `/health`.
+- `docs/status.md` wurde um den aktuellen Fix-Stand ergänzt.
+
 ### 2026-03-29 | Phase C/D Doku-Sync — Runtime-Stand, Worker-Wiring und Positions-Flow
 
 **Fehler-Beschreibung:**

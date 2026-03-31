@@ -4,6 +4,11 @@ import json
 import random
 import asyncio
 from datetime import datetime, timedelta
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Bruno Test API")
 
@@ -20,9 +25,13 @@ active_connections = []
 
 @app.websocket("/ws/market/{symbol}")
 async def websocket_market(websocket: WebSocket, symbol: str):
+    logger.info(f"New WebSocket connection attempt for /ws/market/{symbol}")
     await websocket.accept()
     active_connections.append(websocket)
+    logger.info(f"Market WebSocket client connected for {symbol}. Total connections: {len(active_connections)}")
+    
     try:
+        message_count = 1
         while True:
             # Send mock ticker data every 2 seconds
             ticker_data = {
@@ -37,39 +46,151 @@ async def websocket_market(websocket: WebSocket, symbol: str):
                     "volume": random.uniform(100, 1000)
                 }
             }
-            await websocket.send_text(json.dumps(ticker_data))
+            
+            message = json.dumps(ticker_data)
+            await websocket.send_text(message)
+            logger.info(f"Sent ticker data for {symbol} #{message_count}: {len(message)} bytes")
+            message_count += 1
+            
             await asyncio.sleep(2)
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
+    except WebSocketDisconnect as e:
+        logger.info(f"Market WebSocket client disconnected for {symbol}: {e.code}")
+        if websocket in active_connections:
+            active_connections.remove(websocket)
+    except Exception as e:
+        logger.error(f"Error in market WebSocket: {e}")
+        if websocket in active_connections:
+            active_connections.remove(websocket)
 
 @app.websocket("/ws/agents")
 async def websocket_agents(websocket: WebSocket):
+    logger.info("New WebSocket connection attempt for /ws/agents")
     await websocket.accept()
     active_connections.append(websocket)
+    logger.info(f"Agent WebSocket client connected. Total connections: {len(active_connections)}")
+    
     try:
+        # Send initial status immediately
+        agents_data = {
+            "type": "agents_status",
+            "data": {
+                "agents": {
+                    "sentiment": {
+                        "id": "sentiment",
+                        "name": "Sentiment Analysis Agent",
+                        "status": "running",
+                        "last_heartbeat": datetime.now().isoformat(),
+                        "healthy": True,
+                        "age_seconds": 1
+                    },
+                    "market": {
+                        "id": "market",
+                        "name": "Market Data Agent",
+                        "status": "running",
+                        "last_heartbeat": datetime.now().isoformat(),
+                        "healthy": True,
+                        "age_seconds": 1
+                    },
+                    "quant": {
+                        "id": "quant",
+                        "name": "Quant Agent",
+                        "status": "running",
+                        "last_heartbeat": datetime.now().isoformat(),
+                        "healthy": True,
+                        "age_seconds": 1
+                    },
+                    "risk": {
+                        "id": "risk",
+                        "name": "Risk Agent",
+                        "status": "running",
+                        "last_heartbeat": datetime.now().isoformat(),
+                        "healthy": True,
+                        "age_seconds": 1
+                    },
+                    "execution": {
+                        "id": "execution",
+                        "name": "Execution Agent",
+                        "status": "running",
+                        "last_heartbeat": datetime.now().isoformat(),
+                        "healthy": True,
+                        "age_seconds": 1
+                    }
+                }
+            }
+        }
+        
+        message = json.dumps(agents_data)
+        await websocket.send_text(message)
+        logger.info(f"Sent initial agent status: {len(message)} bytes")
+        
+        # Send periodic updates
+        message_count = 1
         while True:
-            # Send mock agent status every 5 seconds
-            agents_data = {
+            await asyncio.sleep(3)  # Send every 3 seconds
+            
+            # Update heartbeat times
+            current_time = datetime.now().isoformat()
+            updated_agents = {
                 "type": "agents_status",
                 "data": {
                     "agents": {
                         "sentiment": {
+                            "id": "sentiment",
+                            "name": "Sentiment Analysis Agent",
                             "status": "running",
-                            "last_heartbeat": datetime.now().isoformat(),
-                            "healthy": True
+                            "last_heartbeat": current_time,
+                            "healthy": True,
+                            "age_seconds": message_count * 3
                         },
                         "market": {
+                            "id": "market",
+                            "name": "Market Data Agent",
                             "status": "running",
-                            "last_heartbeat": datetime.now().isoformat(),
-                            "healthy": True
+                            "last_heartbeat": current_time,
+                            "healthy": True,
+                            "age_seconds": message_count * 3
+                        },
+                        "quant": {
+                            "id": "quant",
+                            "name": "Quant Agent",
+                            "status": "running",
+                            "last_heartbeat": current_time,
+                            "healthy": True,
+                            "age_seconds": message_count * 3
+                        },
+                        "risk": {
+                            "id": "risk",
+                            "name": "Risk Agent",
+                            "status": "running",
+                            "last_heartbeat": current_time,
+                            "healthy": True,
+                            "age_seconds": message_count * 3
+                        },
+                        "execution": {
+                            "id": "execution",
+                            "name": "Execution Agent",
+                            "status": "running",
+                            "last_heartbeat": current_time,
+                            "healthy": True,
+                            "age_seconds": message_count * 3
                         }
                     }
                 }
             }
-            await websocket.send_text(json.dumps(agents_data))
-            await asyncio.sleep(5)
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
+            
+            message = json.dumps(updated_agents)
+            await websocket.send_text(message)
+            logger.info(f"Sent periodic update #{message_count}: {len(message)} bytes")
+            message_count += 1
+            
+    except WebSocketDisconnect as e:
+        logger.info(f"Agent WebSocket client disconnected: {e.code}")
+        if websocket in active_connections:
+            active_connections.remove(websocket)
+    except Exception as e:
+        logger.error(f"Error in agent WebSocket: {e}")
+        if websocket in active_connections:
+            active_connections.remove(websocket)
 
 @app.websocket("/api/v1/logs/ws")
 async def websocket_logs(websocket: WebSocket):

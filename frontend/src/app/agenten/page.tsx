@@ -190,17 +190,20 @@ export default function AgentenPage() {
 
   // WebSocket for real-time updates
   useEffect(() => {
+    console.log("Attempting to connect to Agent WebSocket...");
     const ws = new WebSocket("ws://localhost:8001/ws/agents");
     
     ws.onopen = () => {
       setWsConnected(true);
-      console.log("Agent WebSocket connected");
+      console.log("Agent WebSocket connected successfully");
     };
     
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log("WebSocket received:", data);
         if (data.type === "agents_status" && data.data?.agents) {
+          console.log("Updating agents with:", data.data.agents);
           setAgents(data.data.agents);
         }
       } catch (error) {
@@ -208,12 +211,20 @@ export default function AgentenPage() {
       }
     };
     
-    ws.onclose = () => {
+    ws.onerror = (error) => {
+      console.error("Agent WebSocket error:", error);
       setWsConnected(false);
-      console.log("Agent WebSocket disconnected");
     };
     
-    return () => ws.close();
+    ws.onclose = (event) => {
+      console.log("Agent WebSocket closed:", event.code, event.reason);
+      setWsConnected(false);
+    };
+    
+    return () => {
+      console.log("Cleaning up WebSocket connection");
+      ws.close();
+    };
   }, []);
 
   // Initial load and periodic updates
@@ -248,6 +259,37 @@ export default function AgentenPage() {
       case "idle": return <Clock className="w-4 h-4" />;
       default: return <Clock className="w-4 h-4" />;
     }
+  };
+
+  // Get agent status from API data as fallback
+  const getAgentStatus = (agentId: string) => {
+    // First try WebSocket data
+    if (agents[agentId]) {
+      return agents[agentId];
+    }
+    
+    // Fallback to API data
+    const apiAgents = telemetry?.agents || {};
+    if (apiAgents[agentId]) {
+      return {
+        id: agentId,
+        name: agentDefinitions[agentId as keyof typeof agentDefinitions]?.name || agentId,
+        status: apiAgents[agentId].healthy ? "running" : "stopped",
+        last_heartbeat: new Date().toISOString(),
+        healthy: apiAgents[agentId].healthy,
+        age_seconds: 0
+      };
+    }
+    
+    // Default fallback
+    return {
+      id: agentId,
+      name: agentDefinitions[agentId as keyof typeof agentDefinitions]?.name || agentId,
+      status: "stopped",
+      last_heartbeat: new Date().toISOString(),
+      healthy: false,
+      age_seconds: 0
+    };
   };
 
   const formatTimeAgo = (timestamp: string) => {
@@ -300,8 +342,8 @@ export default function AgentenPage() {
           {/* Agent Cards */}
           <div className="lg:col-span-2 space-y-4">
             {Object.entries(agentDefinitions).map(([agentId, agentDef]) => {
-              const agent = agents[agentId];
-              const isRunning = agent?.status === "running";
+              const agent = getAgentStatus(agentId);
+              const isRunning = agent.status === "running";
               
               return (
                 <div key={agentId} className="bg-gray-800 border border-gray-700 rounded-xl p-6">
@@ -320,9 +362,9 @@ export default function AgentenPage() {
                     <div className="flex items-center gap-3">
                       {/* Status */}
                       <div className="flex items-center gap-2">
-                        {getStatusIcon(agent?.status || "stopped")}
-                        <span className={`text-sm font-medium ${getStatusColor(agent?.status || "stopped")}`}>
-                          {agent?.status || "stopped"}
+                        {getStatusIcon(agent.status)}
+                        <span className={`text-sm font-medium ${getStatusColor(agent.status)}`}>
+                          {agent.status}
                         </span>
                       </div>
                       
@@ -518,7 +560,7 @@ export default function AgentenPage() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Context Agent - Detailed Analysis</h3>
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${agents.context?.healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
+                  <div className={`w-2 h-2 rounded-full ${getAgentStatus("sentiment").healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
                   <span className="text-sm text-gray-400">
                     Last Update: {grss?.data_quality?.last_update ? new Date(grss.data_quality.last_update).toLocaleTimeString() : "Never"}
                   </span>
@@ -625,7 +667,7 @@ export default function AgentenPage() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Quant Agent - Market Analysis</h3>
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${agents.quant?.healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
+                  <div className={`w-2 h-2 rounded-full ${getAgentStatus("quant").healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
                   <span className="text-sm text-gray-400">Real-time Data</span>
                 </div>
               </div>
@@ -768,7 +810,7 @@ export default function AgentenPage() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Risk Agent - Risk Management</h3>
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${agents.risk?.healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
+                  <div className={`w-2 h-2 rounded-full ${getAgentStatus("risk").healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
                   <span className="text-sm text-gray-400">Monitoring Active</span>
                 </div>
               </div>
@@ -816,7 +858,7 @@ export default function AgentenPage() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-white">Execution Agent - Trade Execution</h3>
                 <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${agents.execution?.healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
+                  <div className={`w-2 h-2 rounded-full ${getAgentStatus("execution").healthy ? "bg-green-400 animate-pulse" : "bg-red-400"}`} />
                   <span className="text-sm text-gray-400">
                     {telemetry?.dry_run ? "Simulation" : "Live"}
                   </span>

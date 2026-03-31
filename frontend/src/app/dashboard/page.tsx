@@ -509,23 +509,35 @@ function AgentStatusRow({ agents }: { agents: Record<string, { status: string; a
 }
 
 function DataFreshnessBar({ sources }: { sources: Record<string, { status: string; latency_ms: number; last_update: string }> }) {
-  const items = Object.entries(sources).map(([name, data]) => ({
-    name,
-    ok: data.status === "online" || data.status === "ok",
-    age: timeAgo(data.last_update),
-    latency: data.latency_ms,
-  }));
+  const healthyStatuses = new Set(["online", "ok", "healthy", "connected", "success", "running"]);
+  const warningStatuses = new Set(["degraded", "warning", "fallback", "partial"]);
+
+  const items = Object.entries(sources).map(([name, data]) => {
+    const status = (data.status || "offline").toLowerCase();
+
+    return {
+      name,
+      status,
+      ok: healthyStatuses.has(status),
+      warn: warningStatuses.has(status),
+      age: timeAgo(data.last_update),
+      latency: data.latency_ms,
+    };
+  });
 
   if (items.length === 0) return null;
 
   return (
     <div className="border border-zinc-800 rounded px-3 py-2 font-mono text-xs flex items-center gap-4 flex-wrap bg-[#0a0a0f]">
       <span className="text-zinc-500 uppercase tracking-widest flex-shrink-0">Daten</span>
-      {items.map(({ name, ok, age }) => (
+      {items.map(({ name, ok, warn, age, status }) => (
         <span key={name} className="flex items-center gap-1">
-          <span className={ok ? "text-emerald-400" : "text-red-400"}>{ok ? "✓" : "✗"}</span>
+          <span className={ok ? "text-emerald-400" : warn ? "text-amber-400" : "text-red-400"}>
+            {ok ? "✓" : warn ? "!" : "✗"}
+          </span>
           <span className="text-zinc-400">{name}</span>
           <span className="text-zinc-600">{age}</span>
+          <span className="text-zinc-700 uppercase">{status}</span>
         </span>
       ))}
     </div>
