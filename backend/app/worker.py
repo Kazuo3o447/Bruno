@@ -83,7 +83,7 @@ async def main():
             await redis.set_cache("bruno:system:paused", {"paused": False})
             await telegram.send_critical_alert("Bot fortgesetzt.")
         else:
-            from datetime import timedelta
+            from datetime import datetime, timedelta, timezone
             resume_at = (
                 datetime.now(timezone.utc) + timedelta(hours=hours)
             ).isoformat()

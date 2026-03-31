@@ -41,6 +41,29 @@ class ExecutionAgentV3(StreamingAgent):
         )
 
         self._portfolio_initialized = False
+        self._background_tasks: set = set()
+
+    def _create_tracked_task(self, coro) -> "asyncio.Task":
+        """Fire-and-forget Task mit Exception-Logging."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        def _on_done(t: "asyncio.Task"):
+            self._background_tasks.discard(t)
+            if not t.cancelled() and t.exception():
+                self.logger.error(f"Background-Task Fehler: {t.exception()}")
+        task.add_done_callback(_on_done)
+        return task
+
+    async def _resilient_listener(self, name: str, listener_fn) -> None:
+        """Startet einen Listener bei Exception automatisch neu."""
+        while self.state.running:
+            try:
+                await listener_fn()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                self.logger.error(f"Listener '{name}' abgestürzt: {e}. Neustart in 5s.")
+                await asyncio.sleep(5)
 
     async def setup(self) -> None:
         self.logger.info("ExecutionAgentV3 (Zero-Latency) gestartet.")
@@ -272,8 +295,8 @@ class ExecutionAgentV3(StreamingAgent):
                 # Guard hat angeschlagen (race condition) — kein Problem
                 self.logger.warning(f"PositionTracker Guard (race): {ve}")
 
-            # Async Audit
-            asyncio.create_task(self._audit_trade(signal, order, exec_latency))
+            # Async Audit (getrackt — Exceptions werden geloggt)
+            self._create_tracked_task(self._audit_trade(signal, order, exec_latency))
 
         except Exception as e:
             self.logger.error(f"KRITISCHER FEHLER BEI ORDER-AUSFÜHRUNG: {e}")
@@ -601,7 +624,7 @@ class ExecutionAgentV3(StreamingAgent):
                     "fee": qty * exit_price * 0.0004,
                     "status": "simulated_exit"
                 }
-                asyncio.create_task(
+                self._create_tracked_task(
                     self._audit_trade(
                         {"symbol": symbol, "side": exit_side, "price": exit_price, "reason": reason},
                         exit_order,
@@ -630,7 +653,7 @@ class ExecutionAgentV3(StreamingAgent):
                     "pnl_eur": closed.get("pnl_eur", 0.0),
                     "fee_eur": qty * exit_price * 0.0004,
                 })
-                asyncio.create_task(self._update_profit_factor())
+                self._create_tracked_task(self._update_profit_factor())
 
             # Telegram-Notification
             from app.core.telegram_bot import get_telegram_bot
@@ -670,7 +693,7 @@ class ExecutionAgentV3(StreamingAgent):
                     }
                     
                     # Debrief asynchron ausführen (nicht blockieren)
-                    asyncio.create_task(
+                    self._create_tracked_task(
                         debrief_service.analyze_trade(
                             trade_id=pos.get("id", trade_id),
                             position_data=position_data
@@ -686,9 +709,13 @@ class ExecutionAgentV3(StreamingAgent):
             self.logger.error(f"_close_position Fehler: {e}")
 
     async def run_stream(self) -> None:
-        """Parallele Ausführung der Listener."""
+        """Parallele Ausführung der Listener mit Isolation.
+
+        Jeder Listener wird durch _resilient_listener() bei Absturz automatisch
+        neugestartet. Ein Listener-Crash bringt nicht mehr die anderen zum Absturz.
+        """
         await asyncio.gather(
-            self._listen_to_risk_veto(),
-            self._listen_to_signals(),
-            self._monitor_position()
+            self._resilient_listener("veto", self._listen_to_risk_veto),
+            self._resilient_listener("signals", self._listen_to_signals),
+            self._monitor_position(),
         )

@@ -60,12 +60,6 @@ class RedisClient:
             logger.debug(f"Cache miss: {key}")
         return None
 
-    async def delete_cache(self, key: str):
-        """Löscht einen Cache-Eintrag."""
-        if self.redis:
-            await self.redis.delete(key)
-            logger.debug(f"Cache gelöscht: {key}")
-
     async def publish_stream(self, stream_name: str, data: Dict[str, Any]):
         """Publiziert Daten in einen Redis Stream."""
         if self.redis:

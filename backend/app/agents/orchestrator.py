@@ -99,6 +99,38 @@ class AgentOrchestrator:
                 
                 if restart_count > max_restarts:
                     logger.critical(f"Agent {agent_id} final deaktiviert (Max Restarts).")
+                    await self._emit_lifecycle_log(
+                        "error",
+                        f"Agent {agent_id} PERMANENT AUSGEFALLEN — max_restarts überschritten",
+                        {"restart_count": restart_count, "last_error": str(e)},
+                    )
+                    # Redis-Key für Dashboard / Monitoring
+                    try:
+                        await self.deps.redis.set_cache(
+                            f"bruno:agent:{agent_id}:dead",
+                            {
+                                "agent_id": agent_id,
+                                "reason": str(e),
+                                "restart_count": restart_count,
+                                "timestamp": __import__("datetime").datetime.now(
+                                    __import__("datetime").timezone.utc
+                                ).isoformat(),
+                            },
+                            ttl=86400,
+                        )
+                    except Exception:
+                        pass
+                    # Telegram-Alert (best-effort)
+                    try:
+                        from app.core.telegram_bot import get_telegram_bot
+                        telegram = get_telegram_bot()
+                        if telegram:
+                            await telegram.send_critical_alert(
+                                f"Agent {agent_id} PERMANENT AUSGEFALLEN!\n"
+                                f"Restarts: {restart_count} | Letzter Fehler: {e}"
+                            )
+                    except Exception:
+                        pass
                     break
 
                 wait_secs = min(30 * restart_count, 300)

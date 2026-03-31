@@ -49,6 +49,7 @@ class ContextAgent(StreamingAgent):
         self.long_short_ratio: float = 1.0
         self.perp_basis_pct: float = 0.0
         self.btc_change_24h: float = 0.0
+        self.btc_change_1h: float = 0.0
         self.put_call_ratio: float = 0.60
         self.dvol: float = 55.0
         self.grss_history: list = []
@@ -268,6 +269,19 @@ class ContextAgent(StreamingAgent):
                 r = await client.get("https://api.binance.com/api/v3/ticker/24hr", params={"symbol": "BTCUSDT"})
                 if r.status_code == 200:
                     self.btc_change_24h = float(r.json().get("priceChangePercent", 0)) / 100
+
+                # 1h-Veränderung: letzte 2 stündliche Candles
+                r = await client.get(
+                    "https://fapi.binance.com/fapi/v1/klines",
+                    params={"symbol": "BTCUSDT", "interval": "1h", "limit": 2}
+                )
+                if r.status_code == 200:
+                    candles = r.json()
+                    if len(candles) >= 2:
+                        prev_close = float(candles[-2][4])
+                        curr_close = float(candles[-1][4])
+                        if prev_close > 0:
+                            self.btc_change_1h = (curr_close - prev_close) / prev_close
         except: pass
 
     async def _fetch_deribit_data(self) -> None:
@@ -370,7 +384,7 @@ class ContextAgent(StreamingAgent):
                 "funding_rate": float((await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}).get("rate", 0.01)),
                 "stablecoin_delta_bn": self.stablecoin_delta_bn,
                 "btc_change_24h": self.btc_change_24h,
-                "btc_change_1h": 0.0 # TODO: Implement delta
+                "btc_change_1h": self.btc_change_1h,
             }
             self.pattern_result = self._detect_market_patterns(pattern_data)
 

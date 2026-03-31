@@ -163,6 +163,10 @@ class PollingAgent(BaseAgent):
         # Cleanup
         self.state.running = False
         heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
         self.logger.info("PollingAgent beendet.")
 
 class StreamingAgent(BaseAgent):
@@ -221,5 +225,9 @@ class StreamingAgent(BaseAgent):
         # Cleanup
         self.state.running = False
         heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
         self.logger.info("StreamingAgent beendet.")
 

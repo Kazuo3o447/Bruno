@@ -8,18 +8,28 @@ from typing import Dict, Any, Optional, List
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
 from app.services.sentiment_analyzer import SentimentAnalyzer
+from app.services.retail_sentiment import RetailSentimentService
 from app.core.log_manager import LogManager, LogCategory, LogLevel
 
 class SentimentAgent(PollingAgent):
     """
     Sentiment Agent für News-Analyse.
     Nutzt FinBERT, CryptoBERT und Zero-Shot Classification für Sentiment-Scoring.
+    Optionale Retail-Quellen: Reddit r/Bitcoin + StockTwits (wenn Keys gesetzt).
     """
     def __init__(self, deps: AgentDependencies):
         super().__init__("sentiment", deps)
         self.analyzer = SentimentAnalyzer()
         self.news_sources: List[str] = []
         self.last_analysis: Optional[Dict[str, Any]] = None
+        # Retail Sentiment (Reddit + StockTwits) — optional, 6h Intervall
+        self.retail_service = RetailSentimentService(
+            redis_client=deps.redis,
+            sentiment_analyzer=None,
+            config=deps.config,
+        )
+        self._last_retail_update: float = 0.0
+        self._retail_interval: float = 21600.0  # 6 Stunden
 
     async def setup(self) -> None:
         """Initialisiert den Sentiment Analyzer (Lazy-Load der Modelle)."""
@@ -181,6 +191,31 @@ class SentimentAgent(PollingAgent):
                 s["confidence"] for s in sentiment_scores
             ) / len(sentiment_scores)
 
+            # ── 6. Retail Sentiment (Reddit + StockTwits) — optional ──
+            retail_data = None
+            now_ts = time.time()
+            if now_ts - self._last_retail_update >= self._retail_interval:
+                self.state.sub_state = "fetching retail sentiment"
+                try:
+                    retail_data = await self.retail_service.update()
+                    self._last_retail_update = now_ts
+                    self.logger.info(
+                        f"Retail Sentiment: score={retail_data.get('retail_score', 0):.3f} "
+                        f"sources={retail_data.get('sources_active', 0)}"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Retail Sentiment Fehler (non-fatal): {e}")
+            else:
+                # Aus Redis-Cache lesen wenn kein neuer Fetch fällig
+                retail_data = await self.deps.redis.get_cache("bruno:retail:sentiment")
+
+            # Retail-Score mit 15% Gewicht einblenden wenn verfügbar
+            source_label = "cryptopanic+rss"
+            if retail_data and retail_data.get("sources_active", 0) > 0:
+                retail_score = float(retail_data.get("retail_score", 0.0))
+                avg_score = avg_score * 0.85 + retail_score * 0.15
+                source_label = "cryptopanic+rss+retail"
+
             interpretation = (
                 "bullish" if avg_score > 0.20
                 else "bearish" if avg_score < -0.20
@@ -194,7 +229,9 @@ class SentimentAgent(PollingAgent):
                 "samples_analyzed": len(sentiment_scores),
                 "headlines_collected": len(headlines),
                 "interpretation": interpretation,
-                "source": "cryptopanic+rss"
+                "retail_score": round(retail_data.get("retail_score", 0.0), 3) if retail_data else None,
+                "retail_sources_active": retail_data.get("sources_active", 0) if retail_data else 0,
+                "source": source_label,
             }
 
             await self.deps.redis.set_cache(
