@@ -82,7 +82,19 @@ class ContextAgent(StreamingAgent):
 
     async def setup(self) -> None:
         self.logger.info("ContextAgent v2 (Institutional) gestartet.")
-        await self.coinglass.setup()
+
+    async def run_stream(self) -> None:
+        """Implementierung der abstrakten Methode für StreamingAgent."""
+        while self.state.running:
+            try:
+                await self.process()
+                # ContextAgent läuft alle 30 Sekunden
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"ContextAgent run_stream Fehler: {e}", exc_info=True)
+                await asyncio.sleep(30)
 
     # ── Institutional Signal Fetchers ──────────────────────────────────────────
 

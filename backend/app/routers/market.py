@@ -78,6 +78,7 @@ async def get_grss_full(redis=Depends(get_redis_client)):
     """Vollständiger GRSS-State mit allen Inputs für Dashboard."""
     try:
         grss_data = await redis.get_cache("bruno:context:grss") or {}
+        last_update = grss_data.get("last_update") or grss_data.get("timestamp") or ""
         return {
             "score": grss_data.get("GRSS_Score"),
             "score_raw": grss_data.get("GRSS_Score_Raw"),
@@ -113,7 +114,7 @@ async def get_grss_full(redis=Depends(get_redis_client)):
                 "data_freshness_ok": grss_data.get("Data_Freshness_Active"),
                 "news_silence_seconds": grss_data.get("News_Silence_Seconds"),
                 "funding_settlement_window": grss_data.get("Funding_Settlement_Window"),
-                "last_update": grss_data.get("last_update"),
+                "last_update": last_update,
             },
             "btc": {
                 "change_24h_pct": grss_data.get("BTC_Change_24h_Pct"),

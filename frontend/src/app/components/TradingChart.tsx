@@ -8,6 +8,29 @@ interface TradingChartProps {
   data?: CandlestickData[];
 }
 
+// Demo-Daten Generator
+function generateDemoData(): CandlestickData[] {
+  const now = Date.now() / 1000;
+  const basePrice = 65000;
+  const data: CandlestickData[] = [];
+  
+  for (let i = 20; i >= 0; i--) {
+    const time = (now - i * 3600) as UTCTimestamp;
+    const volatility = 0.02;
+    const trend = 0.001;
+    
+    const open = i === 20 ? basePrice : data[data.length - 1].close;
+    const change = (Math.random() - 0.5 + trend) * volatility * open;
+    const close = open + change;
+    const high = Math.max(open, close) + Math.random() * volatility * open * 0.5;
+    const low = Math.min(open, close) - Math.random() * volatility * open * 0.5;
+    
+    data.push({ time, open, high, low, close });
+  }
+  
+  return data;
+}
+
 export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -18,92 +41,118 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Chart erstellen
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: "#1a1a2e" },
-        textColor: "#d1d5db",
-      },
-      grid: {
-        vertLines: { color: "#2d2d44" },
-        horzLines: { color: "#2d2d44" },
-      },
-      crosshair: {
-        mode: 1,
-      },
-      rightPriceScale: {
-        borderColor: "#2d2d44",
-      },
-      timeScale: {
-        borderColor: "#2d2d44",
-        timeVisible: true,
-      },
-    });
+    let chart: IChartApi | null = null;
+    let candlestickSeries: ISeriesApi<"Candlestick"> | null = null;
+    let isDisposed = false;
 
-    chartRef.current = chart;
+    try {
+      // Chart erstellen
+      chart = createChart(chartContainerRef.current, {
+        layout: {
+          background: { type: ColorType.Solid, color: "#1a1a2e" },
+          textColor: "#d1d5db",
+        },
+        grid: {
+          vertLines: { color: "#2d2d44" },
+          horzLines: { color: "#2d2d44" },
+        },
+        crosshair: {
+          mode: 1,
+        },
+        rightPriceScale: {
+          borderColor: "#2d2d44",
+        },
+        timeScale: {
+          borderColor: "#2d2d44",
+          timeVisible: true,
+        },
+      });
 
-    // Candlestick Serie hinzufügen - Lightweight Charts v4 API
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-    });
+      chartRef.current = chart;
 
-    seriesRef.current = candlestickSeries;
+      // Candlestick Serie hinzufügen - Lightweight Charts v4 API
+      candlestickSeries = chart.addSeries(CandlestickSeries, {
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        borderUpColor: "#22c55e",
+        borderDownColor: "#ef4444",
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+      });
 
-    // Beispiel-Daten oder übergebene Daten verwenden
-    if (initialData && initialData.length > 0) {
-      candlestickSeries.setData(initialData);
-      const lastCandle = initialData[initialData.length - 1];
-      const firstCandle = initialData[0];
-      setCurrentPrice(lastCandle.close);
-      const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
-      setPriceChange(change);
-    } else {
-      // Demo-Daten generieren
-      const demoData = generateDemoData();
-      candlestickSeries.setData(demoData);
-      const lastCandle = demoData[demoData.length - 1];
-      const firstCandle = demoData[0];
-      setCurrentPrice(lastCandle.close);
-      const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
-      setPriceChange(change);
-    }
+      seriesRef.current = candlestickSeries;
 
-    // Chart auf Fenstergröße anpassen
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight,
-        });
+      // Beispiel-Daten oder übergebene Daten verwenden
+      const dataToUse = initialData && initialData.length > 0 ? initialData : generateDemoData();
+      
+      if (candlestickSeries && !isDisposed) {
+        candlestickSeries.setData(dataToUse);
+        const lastCandle = dataToUse[dataToUse.length - 1];
+        const firstCandle = dataToUse[0];
+        setCurrentPrice(lastCandle.close);
+        const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+        setPriceChange(change);
       }
-    };
 
-    window.addEventListener("resize", handleResize);
-    handleResize();
+      // Chart auf Fenstergröße anpassen
+      const handleResize = () => {
+        if (!isDisposed && chartContainerRef.current && chart && chartContainerRef.current.isConnected) {
+          try {
+            chart.applyOptions({
+              width: chartContainerRef.current.clientWidth,
+              height: chartContainerRef.current.clientHeight,
+            });
+          } catch (error) {
+            console.warn("Chart resize failed - chart may be disposed:", error);
+          }
+        }
+      };
 
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      if (chartRef.current) {
-        chartRef.current.remove();
+      window.addEventListener("resize", handleResize);
+      handleResize();
+
+      // Cleanup function
+      return () => {
+        isDisposed = true;
+        window.removeEventListener("resize", handleResize);
+        
+        // Sichere Entfernung des Charts
+        setTimeout(() => {
+          if (chart) {
+            try {
+              chart.remove();
+            } catch (error) {
+              console.warn("Chart removal failed:", error);
+            } finally {
+              chartRef.current = null;
+              seriesRef.current = null;
+            }
+          }
+        }, 100); // Kleine Verzögerung, um Race Conditions zu vermeiden
+      };
+    } catch (error) {
+      console.error("Chart initialization failed:", error);
+      return () => {
+        isDisposed = true;
         chartRef.current = null;
-      }
-    };
+        seriesRef.current = null;
+      };
+    }
   }, [initialData]);
 
   // Neue Daten hinzufügen (für WebSocket Updates)
   useEffect(() => {
-    if (initialData && initialData.length > 0 && seriesRef.current) {
-      const lastCandle = initialData[initialData.length - 1];
-      const firstCandle = initialData[0];
-      seriesRef.current.update(lastCandle);
-      setCurrentPrice(lastCandle.close);
-      const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
-      setPriceChange(change);
+    if (initialData && initialData.length > 0 && seriesRef.current && chartRef.current) {
+      try {
+        const lastCandle = initialData[initialData.length - 1];
+        const firstCandle = initialData[0];
+        seriesRef.current.update(lastCandle);
+        setCurrentPrice(lastCandle.close);
+        const change = ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
+        setPriceChange(change);
+      } catch (error) {
+        console.warn("Chart update failed - chart may be disposed:", error);
+      }
     }
   }, [initialData]);
 
@@ -126,33 +175,4 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
       <div ref={chartContainerRef} className="w-full h-[400px]" />
     </div>
   );
-}
-
-// Demo-Daten generieren
-function generateDemoData(): CandlestickData[] {
-  const data: CandlestickData[] = [];
-  let time = new Date();
-  time.setDate(time.getDate() - 30);
-  
-  let price = 65000;
-  
-  for (let i = 0; i < 30 * 24; i++) {
-    const open = price;
-    const high = price * (1 + Math.random() * 0.02);
-    const low = price * (1 - Math.random() * 0.02);
-    const close = low + Math.random() * (high - low);
-    
-    data.push({
-      time: Math.floor(time.getTime() / 1000) as UTCTimestamp,
-      open,
-      high,
-      low,
-      close,
-    });
-    
-    price = close;
-    time.setHours(time.getHours() + 1);
-  }
-  
-  return data;
 }

@@ -525,7 +525,17 @@ function DataFreshnessBar({ sources }: { sources: Record<string, { status: strin
     };
   });
 
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    return (
+      <div className="border border-zinc-800 rounded px-3 py-2 font-mono text-xs flex items-center gap-4 flex-wrap bg-[#0a0a0f]">
+        <span className="text-zinc-500 uppercase tracking-widest flex-shrink-0">Daten</span>
+        <span className="flex items-center gap-1 text-zinc-500">
+          <span className="text-zinc-600">?</span>
+          <span>keine Quellen gemeldet</span>
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="border border-zinc-800 rounded px-3 py-2 font-mono text-xs flex items-center gap-4 flex-wrap bg-[#0a0a0f]">
@@ -558,23 +568,73 @@ export default function Dashboard() {
   const API = "/api/v1";
 
   async function refresh() {
+    console.log("Dashboard: Starting refresh...");
     try {
       const [tel, gr, dec, pos, perf] = await Promise.allSettled([
-        fetch(`${API}/telemetry/live`).then(r => r.json()),
-        fetch(`${API}/market/grss-full`).then(r => r.json()),
-        fetch(`${API}/decisions/feed?limit=20`).then(r => r.json()),
-        fetch(`${API}/positions/open`).then(r => r.json()),
-        fetch(`${API}/performance/metrics`).then(r => r.json()),
+        fetch(`${API}/telemetry/live`).then(r => {
+          console.log(`Dashboard: ${API}/telemetry/live status:`, r.status);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch(`${API}/market/grss-full`).then(r => {
+          console.log(`Dashboard: ${API}/market/grss-full status:`, r.status);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch(`${API}/decisions/feed?limit=20`).then(r => {
+          console.log(`Dashboard: ${API}/decisions/feed status:`, r.status);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch(`${API}/positions/open`).then(r => {
+          console.log(`Dashboard: ${API}/positions/open status:`, r.status);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
+        fetch(`${API}/performance/metrics`).then(r => {
+          console.log(`Dashboard: ${API}/performance/metrics status:`, r.status);
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        }),
       ]);
 
-      if (tel.status === "fulfilled") setTelemetry(tel.value);
-      if (gr.status === "fulfilled") setGRSS(gr.value);
-      if (dec.status === "fulfilled") setDecisions(dec.value.events ?? []);
+      console.log("Dashboard: API responses:", { tel: tel.status, gr: gr.status, dec: dec.status, pos: pos.status, perf: perf.status });
+
+      if (tel.status === "fulfilled") {
+        console.log("Dashboard: Setting telemetry:", tel.value);
+        setTelemetry(tel.value);
+      } else {
+        console.error("Dashboard: Telemetry failed:", tel.reason);
+      }
+      
+      if (gr.status === "fulfilled") {
+        console.log("Dashboard: Setting GRSS:", gr.value);
+        setGRSS(gr.value);
+      } else {
+        console.error("Dashboard: GRSS failed:", gr.reason);
+      }
+      
+      if (dec.status === "fulfilled") {
+        console.log("Dashboard: Setting decisions:", dec.value.events);
+        setDecisions(dec.value.events ?? []);
+      } else {
+        console.error("Dashboard: Decisions failed:", dec.reason);
+      }
+      
       if (pos.status === "fulfilled") {
+        console.log("Dashboard: Setting position:", pos.value);
         setPosition(pos.value.position ?? null);
         setCurrentPrice(pos.value.current_price ?? null);
+      } else {
+        console.error("Dashboard: Position failed:", pos.reason);
       }
-      if (perf.status === "fulfilled") setMetrics(perf.value);
+      
+      if (perf.status === "fulfilled") {
+        console.log("Dashboard: Setting metrics:", perf.value);
+        setMetrics(perf.value);
+      } else {
+        console.error("Dashboard: Metrics failed:", perf.reason);
+      }
     } catch (e) {
       console.error("Dashboard fetch error", e);
     }

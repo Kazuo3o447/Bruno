@@ -1,22 +1,134 @@
-# API Fixes — Rate Limit & Fallback Lösungen
+# API Fixes & Troubleshooting
 
-> **Implementiert:** 2026-03-30  
-> **Status:** ✅ Produktiv - Alle API-Blockaden behoben
+> **Dokumentation der API-Verbindung, Fehlerbehebung und Container-Konfiguration**
+> 
+> ✅ **Stand:** 31. März 2026 - Voll funktionsfähiges Dashboard mit API-Integration
+
+**Repository:** https://github.com/Kazuo3o447/Bruno
 
 ---
 
-## 🚨 Problem
+## 🎯 API-Verbindungs-Status
 
-Das Bruno Trading Bot System litt unter schweren API-Rate-Limit-Problemen:
+### ✅ Aktive API-Endpunkte
+```
+✅ /api/v1/telemetry/live      - System-Status & Agenten-Health
+✅ /api/v1/market/grss-full    - GRSS-Score & Marktdaten
+✅ /api/v1/decisions/feed      - Decision-Feed (letzte 20)
+✅ /api/v1/positions/open      - Offene Positionen
+✅ /api/v1/performance/metrics - Performance-Kennzahlen
+✅ /api/v1/config              - Konfiguration & Status
+```
 
-| API | Problem | Auswirkung |
-|-----|---------|------------|
-| Yahoo Finance | 429 Rate Limit | VIX/NDX Daten fehlten |
-| Reddit | 429 Rate Limit | Retail Sentiment degraded |
-| StockTwits | 403 Forbidden | 403-Fehler bei jedem Request |
-| HuggingFace | Langsame Downloads | Model-Initialisierung langsam |
+### 🔗 Frontend → Backend Verbindung
+```
+✅ Next.js Proxy: /api/:path* → http://api-backend:8000/api/:path*
+✅ Docker-Netzwerk: bruno_default (alle Container verbunden)
+✅ Container-Abhängigkeiten: bruno-frontend depends_on api-backend
+✅ Port-Mapping: Backend 8000, Frontend 3000
+```
 
-**Ergebnis:** Nur 2/6 Agenten liefen stabil.
+---
+
+## 🐛 Behobene Probleme (März 2026)
+
+### 1. "Object is disposed" Fehler in lightweight-charts
+**Problem:** Chart-Komponente stürzt ab beim Unmounting
+```javascript
+// Fehler: get node_modules/fancy-canvas/canvas-element-bitmap-size.mjs
+Error: Object is disposed
+```
+
+**Lösung:** Robuste Fehlerbehandlung in TradingChart.tsx
+```javascript
+// Fixes implementiert:
+- isDisposed Flag für Race Conditions
+- try-catch Blöcke um alle Chart-Operationen
+- setTimeout(100ms) beim Cleanup
+- isConnected Prüfung für DOM-Elemente
+- generateDemoData() für Fallback-Daten
+```
+
+### 2. API-Aufrufe funktionieren nicht (404/Connection Errors)
+**Problem:** Frontend kann nicht auf Backend zugreifen
+```
+Failed to proxy http://host.docker.internal:8000/api/v1/telemetry/live
+Error: socket hang up
+```
+
+**Lösung:** Docker-Netzwerk-Konfiguration korrigiert
+```yaml
+# docker-compose.yml Änderungen:
+bruno-frontend:
+  depends_on:
+    - api-backend                    # ← Neu: Abhängigkeit hinzugefügt
+  environment:
+    - NEXT_PUBLIC_API_URL=http://api-backend:8000  # ← Geändert
+
+# next.config.js Änderungen:
+async rewrites() {
+  return [
+    {
+      source: '/api/:path*',
+      destination: 'http://api-backend:8000/api/:path*',  # ← Geändert
+    },
+  ];
+}
+```
+
+### 3. RiskAgent vol_multiplier Bug
+**Problem:** Variable nicht in allen Code-Pfaden definiert
+```
+RiskAgent Fehler: cannot access local variable 'vol_multiplier'
+```
+
+**Lösung:** Variable am Anfang der Funktion initialisiert
+```python
+# backend/app/agents/risk.py Fixes:
+- vol_multiplier = 1.0 am Anfang von else-Block
+- Berechnung in allen Code-Pfaden (auch bei Veto)
+- Keine "unbound local variable" Fehler mehr
+```
+
+### 4. Fehlende API-Endpunkte
+**Problem:** /performance/metrics gibt 404 Not Found
+
+**Lösung:** Endpunkt in monitoring.py implementiert
+```python
+@router.get("/performance/metrics")
+async def get_performance_metrics():
+    # Gibt Performance-Kennzahlen zurück
+    return {
+        "daily_return": sim_data.get("daily_return_pct"),
+        "weekly_return": sim_data.get("weekly_return_pct"),
+        # ... weitere Metriken
+    }
+```
+
+### 5. API-Routing Prefix fehlt
+**Problem:** decisions und config Router ohne /api/v1 Prefix
+
+**Lösung:** main.py Router-Konfiguration korrigiert
+```python
+# backend/app/main.py Fixes:
+app.include_router(decisions.router, prefix="/api/v1")      # ← Prefix hinzugefügt
+app.include_router(config_api.router, prefix="/api/v1")    # ← Prefix hinzugefügt
+app.include_router(export.router, prefix="/api/v1")        # ← Prefix hinzugefügt
+```
+
+---
+
+## 🚨 Alte Probleme (März 2026) - Rate Limits
+
+### API-Rate-Limit-Probleme (behoben)
+| API | Problem | Lösung |
+|-----|---------|--------|
+| Yahoo Finance | 429 Rate Limit | CBOE CSV Fallback |
+| Reddit | 429 Rate Limit | OAuth + Anonym Fallback |
+| StockTwits | 403 Forbidden | Graceful Skip |
+| HuggingFace | Langsame Downloads | Token-Integration |
+
+**Ergebnis:** Alle 6 Agenten laufen stabil.
 
 ---
 

@@ -91,6 +91,10 @@ class RiskAgent(PollingAgent):
             if not context or not micro:
                 veto, reason, leverage = True, "DATA GAP: Missing input signals.", 0.0
             else:
+                # Default values
+                vol_multiplier = 1.0
+                reason_notes = []
+                
                 # 2. News Silence Watchdog (Harter Checkout 3600s)
                 last_update_str = context.get("last_update")
                 if last_update_str:
@@ -106,24 +110,33 @@ class RiskAgent(PollingAgent):
                 dvol = context.get("DVOL", 55.0)
                 
                 # --- VETO LOGIK (New Paradigm: Opportunity-Driven) ---
+                veto_reason = None
                 if grss < 40:
-                    veto, reason, leverage = True, f"VETO: Low GRSS ({grss}). Standby.", 0.0
+                    veto_reason = f"VETO: Low GRSS ({grss}). Standby."
                 elif vix > 45:
-                    veto, reason, leverage = True, f"VETO: Extreme Panic (VIX: {vix}).", 0.0
+                    veto_reason = f"VETO: Extreme Panic (VIX: {vix})."
                 elif yields > 5.0:
-                    veto, reason, leverage = True, f"VETO: Yields Extreme (10Y: {yields}%).", 0.0
+                    veto_reason = f"VETO: Yields Extreme (10Y: {yields}%)."
                 
-                # --- VOLATILITY-ADAPTIVE SIZING (The "Multiplier") ---
-                vol_multiplier = 1.0
-                if vix < 15: vol_multiplier = 1.0
-                elif vix < 25: vol_multiplier = 0.8
-                elif vix < 35: vol_multiplier = 0.6
-                elif vix < 45: vol_multiplier = 0.3
-                else: vol_multiplier = 0.0
-                
-                leverage = leverage * vol_multiplier
-                if not veto and vol_multiplier < 1.0:
-                    reason_notes.append(f"Vola-Sizing: {vol_multiplier:.1f}x (VIX {vix:.1f})")
+                if veto_reason:
+                    veto, reason, leverage = True, veto_reason, 0.0
+                    # Bei Veto trotzdem vol_multiplier berechnen für den Report
+                    if vix < 15: vol_multiplier = 1.0
+                    elif vix < 25: vol_multiplier = 0.8
+                    elif vix < 35: vol_multiplier = 0.6
+                    elif vix < 45: vol_multiplier = 0.3
+                    else: vol_multiplier = 0.0
+                else:
+                    # --- VOLATILITY-ADAPTIVE SIZING (The "Multiplier") ---
+                    if vix < 15: vol_multiplier = 1.0
+                    elif vix < 25: vol_multiplier = 0.8
+                    elif vix < 35: vol_multiplier = 0.6
+                    elif vix < 45: vol_multiplier = 0.3
+                    else: vol_multiplier = 0.0
+                    
+                    leverage = leverage * vol_multiplier
+                    if vol_multiplier < 1.0:
+                        reason_notes.append(f"Vola-Sizing: {vol_multiplier:.1f}x (VIX {vix:.1f})")
 
                 # 4. Nasdaq SMA200 (Informational only in v2, no Veto)
                 macro_status = context.get("Macro_Status", "BULLISH")

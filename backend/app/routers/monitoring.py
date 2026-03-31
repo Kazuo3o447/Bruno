@@ -27,6 +27,24 @@ async def get_live_telemetry():
         grss_data = await redis_client.get_cache("bruno:context:grss") or {}
         quant_data = await redis_client.get_cache("bruno:quant:micro") or {}
         health_data = await redis_client.get_cache("bruno:health:sources") or {}
+        source_names = [
+            "Binance_REST",
+            "Deribit_Public",
+            "yFinance_Macro",
+            "Binance_OI_Trend",
+            "ETF_Flows_Farside",
+        ]
+        normalized_sources = {
+            name: health_data.get(name, {
+                "status": "offline",
+                "latency_ms": 0.0,
+                "last_update": "",
+            })
+            for name in source_names
+        }
+        # Existing sources that are already present stay untouched.
+        for key, value in health_data.items():
+            normalized_sources[key] = value
 
         # Letztes Decision Event
         last_event_raw = await redis_client.redis.lindex("bruno:decisions:feed", 0)
@@ -65,7 +83,7 @@ async def get_live_telemetry():
                 "score_raw": grss_data.get("GRSS_Score_Raw"),
                 "velocity_30min": grss_data.get("GRSS_Velocity_30min"),
                 "veto_active": grss_data.get("Veto_Active"),
-                "last_update": grss_data.get("last_update"),
+                "last_update": grss_data.get("last_update") or grss_data.get("timestamp") or "",
             },
             "market": {
                 "btc_price": quant_data.get("price"),
@@ -89,7 +107,7 @@ async def get_live_telemetry():
                 "llm_news_sentiment": grss_data.get("LLM_News_Sentiment"),
                 "news_silence_seconds": grss_data.get("News_Silence_Seconds"),
             },
-            "data_sources": health_data,
+            "data_sources": normalized_sources,
             "agents": agent_heartbeats,
             "last_decision": last_event,
         }
@@ -598,3 +616,64 @@ async def get_simulated_performance(db: AsyncSession = Depends(get_db)):
             status_code=500, 
             detail=f"Fehler bei Performance-Berechnung: {error_detail}"
         )
+
+
+@router.get("/performance/metrics")
+async def get_performance_metrics():
+    """
+    Performance-Metrik-Endpoint für Dashboard.
+    
+    Gibt aggregierte Performance-Kennzahlen zurück:
+    - Renditen für verschiedene Zeiträume
+    - Win Rate, Average Trade P&L, Maximum Drawdown
+    - Sharpe Ratio
+    
+    Aufruf: GET /api/v1/performance/metrics
+    """
+    try:
+        from app.core.redis_client import redis_client
+        
+        # Simulierte Performance-Daten holen
+        sim_data = await redis_client.get_cache("bruno:performance:simulated") or {}
+        
+        # Profit Factor Daten
+        pf_data = await redis_client.get_cache("bruno:performance:profit_factor") or {}
+        
+        # Portfolio-Daten
+        portfolio_data = await redis_client.get_cache("bruno:portfolio:state") or {}
+        
+        # Standard-Werte falls keine Daten vorhanden
+        return {
+            "daily_return": sim_data.get("daily_return_pct"),
+            "weekly_return": sim_data.get("weekly_return_pct"), 
+            "monthly_return": sim_data.get("monthly_return_pct"),
+            "six_month_return": sim_data.get("six_month_return_pct"),
+            "yearly_return": sim_data.get("yearly_return_pct"),
+            "ytd_return": sim_data.get("ytd_return_pct"),
+            "total_pnl": portfolio_data.get("total_pnl_eur"),
+            "win_rate": sim_data.get("win_rate_pct"),
+            "avg_trade_pnl": sim_data.get("avg_trade_pnl_eur"),
+            "max_drawdown": sim_data.get("max_drawdown_pct"),
+            "sharpe_ratio": sim_data.get("sharpe_ratio"),
+            "profit_factor": pf_data.get("pf_total"),
+            "status": "ok" if sim_data else "no_data"
+        }
+        
+    except Exception as e:
+        # Bei Fehlern Standard-Werte zurückgeben
+        return {
+            "daily_return": None,
+            "weekly_return": None,
+            "monthly_return": None,
+            "six_month_return": None,
+            "yearly_return": None,
+            "ytd_return": None,
+            "total_pnl": None,
+            "win_rate": None,
+            "avg_trade_pnl": None,
+            "max_drawdown": None,
+            "sharpe_ratio": None,
+            "profit_factor": None,
+            "status": "error",
+            "error": str(e)
+        }
