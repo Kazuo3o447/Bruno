@@ -369,7 +369,8 @@ class ContextAgent(StreamingAgent):
             await self._fetch_binance_rest_data()
             await self._fetch_deribit_data()
             await self._fetch_coinglass_data()
-            await self.retail_sentiment_service.update()
+            # Retail Sentiment wird von SentimentAgent alle 6h aktualisiert (bruno:retail:sentiment)
+            # ContextAgent ruft es nicht mehr direkt auf — verhindert 15-Minuten-Spam gegen Reddit/StockTwits
             
             btc_t = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
             price = float(btc_t.get("last_price", 0))
@@ -402,6 +403,7 @@ class ContextAgent(StreamingAgent):
             grss = self.calculate_grss(grss_input)
             self._grss_ema = self._grss_ema_alpha * grss + (1 - self._grss_ema_alpha) * self._grss_ema
             
+            funding_data = await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}
             payload = {
                 "GRSS_Score": round(self._grss_ema, 1),
                 "Active_Patterns": self.pattern_result["active_patterns"],
@@ -409,6 +411,13 @@ class ContextAgent(StreamingAgent):
                 "ETF_Flows": self.etf_flows,
                 "Max_Pain": self.max_pain,
                 "Veto_Active": self._grss_ema < 40,
+                # Einzelkomponenten für QuantAgent / LLM Cascade
+                "VIX": self.vix,
+                "NDX_Status": self.ndx_status,
+                "Put_Call_Ratio": round(self.put_call_ratio, 4),
+                "Funding_Rate": float(funding_data.get("rate", 0.0)),
+                "Yields_10Y": self.yields_10y,
+                "DXY_Change": self.dxy_change,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             await self.deps.redis.set_cache("bruno:context:grss", payload)

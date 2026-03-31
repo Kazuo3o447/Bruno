@@ -74,7 +74,7 @@ class QuantAgent(PollingAgent):
                 "value": self.cvd_cumulative,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             },
-            ttl=86400
+            ttl=604800  # 7 Tage
         )
 
         self.prev_ob = None
@@ -277,7 +277,7 @@ class QuantAgent(PollingAgent):
                         "value": self.cvd_cumulative,
                         "timestamp": datetime.now(timezone.utc).isoformat()
                     },
-                    ttl=86400   # 24 Stunden
+                    ttl=604800  # 7 Tage — verhindert täglichen CVD-Reset auf 0
                 )
                 
                 await self._report_health("Binance_Trades", "online", latency_trades)
@@ -324,11 +324,14 @@ class QuantAgent(PollingAgent):
                     "veto_active": grss_data.get("Veto_Active", False),
                 }
 
-                # Markt-Kontext für Cascade (korrekte Feldnamen)
+                # Markt-Kontext für Cascade
+                # VIX, NDX_Status, Put_Call_Ratio sind jetzt direkt im GRSS-Payload
                 market_context = {
                     "btc_price": best_bid_p,
-                    "funding_rate": float(funding_data.get("rate", 0.0)),
+                    "funding_rate": float(grss_data.get("Funding_Rate", funding_data.get("rate", 0.0))),
                     "vix": float(grss_data.get("VIX", 20.0)),
+                    "yields_10y": float(grss_data.get("Yields_10Y", 4.3)),
+                    "dxy_change": float(grss_data.get("DXY_Change", 0.0)),
                     "oi_delta_pct": oi_trend.get("oi_7d_change_pct", 0.0),
                     "put_call_ratio": float(grss_data.get("Put_Call_Ratio", 1.0)),
                     "ndx_status": grss_data.get("NDX_Status", "unknown"),
