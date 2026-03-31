@@ -7,7 +7,6 @@ from sqlalchemy import text
 from typing import Dict, Any, Optional, List
 from app.agents.base import BaseAgent, PollingAgent
 from app.agents.deps import AgentDependencies
-from app.core.redis_client import redis_client
 from app.core.log_manager import LogManager, LogCategory, LogLevel
 from app.core.exchange_manager import PublicExchangeClient
 from app.llm import LLMCascade
@@ -25,7 +24,7 @@ class QuantAgent(PollingAgent):
         self.exm = PublicExchangeClient(redis=deps.redis)
         self.prev_ob = None
         self.ofi_threshold = 50.0  # Full-Depth OFI. Nach 1 Woche Beobachtung kalibrieren.
-        self.cascade = LLMCascade(deps.redis)  # Phase C: LLM Cascade
+        self.cascade = LLMCascade(deps.redis, deps.ollama)  # Phase C: LLM Cascade
         
     async def setup(self) -> None:
         self.logger.info(f"QuantAgent für {self.symbol} gestartet.")

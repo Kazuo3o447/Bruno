@@ -31,8 +31,8 @@ export default function SystemMatrix() {
     const fetchData = async () => {
       try {
         const [healthRes, telemetryRes] = await Promise.allSettled([
-          fetch("http://localhost:8001/health"),
-          fetch("http://localhost:8001/api/v1/telemetry/live"),
+          fetch("/api/v1/health"),
+          fetch("/api/v1/telemetry/live"),
         ]);
 
         const healthData = healthRes.status === "fulfilled" && healthRes.value.ok

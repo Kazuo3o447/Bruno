@@ -2,7 +2,7 @@
 
 > **Dokumentation der API-Verbindung, Fehlerbehebung und Container-Konfiguration**
 > 
-> ✅ **Stand:** 31. März 2026 - Voll funktionsfähiges Dashboard mit API-Integration
+> ✅ **Stand:** 31. März 2026 - Vollständige Port-Korrektur & stabile API-Integration
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -23,14 +23,113 @@
 ### 🔗 Frontend → Backend Verbindung
 ```
 ✅ Next.js Proxy: /api/:path* → http://api-backend:8000/api/:path*
+✅ WebSocket Proxy: /ws/:path* → http://api-backend:8000/ws/:path*
 ✅ Docker-Netzwerk: bruno_default (alle Container verbunden)
 ✅ Container-Abhängigkeiten: bruno-frontend depends_on api-backend
 ✅ Port-Mapping: Backend 8000, Frontend 3000
+✅ Environment: DB_HOST=postgres, REDIS_HOST=redis
 ```
 
 ---
 
-## 🐛 Behobene Probleme (März 2026)
+## 🚨 Kritische Port-Probleme & Lösungen (31. März 2026)
+
+### **Problem 1: Frontend hartcodiert auf localhost:8001**
+**Symptome:**
+- Dashboard zeigt keine Daten an
+- API-Aufrufe geben Connection Refused
+- WebSocket-Verbindungen schlagen fehl
+
+**Ursache:**
+```javascript
+// Falsch (war in 10+ Dateien vorhanden)
+fetch("http://localhost:8001/api/v1/health")
+new WebSocket("ws://localhost:8001/ws/agents")
+```
+
+**Lösung:**
+```javascript
+// Korrekt
+fetch("/api/v1/health")  // Über Next.js Proxy
+new WebSocket("ws://localhost:3000/ws/agents")  // Über WebSocket Proxy
+```
+
+**Behobene Dateien:**
+- ✅ `frontend/src/components/SystemMatrix.tsx`
+- ✅ `frontend/src/components/PriceLineChart.tsx`
+- ✅ `frontend/src/components/LightweightChart.tsx`
+- ✅ `frontend/src/components/ChartWidget.tsx`
+- ✅ `frontend/src/components/ActivePositions.tsx`
+- ✅ `frontend/src/app/websocket-test/page.tsx`
+- ✅ `frontend/src/app/logtest/page.tsx`
+- ✅ `frontend/src/app/backup/page.tsx`
+- ✅ `frontend/src/app/components/LogViewer.tsx`
+- ✅ `frontend/src/app/components/AgentStatusMonitor.tsx`
+
+### **Problem 2: Environment-Datei mit localhost Konfiguration**
+**Symptome:**
+- Backend kann nicht mit Redis/Datenbank verbinden
+- `Error 111 connecting to localhost:6379. Connection refused`
+- Container-Start schlägt fehl
+
+**Ursache:**
+```bash
+# Falsch (.env Datei)
+DB_HOST=localhost
+REDIS_HOST=localhost
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+**Lösung:**
+```bash
+# Korrekt (Docker-konfiguriert)
+DB_HOST=postgres
+REDIS_HOST=redis
+NEXT_PUBLIC_API_URL=http://api-backend:8000
+```
+
+### **Problem 3: WebSocket "Cannot call send once close message has been sent"**
+**Symptome:**
+- Massenweise WebSocket-Fehler im Backend-Log
+- Verbindungen werden ständig getrennt
+- System überflutet mit Fehlermeldungen
+
+**Ursache:**
+```python
+# WebSocket-Loops laufen weiter, auch wenn Verbindung geschlossen
+while True:
+    # ... Daten senden ohne Verbindungsprüfung
+    await websocket.send_json(data)  # Fehler wenn Verbindung geschlossen
+```
+
+**Lösung:**
+```python
+# backend/app/routers/ws.py Fixes:
+- Verbindungsprüfung vor dem Senden
+- isDisposed Flags und Race Condition Protection
+- Automatische Bereinigung geschlossener Verbindungen
+
+if websocket.client_state.name == "CONNECTED":
+    await websocket.send_json(message)
+else:
+    self.disconnect(websocket)  # Verbindung entfernen
+```
+
+### **Problem 4: WebSocket Proxy fehlt**
+**Symptome:**
+- WebSocket-Verbindungen geben Connection Refused
+- Browser kann keine ws:// Verbindungen aufbauen
+
+**Lösung:**
+```javascript
+// frontend/next.config.js
+async rewrites() {
+  return [
+    { source: '/api/:path*', destination: 'http://api-backend:8000/api/:path*' },
+    { source: '/ws/:path*', destination: 'http://api-backend:8000/ws/:path*' }, // ← WebSocket Proxy
+  ];
+}
+```
 
 ### 1. "Object is disposed" Fehler in lightweight-charts
 **Problem:** Chart-Komponente stürzt ab beim Unmounting

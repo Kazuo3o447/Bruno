@@ -4,23 +4,29 @@
 > **PFLICHTLEKTÜRE für alle Agenten.**
 > Dieses Dokument definiert wie Bruno lernt, sich anpasst und messbar besser wird.
 > Es ist kein Feature — es ist das Fundament.
-> Letzte Aktualisierung: 2026-03-31 (Dashboard-Integration & API-Fixes)
+> Letzte Aktualisierung: 2026-03-31 (Port-Architektur & vollständiger Neustart)
 
 ---
 
 ## 🎯 NEUE LERNERFAHRUNGEN (März 2026)
 
+### Port-Architektur Lektionen (31. März 2026)
+1. **Hartcodierte Ports sind tödlich:** localhost:8001 im Frontend verursacht kompletten Systemausfall
+2. **Environment-Konfiguration ist entscheidend:** DB_HOST=localhost vs DB_HOST=postgres macht den Unterschied zwischen funktionierend und kaputt
+3. **WebSocket-Proxy wird oft vergessen:** /ws/* Proxy ist genauso wichtig wie /api/* Proxy
+4. **Systematische Port-Korrektur ist notwendig:** 10+ Dateien müssen konsistent korrigiert werden, nicht nur eine
+
 ### Dashboard-Integration Lektionen
-1. **Container-Netzwerk ist kritisch:** Docker-Netzwerk-Konfiguration kann API-Verbindung komplett verhindern
-2. **Frontend-Proxy muss robust sein:** Next.js Rewrites benötigen exakte Service-Namen, nicht host.docker.internal
-3. **Chart-Komponenten brauchen Cleanup:** "Object is disposed" Fehler ohne proper React Lifecycle Management
-4. **API-Routing muss konsistent sein:** Fehlende Prefixe führen zu 404-Fehlern im Dashboard
+5. **Container-Netzwerk ist kritisch:** Docker-Netzwerk-Konfiguration kann API-Verbindung komplett verhindern
+6. **Frontend-Proxy muss robust sein:** Next.js Rewrites benötigen exakte Service-Namen, nicht host.docker.internal
+7. **Chart-Komponenten brauchen Cleanup:** "Object is disposed" Fehler ohne proper React Lifecycle Management
+8. **API-Routing muss konsistent sein:** Fehlende Prefixe führen zu 404-Fehlern im Dashboard
 
 ### System-Integration Lektionen
-5. **Vollständiger Neustart löst hartnäckige Probleme:** Docker-Container mit Volumes neu aufbauen
-6. **Race Conditions sind häufig:** setTimeout und isDisposed Flags für Chart-Operationen
-7. **Health-Checks sind essenziell:** API-Endpunkte müssen auf Fehler reagieren können
-8. **Environment-Variablen müssen konsistent sein:** NEXT_PUBLIC_API_URL muss Docker-Netzwerk entsprechen
+9. **Vollständiger Neustart löst hartnäckige Probleme:** Docker-Container mit Volumes neu aufbauen
+10. **Race Conditions sind häufig:** setTimeout und isDisposed Flags für Chart-Operationen
+11. **WebSocket-Fehler überfluten Logs:** "Cannot call send once close message" braucht Verbindungsprüfung
+12. **Health-Checks sind essenziell:** API-Endpunkte müssen auf Fehler reagieren können
 
 ---
 

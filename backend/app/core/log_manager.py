@@ -68,6 +68,11 @@ class LogManager:
         self.subscribers: List[Callable] = []
         self._initialized = False
         
+        # Cache für häufige Log-Abfragen (5 Sekunden TTL)
+        self._stats_cache = None
+        self._stats_cache_time = 0
+        self._cache_ttl = 5  # Sekunden
+        
     async def initialize(self):
         """Initialisiert den Log-Manager"""
         if not self._initialized:
@@ -189,7 +194,7 @@ class LogManager:
         since: Optional[str] = None
     ) -> List[LogEntry]:
         """
-        Holt Logs mit Filtern
+        Holt Logs mit Filtern - Hochoptimierte Version
         
         Args:
             limit: Maximale Anzahl Logs
@@ -199,11 +204,25 @@ class LogManager:
             search: Text-Suche in Nachricht
             since: Zeitstempel für Logs seit diesem Zeitpunkt
         """
-        # Alle Logs aus Redis holen
-        log_jsons = await self.redis.redis.lrange(self.log_key, 0, -1)
         logs = []
+        count = 0
         
-        for log_json in log_jsons:
+        # Redis LRANGE mit Pagination für bessere Performance
+        total_logs = await self.redis.redis.llen(self.log_key)
+        if total_logs == 0:
+            return []
+        
+        # Von hinten nach vorne iterieren (neueste Logs zuerst)
+        # Wir holen nur die benötigte Anzahl + Buffer für Filter
+        batch_size = min(limit * 3, 5000)  # Maximal 5000 Logs scannen
+        start_idx = max(0, total_logs - batch_size)
+        
+        log_jsons = await self.redis.redis.lrange(self.log_key, start_idx, -1)
+        
+        for log_json in reversed(log_jsons):  # Neueste zuerst verarbeiten
+            if count >= limit:
+                break
+                
             try:
                 log_dict = json.loads(log_json)
                 log = LogEntry.from_dict(log_dict)
@@ -221,13 +240,12 @@ class LogManager:
                     continue
                     
                 logs.append(log)
+                count += 1
             except Exception as e:
                 logger.error(f"Fehler beim Parsen von Log: {e}")
                 continue
         
-        # Nach Zeitstempel sortieren (neueste zuerst) und limitieren
-        logs.sort(key=lambda x: x.timestamp, reverse=True)
-        return logs[:limit]
+        return logs
     
     async def clear_logs(self) -> bool:
         """Löscht alle Logs"""
@@ -240,12 +258,26 @@ class LogManager:
             return False
     
     async def get_stats(self) -> Dict:
-        """Holt Log-Statistiken"""
+        """Holt Log-Statistiken - Optimierte Version mit Caching"""
+        
+        # Cache prüfen
+        import time
+        current_time = time.time()
+        if self._stats_cache and (current_time - self._stats_cache_time) < self._cache_ttl:
+            return self._stats_cache
+        
         try:
             total = await self.redis.redis.llen(self.log_key)
+            if total == 0:
+                result = {"total": 0, "levels": {}, "categories_count": 0, "sources_count": 0, "categories": [], "sources": []}
+                self._stats_cache = result
+                self._stats_cache_time = current_time
+                return result
             
-            # Zählung nach Level
-            log_jsons = await self.redis.redis.lrange(self.log_key, 0, -1)
+            # Nur die letzten 1000 Logs für Statistiken analysieren (ausreichend für repräsentative Stats)
+            sample_size = min(total, 1000)
+            log_jsons = await self.redis.redis.lrange(self.log_key, -sample_size, -1)
+            
             levels = {"DEBUG": 0, "INFO": 0, "WARNING": 0, "ERROR": 0, "CRITICAL": 0}
             categories = set()
             sources = set()
@@ -256,20 +288,35 @@ class LogManager:
                     level = log_dict.get("level", "INFO")
                     if level in levels:
                         levels[level] += 1
-                    categories.add(log_dict.get("category", "UNKNOWN"))
-                    sources.add(log_dict.get("source", "UNKNOWN"))
-                except:
+                    
+                    category = log_dict.get("category")
+                    if category:
+                        categories.add(category)
+                        
+                    source = log_dict.get("source")
+                    if source:
+                        sources.add(source)
+                        
+                except Exception:
                     continue
             
-            return {
+            result = {
                 "total": total,
-                "by_level": levels,
+                "levels": levels,
+                "categories_count": len(categories),
+                "sources_count": len(sources),
                 "categories": list(categories),
                 "sources": list(sources)
             }
+            
+            # Cache aktualisieren
+            self._stats_cache = result
+            self._stats_cache_time = current_time
+            
+            return result
         except Exception as e:
-            logger.error(f"Fehler beim Holen der Statistiken: {e}")
-            return {"total": 0, "by_level": {}, "categories": [], "sources": []}
+            logger.error(f"Fehler beim Holen der Log-Statistiken: {e}")
+            return {"total": 0, "levels": {}, "categories_count": 0, "sources_count": 0, "categories": [], "sources": []}
 
 
 # Singleton-Instanz

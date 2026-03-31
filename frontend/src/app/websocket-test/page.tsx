@@ -11,7 +11,7 @@ export default function WebSocketTest() {
     console.log("Starting WebSocket test...");
     
     try {
-      const ws = new WebSocket("ws://localhost:8001/ws/agents");
+      const ws = new WebSocket("ws://localhost:3000/ws/agents");
       
       ws.onopen = () => {
         console.log("WebSocket opened successfully");
@@ -81,7 +81,7 @@ export default function WebSocketTest() {
       
       <div className="text-sm text-gray-400">
         <p>Open browser console (F12) to see detailed WebSocket logs</p>
-        <p>Check if backend is running on localhost:8001</p>
+        <p>Check if backend is running and WebSocket proxy is configured</p>
       </div>
     </div>
   );

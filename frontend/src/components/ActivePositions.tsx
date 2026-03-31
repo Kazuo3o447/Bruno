@@ -23,7 +23,7 @@ export default function ActivePositions() {
 
   const fetchPositions = async () => {
     try {
-      const res = await fetch("http://localhost:8001/api/v1/positions/open");
+      const res = await fetch("/api/v1/positions/open");
       if (res.ok) {
         const data = await res.json();
         setPositions(data.positions || []);

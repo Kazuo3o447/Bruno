@@ -7,26 +7,28 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-03-31 (Dashboard-Integration COMPLETED)
+> Letzte Aktualisierung: 2026-03-31 (Port-Architektur COMPLETED)
 > Repository: https://github.com/Kazuo3o447/Bruno
 
 ---
 
 ## 🎯 STATUS UPDATE (31. März 2026)
 
-### ✅ PHASE E COMPLETED - Dashboard Integration
-- **Dashboard voll funktionsfähig** mit Live-API-Integration
-- **Container-Netzwerk optimiert** für stabile API-Verbindung
-- **Chart-Komponente robust** gegen "Object is disposed" Fehler
-- **Alle API-Endpunkte aktiv** und erreichbar
-- **Frontend-Proxy konfiguriert** mit Docker-Service-Namen
+### ✅ PHASE E COMPLETED - Port-Architektur & WebSocket-Optimierung
+- **Port-Architektur voll korrigiert** - Alle localhost:8001 URLs auf /api/v1 umgestellt
+- **WebSocket-System stabilisiert** - Alle WebSockets über localhost:3000/ws/*
+- **Environment-Konfiguration optimiert** - DB_HOST=postgres, REDIS_HOST=redis
+- **Container vollständig neu aufgebaut** - Mit sauberen Volumes und stabiler Konfiguration
+- **Frontend-URLs systematisch korrigiert** - 10+ Dateien mit Port-Problemen behoben
 
 ### 📋 IMPLEMENTIERTE LÖSUNGEN
-1. **Next.js Proxy:** `/api/:path*` → `http://api-backend:8000/api/:path*`
-2. **Docker-Netzwerk:** `bruno_default` mit Service-Abhängigkeiten
-3. **Chart-Fehlerbehandlung:** isDisposed Flags und Race Condition Protection
-4. **API-Routing:** Alle Router mit `/api/v1` Prefix
-5. **Performance-Endpunkt:** `/api/v1/performance/metrics` implementiert
+1. **Port-Korrektur:** Alle API-Aufrufe über `/api/v1` (Next.js Proxy)
+2. **WebSocket-Proxy:** `/ws/:path*` → `http://api-backend:8000/ws/:path*`
+3. **Environment-Konfiguration:** Docker-korrekte Host-Namen statt localhost
+4. **WebSocket-Fehlerbehebung:** Verbindungsprüfung und automatische Bereinigung
+5. **Systematische URL-Korrektur:** 10+ Frontend-Dateien konsistent aktualisiert
+6. **Container-Neustart:** Vollständiger Neuaufbau mit sauberen Volumes
+7. **Chart-Komponente robust:** isDisposed Flags und Race Condition Protection
 
 ---
 

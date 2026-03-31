@@ -9,7 +9,7 @@ export default function LogTest() {
   useEffect(() => {
     console.log("Starting log test...");
     
-    const ws = new WebSocket("ws://localhost:8001/api/v1/logs/ws");
+    const ws = new WebSocket("ws://localhost:3000/api/v1/logs/ws");
     
     ws.onopen = () => {
       console.log("WebSocket connected");

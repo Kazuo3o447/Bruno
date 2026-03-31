@@ -98,7 +98,7 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
     // Trade-Historie abrufen für Marker
     const fetchTradeMarkers = async () => {
       try {
-        const res = await fetch(`http://localhost:8001/api/v1/trades/history?symbol=${symbol}`);
+        const res = await fetch(`/api/v1/trades/history?symbol=${symbol}`);
         if (!res.ok) return;
         const trades = await res.json();
         
@@ -121,7 +121,7 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
 
     fetchTradeMarkers();
 
-    const ws = new WebSocket(`ws://localhost:8001/ws/market/${symbol}`);
+    const ws = new WebSocket("ws://localhost:3000/ws/market/" + symbol);
 
     ws.onmessage = (event) => {
       try {
@@ -141,7 +141,28 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
       } catch {}
     };
 
-    return () => ws.close();
+    return () => {
+      // Robuste Cleanup-Logik
+      try {
+        if (ws) {
+          ws.close();
+        }
+      } catch (error) {
+        console.warn("WebSocket close failed:", error);
+      }
+      
+      try {
+        if (chartRef.current) {
+          chartRef.current.remove();
+        }
+      } catch (error) {
+        console.warn("Chart removal failed (may be already disposed):", error);
+      }
+      
+      // Setze Referenzen zurück
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
   }, [symbol]);
 
   return (

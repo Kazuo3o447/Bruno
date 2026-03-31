@@ -4,6 +4,7 @@
 > 
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-Daten und API-Integration
+> ✅ **Port-Architektur:** Vollständig korrigiert und stabilisiert
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -20,6 +21,7 @@
 | **LLM-Stack** | Ollama lokal: qwen2.5:14b + deepseek-r1:14b |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (native Ollama) |
 | **Dashboard** | Next.js mit Live-API-Integration |
+| **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
 
 **Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten.
 
@@ -32,6 +34,7 @@
 - **LLM:** Native Windows Ollama mit qwen2.5:14b und deepseek-r1:14b
 - **Agenten:** 6 spezialisierte Python-Agenten (Ingestion, Quant, Context, Sentiment, Risk, Execution)
 - **Container:** Docker Compose mit Service-Orchestrierung
+- **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:3000/ws/*`
 
 ---
 
@@ -51,11 +54,12 @@
 git clone https://github.com/Kazuo3o447/Bruno.git
 cd Bruno
 
-# Umgebungsvariablen konfigurieren
-cp .env.example .env
-# BYBIT_API_KEY, BYBIT_SECRET in .env eintragen (für Phase D)
+# Umgebungsvariablen konfigurieren (Docker-korrekt)
+# Environment-Datei ist bereits für Docker konfiguriert:
+# DB_HOST=postgres, REDIS_HOST=redis, NEXT_PUBLIC_API_URL=http://api-backend:8000
 
-# Alle Services starten (inkl. Dashboard)
+# Vollständiger Container-Neustart (empfohlen für stabile Port-Konfiguration)
+docker compose down --volumes
 docker compose up -d --build
 
 # Frontend aufrufen
@@ -66,11 +70,16 @@ open http://localhost:3000/dashboard
 ```bash
 # Alle Services prüfen
 docker compose ps
+# Erwartete Ports: Backend:8000, Frontend:3000, PostgreSQL:5432, Redis:6379
 
 # Logs überwachen
 docker compose logs -f worker-backend  # Agenten-Aktivität
-docker compose logs -f api-backend     # API-Aufrufe
+docker compose logs -f api-backend     # API-Aufrufe (sollte 200 OK zeigen)
 docker compose logs -f bruno-frontend  # Frontend-Logs
+
+# API-Endpunkte testen
+curl http://localhost:8000/api/v1/health
+curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 ```
 
 ---
@@ -168,23 +177,24 @@ docker compose logs -f bruno-frontend  # Frontend-Logs
 
 ## 🎯 Implementierungs-Phasen (Manifest v2.0)
 
-**Aktuell: Phase D — Position Tracker & Stop-Loss (Core implementiert)**
+**Aktuell: Phase E — Dashboard Integration & Port-Korrektur (COMPLETED)**
 - [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
 - [x] Phase B ✅ COMPLETED — Daten-Erweiterung & Hardening
 - [x] Phase C ✅ COMPLETED — LLM-Kaskade (3 Layer) & Bruno Pulse
 - [x] Phase D ✅ COMPLETED — Position Tracker + Stop-Loss im Worker verdrahtet
 - [x] Phase E ✅ COMPLETED — Frontend Cockpit (Bruno Pulse Dashboard Integration)
-- [x] Phase D ✅ COMPLETED — API-Verbindung & Docker-Netzwerk
+- [x] Phase E ✅ COMPLETED — Port-Architektur & WebSocket-Optimierung
 - [ ] Phase F — Lern-System
 - [ ] Phase G — Backtest (6 Monate, PF > 1.5)
 - [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
 
-**Neuste Implementierungen (März 2026):**
-- ✅ Docker-Container-Neustart mit vollständiger API-Integration
-- ✅ "Object is disposed" Fehler in lightweight-charts behoben
-- ✅ RiskAgent vol_multiplier Bug gefixt
-- ✅ Performance-Metrics Endpunkt hinzugefügt
-- ✅ Next.js Proxy-Konfiguration optimiert
+**Neuste Implementierungen (31. März 2026):**
+- ✅ **Vollständige Port-Korrektur:** Alle localhost:8001 URLs auf /api/v1 korrigiert
+- ✅ **WebSocket-Optimierung:** Alle WebSockets über localhost:3000/ws/*
+- ✅ **Environment-Konfiguration:** DB_HOST=postgres, REDIS_HOST=redis
+- ✅ **Container-Neustart:** Vollständiger Neustart mit sauberen Volumes
+- ✅ **WebSocket-Fehlerbehebung:** "Cannot call send once close message" behoben
+- ✅ **Frontend-URL-Korrekturen:** 10+ Dateien mit Port-Problemen korrigiert
 
 ---
 
@@ -193,25 +203,34 @@ docker compose logs -f bruno-frontend  # Frontend-Logs
 ### Häufige Probleme & Lösungen
 ```bash
 # Problem: Keine Daten im Dashboard
- Lösung: docker compose restart api-backend bruno-frontend
+Lösung: Environment-Datei prüfen (DB_HOST=postgres, REDIS_HOST=redis)
 
-# Problem: "Object is disposed" Fehler
- Lösung: Browser neu laden (F5) - Chart-Komponente wurde robust gemacht
+# Problem: API-Aufrufe geben 404
+Lösung: Port-Konfiguration prüfen - sollte /api/v1 verwenden
 
-# Problem: API-Aufrufe fehlgeschlagen
- Lösung: docker compose down --volumes && docker compose up -d --build
+# Problem: WebSocket-Verbindung fehlgeschlagen
+Lösung: WebSocket-URLs müssen localhost:3000/ws/* verwenden
 
-# Problem: GRSS-Score = 0.0 (Veto aktiv)
- Lösung: Normal - System im Standby bei schlechten Marktbedingungen
+# Problem: "Cannot call send once close message has been sent"
+Lösung: Backend neu starten - WebSocket-Fehlerbehebung implementiert
+
+# Problem: Frontend zeigt hartcodierte localhost:8001 Fehler
+Lösung: Vollständiger Container-Neustart mit sauberen Volumes
+docker compose down --volumes && docker compose up -d --build
 ```
 
-### API-Verbindung prüfen
+### Port-Konfiguration prüfen
 ```bash
-# Backend-API direkt testen
-curl http://localhost:8000/api/v1/telemetry/live
+# Environment-Datei prüfen
+cat .env | grep -E "(HOST|PORT|API_URL)"
+# Erwartet: DB_HOST=postgres, REDIS_HOST=redis, NEXT_PUBLIC_API_URL=http://api-backend:8000
 
-# Frontend-Proxy prüfen
-curl http://localhost:3000/api/v1/telemetry/live
+# API-Endpunkte testen
+curl http://localhost:8000/api/v1/health      # Backend direkt
+curl http://localhost:3000/api/v1/health      # Über Next.js Proxy
+
+# WebSocket-Verbindung testen
+# Browser-Konsole: new WebSocket("ws://localhost:3000/ws/agents")
 ```
 
 ---

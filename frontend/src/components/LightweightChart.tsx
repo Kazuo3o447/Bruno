@@ -97,7 +97,7 @@ export default function LightweightChart({ symbol }: LightweightChartProps) {
     const loadInitialData = async () => {
       try {
         const cleanSymbol = symbol.replace("/", "").toUpperCase();
-        const res = await fetch(`http://localhost:8001/api/v1/market/klines/${cleanSymbol}`);
+        const res = await fetch(`/api/v1/market/klines/${cleanSymbol}`);
         if (res.ok) {
           const data = await res.json();
           series.setData(data);
@@ -121,7 +121,7 @@ export default function LightweightChart({ symbol }: LightweightChartProps) {
     // WS Updates
     let ws: WebSocket | null = null;
     try {
-      ws = new WebSocket(`ws://localhost:8001/ws/market/${symbol.replace("/", "")}`);
+      ws = new WebSocket("ws://localhost:3000/ws/market/" + symbol.replace("/", ""));
       ws.onmessage = (event) => {
         try {
           const p = JSON.parse(event.data);
@@ -146,10 +146,27 @@ export default function LightweightChart({ symbol }: LightweightChartProps) {
 
     return () => {
       window.removeEventListener("resize", handleResize);
-      chart.remove();
-      if (ws) {
-        ws.close();
+      
+      // Robuste Cleanup-Logik um "Object is disposed" Fehler zu vermeiden
+      try {
+        if (chart && chartContainerRef.current) {
+          chart.remove();
+        }
+      } catch (error) {
+        console.warn("Chart removal failed (may be already disposed):", error);
       }
+      
+      if (ws) {
+        try {
+          ws.close();
+        } catch (error) {
+          console.warn("WebSocket close failed:", error);
+        }
+      }
+      
+      // Setze Referenzen zurück
+      chartRef.current = null;
+      seriesRef.current = null;
     };
   }, [symbol]);
 

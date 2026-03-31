@@ -56,7 +56,7 @@ export default function HomePage() {
 
   // Realtime price via WS
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8001/ws/market/BTCUSDT");
+    const ws = new WebSocket("ws://localhost:3000/ws/market/BTCUSDT");
     ws.onmessage = (e) => {
       try {
         const p = JSON.parse(e.data);
@@ -77,7 +77,7 @@ export default function HomePage() {
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch("http://localhost:8001/health");
+        const res = await fetch("/api/v1/health");
         if (res.ok) {
           const d = await res.json();
           setHealth({
@@ -100,7 +100,7 @@ export default function HomePage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("http://localhost:8001/api/v1/agents/status");
+        const res = await fetch("/api/v1/agents/status");
         if (res.ok) {
           const d = await res.json();
           setAgents(d.agents || []);
@@ -116,13 +116,13 @@ export default function HomePage() {
   useEffect(() => {
     const loadHealth = async () => {
       try {
-        const res = await fetch("http://localhost:8001/api/v1/systemtest/news_health");
+        const res = await fetch("/api/v1/systemtest/news_health");
         if (res.ok) {
           const d = await res.json();
           const feeds = Object.values(d.feeds || {});
           const active = feeds.filter((f: any) => {
             const status = String(f?.status || "").toLowerCase();
-            return ["success", "healthy", "online", "ok", "connected"].includes(status);
+            return ["success", "healthy", "online", "ok", "connected"]?.includes(status) || false;
           }).length;
           setNewsHealth({ active, total: feeds.length });
         }
@@ -137,7 +137,7 @@ export default function HomePage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("http://localhost:8001/api/v1/systemtest/health/sources");
+        const res = await fetch("/api/v1/systemtest/health/sources");
         if (res.ok) {
           setSourceHealth(await res.json());
         }
@@ -151,7 +151,7 @@ export default function HomePage() {
   // Live log stream for activity feed
   useEffect(() => {
     const connect = () => {
-      const ws = new WebSocket("ws://localhost:8001/api/v1/logs/ws");
+      const ws = new WebSocket("ws://localhost:3000/api/v1/logs/ws");
       wsLogRef.current = ws;
       ws.onmessage = (event) => {
         try {
@@ -447,7 +447,7 @@ export default function HomePage() {
                 <div className="flex justify-between items-center mb-1.5">
                    <div className="flex items-center gap-2">
                       <span className="text-[11px] text-slate-500 font-bold uppercase">CVD Trend</span>
-                      {contextData?.Veto_Active && contextData.Reason.includes("CVD") && (
+                      {contextData?.Veto_Active && contextData?.Reason?.includes("CVD") && (
                         <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-pulse" />
                       )}
                    </div>
@@ -552,8 +552,8 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
 function SourceHealthRow({ label, data }: { label: string; data: any }) {
   const status = String(data?.status || "offline").toLowerCase();
   const latency = data?.latency_ms || 0;
-  const ok = ["online", "ok", "healthy", "connected", "success", "running"].includes(status);
-  const warn = ["degraded", "warning", "fallback", "partial"].includes(status);
+  const ok = ["online", "ok", "healthy", "connected", "success", "running"]?.includes(status) || false;
+  const warn = ["degraded", "warning", "fallback", "partial"]?.includes(status) || false;
   
   const latencyColor = latency < 200 ? "text-emerald-500" : latency < 1000 ? "text-amber-500" : "text-red-500";
   

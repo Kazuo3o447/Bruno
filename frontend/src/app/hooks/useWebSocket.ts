@@ -35,7 +35,8 @@ export function useWebSocket({
   }>({});
 
   const connectWebSocket = useCallback((endpoint: string, onMessage: (data: any) => void) => {
-    const wsUrl = `ws://localhost:8001${endpoint}`;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}${endpoint}`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {

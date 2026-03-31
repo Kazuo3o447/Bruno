@@ -75,7 +75,7 @@ export default function AgentStatusMonitor({ agents: initialAgents, isLoading = 
 
   // WebSocket für Live-Updates
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8001/ws/agents");
+    const ws = new WebSocket("ws://localhost:3000/ws/agents");
 
     ws.onopen = () => {
       setWsConnected(true);

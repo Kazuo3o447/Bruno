@@ -75,7 +75,7 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
 
-    const ws = new WebSocket(`ws://localhost:8001/ws/market/${symbol}`);
+    const ws = new WebSocket("ws://localhost:3000/ws/market/" + symbol);
 
     ws.onmessage = (event) => {
       try {
@@ -101,7 +101,26 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
     };
 
     return () => {
-      ws.close();
+      // Robuste Cleanup-Logik
+      try {
+        if (ws) {
+          ws.close();
+        }
+      } catch (error) {
+        console.warn("WebSocket close failed:", error);
+      }
+      
+      try {
+        if (chartRef.current) {
+          chartRef.current.remove();
+        }
+      } catch (error) {
+        console.warn("Chart removal failed (may be already disposed):", error);
+      }
+      
+      // Setze Referenzen zurück
+      chartRef.current = null;
+      seriesRef.current = null;
     };
   }, [symbol]);
 

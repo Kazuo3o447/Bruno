@@ -53,7 +53,7 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
     if (!isOpen) return;
 
     console.log("Attempting to connect to Log WebSocket...");
-    const websocket = new WebSocket("ws://localhost:8001/api/v1/logs/ws");
+    const websocket = new WebSocket("ws://localhost:3000/api/v1/logs/ws");
     
     websocket.onopen = () => {
       console.log("Log WebSocket connected successfully");
@@ -146,7 +146,7 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
   // Clear logs
   const handleClear = async () => {
     try {
-      const response = await fetch("http://localhost:8001/api/v1/logs/clear", {
+      const response = await fetch("/api/v1/logs/clear", {
         method: "POST",
       });
       const data = await response.json();

@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.core.llm_provider import llm_provider
+from app.core.llm_provider import LLMProvider
 from app.services.regime_config_v2 import RegimeManager, REGIME_CONFIGS
 
 logger = logging.getLogger(__name__)
@@ -198,8 +198,9 @@ class LLMCascade:
     Alle Gates produzieren CascadeResult(decision=HOLD) — kein Exception-Pfad.
     """
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client, llm_provider: LLMProvider):
         self.redis = redis_client
+        self.llm_provider = llm_provider
         self.regime_manager = RegimeManager(redis_client)
         self._initialized = False
 
@@ -248,7 +249,7 @@ class LLMCascade:
         # ── Layer 1: Regime-Klassifikation ──────────────────────────────────
         await self._report_pulse("layer1", "running")
         logger.debug("Cascade: Layer 1 gestartet...")
-        l1_raw = await llm_provider.generate_json(
+        l1_raw = await self.llm_provider.generate_json(
             prompt=_build_layer1_prompt(grss_components, {
                 "btc_price": market_context.get("btc_price"),
                 "funding_rate": market_context.get("funding_rate"),
@@ -290,7 +291,7 @@ class LLMCascade:
         failure_watchlist = await self._get_failure_watchlist()
         decision_history = await self._get_decision_history()
 
-        l2_raw = await llm_provider.generate_json(
+        l2_raw = await self.llm_provider.generate_json(
             prompt=_build_layer2_prompt(
                 layer1_output=l1_raw,
                 market_context=market_context,
@@ -338,7 +339,7 @@ class LLMCascade:
         # ── Layer 3: Advocatus Diaboli ───────────────────────────────────────
         await self._report_pulse("layer3", "running")
         logger.debug("Cascade: Layer 3 gestartet...")
-        l3_raw = await llm_provider.generate_json(
+        l3_raw = await self.llm_provider.generate_json(
             prompt=_build_layer3_prompt(l2_raw, market_context),
             layer_name="layer3_devil",
             use_reasoning_model=False,

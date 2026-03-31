@@ -59,7 +59,13 @@ class ConnectionManager:
     async def send_personal_message(self, websocket: WebSocket, message: dict):
         """Sendet eine Nachricht an einen spezifischen WebSocket."""
         try:
-            await websocket.send_json(message)
+            # Prüfe ob WebSocket noch offen ist
+            if websocket.client_state.name == "CONNECTED":
+                await websocket.send_json(message)
+            else:
+                # Verbindung ist geschlossen, entferne sie
+                logger.warning("Versuch zu senden auf geschlossene WebSocket-Verbindung")
+                self.disconnect(websocket)
         except Exception as e:
             logger.error(f"Fehler beim Senden an WebSocket: {e}")
             self.disconnect(websocket)
@@ -72,7 +78,13 @@ class ConnectionManager:
         disconnected = set()
         for connection in self.active_connections[connection_type]:
             try:
-                await connection.send_json(message)
+                # Prüfe ob WebSocket noch offen ist
+                if connection.client_state.name == "CONNECTED":
+                    await connection.send_json(message)
+                else:
+                    # Verbindung ist geschlossen, markiere für Entfernung
+                    logger.warning("Versuch zu broadcast auf geschlossene WebSocket-Verbindung")
+                    disconnected.add(connection)
             except Exception as e:
                 logger.error(f"Broadcast Fehler: {e}")
                 disconnected.add(connection)
