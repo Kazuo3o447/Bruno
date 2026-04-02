@@ -121,7 +121,9 @@ export default function LightweightChart({ symbol }: LightweightChartProps) {
     // WS Updates
     let ws: WebSocket | null = null;
     try {
-      ws = new WebSocket("ws://localhost:3000/ws/market/" + symbol.replace("/", ""));
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/${symbol.replace("/", "")}`;
+      ws = new WebSocket(wsUrl);
       ws.onmessage = (event) => {
         try {
           const p = JSON.parse(event.data);

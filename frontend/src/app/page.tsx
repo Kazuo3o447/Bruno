@@ -56,7 +56,9 @@ export default function HomePage() {
 
   // Realtime price via WS
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:3000/ws/market/BTCUSDT");
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/BTCUSDT`;
+    const ws = new WebSocket(wsUrl);
     ws.onmessage = (e) => {
       try {
         const p = JSON.parse(e.data);
@@ -151,7 +153,9 @@ export default function HomePage() {
   // Live log stream for activity feed
   useEffect(() => {
     const connect = () => {
-      const ws = new WebSocket("ws://localhost:3000/api/v1/logs/ws");
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/api/v1/logs/ws`;
+      const ws = new WebSocket(wsUrl);
       wsLogRef.current = ws;
       ws.onmessage = (event) => {
         try {

@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from app.core.llm_provider import LLMProvider
+from app.core.llm_provider import BaseLLMProvider as LLMProvider
 from app.services.regime_config_v2 import RegimeManager, REGIME_CONFIGS
 
 logger = logging.getLogger(__name__)

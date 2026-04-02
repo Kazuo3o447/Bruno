@@ -75,7 +75,9 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
 
-    const ws = new WebSocket("ws://localhost:3000/ws/market/" + symbol);
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/` + symbol;
+    const ws = new WebSocket(wsUrl);
 
     ws.onmessage = (event) => {
       try {
