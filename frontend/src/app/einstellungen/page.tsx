@@ -4,6 +4,50 @@ import Sidebar from "../components/Sidebar";
 
 const API = "/api/v1";
 
+const PRESETS: Record<string, {
+  label: string;
+  description: string;
+  icon: string;
+  values: Record<string, number>;
+}> = {
+  standard: {
+    label: "Ruben Standard",
+    description: "Aktueller Markt (VIX ~31, ranging). Balance aus Aktivität und Sicherheit.",
+    icon: "⚖️",
+    values: {
+      GRSS_Threshold: 40,    // Veto wenn GRSS < 40 — opportunistisch
+      OFI_Threshold: 50,     // Full-Depth 20 Levels — ausgewogen
+      Stop_Loss_Pct: 0.012,  // 1.2% — etwas weiter wegen VIX 31
+      Max_Leverage: 1.0,     // Eiserne Regel
+      Liq_Distance: 0.005,   // 0.5% Mindestabstand
+    }
+  },
+  conservative: {
+    label: "Ruben Konservativ",
+    description: "Für unsichere Märkte. Weniger Trades, höhere Qualität.",
+    icon: "🛡️",
+    values: {
+      GRSS_Threshold: 50,    // Nur handeln wenn Markt klar bullish
+      OFI_Threshold: 80,     // Starkes Signal nötig
+      Stop_Loss_Pct: 0.010,  // 1.0% — engerer Stop
+      Max_Leverage: 1.0,
+      Liq_Distance: 0.007,   // 0.7% — mehr Sicherheitsabstand
+    }
+  },
+  aggressive: {
+    label: "Ruben Aggressiv",
+    description: "Für klare Bullmärkte oder Coiled-Spring-Setups. Mehr Trades.",
+    icon: "⚡",
+    values: {
+      GRSS_Threshold: 35,    // Tiefer Threshold — mehr Opportunitäten
+      OFI_Threshold: 30,     // Niedrigerer OFI-Trigger
+      Stop_Loss_Pct: 0.015,  // 1.5% — weiter wegen erhöhter Vola
+      Max_Leverage: 1.0,
+      Liq_Distance: 0.004,   // 0.4%
+    }
+  },
+};
+
 const SCHEMA: Record<string, {
   label: string; min: number; max: number; step: number;
   unit: string; type: "int" | "float"; description: string;
@@ -16,10 +60,11 @@ const SCHEMA: Record<string, {
     warning: v => v < 40 ? "Warnung: Sehr niedrig — erhöhtes Risiko bei schlechten Marktbedingungen" : null
   },
   OFI_Threshold: {
-    label: "OFI Schwellenwert", min: 200, max: 1000, step: 50,
+    label: "OFI Schwellenwert (Full-Depth)", min: 10, max: 300, step: 5,
     unit: "", type: "int",
-    description: "Order Flow Imbalance muss diesen Absolutwert überschreiten um Cascade zu starten.",
-    warning: v => v > 800 ? "Sehr hoch — wenige Trades werden getriggert" : null
+    description: "Full-Depth OFI über 20 Levels. Typische Werte: 20–150. Start: 50.",
+    warning: v => v > 150 ? "Hoch — wenige Cascade-Trigger erwartet" :
+              v < 20 ? "Sehr niedrig — häufige Trigger, viele HOLD-Outcomes" : null
   },
   Stop_Loss_Pct: {
     label: "Stop-Loss", min: 0.003, max: 0.03, step: 0.001,
@@ -119,6 +164,42 @@ export default function EinstellungenPage() {
           </div>
         )}
 
+        {/* Preset-Selector */}
+        <div className="mb-6">
+          <div className="font-mono text-zinc-500 uppercase tracking-widest text-xs mb-3">
+            Schnellauswahl — Preset laden
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {Object.entries(PRESETS).map(([key, preset]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setPending(prev => ({ ...prev, ...preset.values }));
+                }}
+                className={`
+                  border rounded p-3 text-left font-mono text-xs transition-all
+                  hover:border-zinc-500 border-zinc-800 bg-zinc-900/50
+                  ${Object.entries(preset.values).every(([k, v]) => pending[k] === v)
+                    ? 'border-blue-600 bg-blue-950/20'
+                    : ''}
+                `}
+              >
+                <div className="text-base mb-1">{preset.icon}</div>
+                <div className="text-white text-sm font-bold">{preset.label}</div>
+                <div className="text-zinc-500 mt-1 text-xs leading-relaxed">{preset.description}</div>
+              </button>
+            ))}
+          </div>
+          {/* Zeige aktive Werte des aktuell gewählten Presets */}
+          {Object.entries(PRESETS).find(([, p]) =>
+            Object.entries(p.values).every(([k, v]) => pending[k] === v)
+          ) && (
+            <div className="mt-3 border border-blue-900 rounded px-3 py-2 text-xs font-mono text-blue-400 bg-blue-950/10">
+              ✓ Preset aktiv — klicke "Speichern" um anzuwenden
+            </div>
+          )}
+        </div>
+
         <div className="space-y-6">
           {Object.entries(SCHEMA).map(([key, schema]) => {
             const current = pending[key] ?? config[key] ?? schema.min;
@@ -175,6 +256,28 @@ export default function EinstellungenPage() {
               </div>
             );
           })}
+        </div>
+
+        <div className="mt-4 border border-zinc-800 rounded px-3 py-2 font-mono text-xs">
+          <div className="text-zinc-500 mb-2">Aktuelle Konfiguration erklärt:</div>
+          <div className="space-y-1 text-zinc-400">
+            <div>
+              <span className="text-zinc-500">GRSS {pending.GRSS_Threshold}: </span>
+              {(pending.GRSS_Threshold ?? 0) >= 50 ? "Konservativ — nur bei klarer Marktlage" :
+               (pending.GRSS_Threshold ?? 0) >= 40 ? "Standard — opportunistisch aber selektiv" :
+               "Aggressiv — auch bei schwierigen Bedingungen handeln"}
+            </div>
+            <div>
+              <span className="text-zinc-500">OFI {pending.OFI_Threshold}: </span>
+              {(pending.OFI_Threshold ?? 0) <= 30 ? "Niedrig — häufige Cascade-Trigger" :
+               (pending.OFI_Threshold ?? 0) <= 80 ? "Ausgewogen — solider Orderflow nötig" :
+               "Hoch — nur starke Signals triggern die Cascade"}
+            </div>
+            <div>
+              <span className="text-zinc-500">Stop-Loss {((pending.Stop_Loss_Pct ?? 0) * 100).toFixed(1)}%: </span>
+              Bei BTC $70k → ${Math.round(70000 * (pending.Stop_Loss_Pct ?? 0.01))} Abstand
+            </div>
+          </div>
         </div>
 
         <div className="mt-6 border border-zinc-800 rounded p-3 font-mono text-xs text-zinc-600">

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from typing import Dict, Any
 from datetime import datetime, timezone
 
-router = APIRouter(prefix="/api/v1", tags=["config"])
+router = APIRouter(tags=["config"])
 
 # Config-Pfad relativ zum Backend-Root
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,7 +20,7 @@ BACKUP_DIR = os.path.join(BASE_DIR, "backups", "config_history")
 
 CONFIG_SCHEMA = {
     "GRSS_Threshold": {"min": 30, "max": 70, "type": "int", "label": "GRSS Mindestschwelle"},
-    "OFI_Threshold": {"min": 200, "max": 1000, "type": "int", "label": "OFI Schwellenwert"},
+    "OFI_Threshold": {"min": 10, "max": 300, "type": "int", "label": "OFI Schwellenwert"},
     "Max_Leverage": {"min": 0.1, "max": 1.0, "type": "float", "label": "Max. Leverage"},
     "Stop_Loss_Pct": {"min": 0.003, "max": 0.03, "type": "float", "label": "Stop-Loss %"},
     "Liq_Distance": {"min": 0.002, "max": 0.02, "type": "float", "label": "Min. Liq-Wall Abstand"},

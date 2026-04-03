@@ -23,7 +23,7 @@ class QuantAgent(PollingAgent):
         self.cvd_cumulative = 0.0
         self.exm = PublicExchangeClient(redis=deps.redis)
         self.prev_ob = None
-        self.ofi_threshold = 50.0  # Full-Depth OFI. Nach 1 Woche Beobachtung kalibrieren.
+        self.ofi_threshold = self._load_config_value("OFI_Threshold", 50.0)  # Aus config.json, mit Fallback
         self.cascade = LLMCascade(deps.redis, deps.ollama)  # Phase C: LLM Cascade
         
     async def setup(self) -> None:
@@ -73,7 +73,7 @@ class QuantAgent(PollingAgent):
                 "value": self.cvd_cumulative,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             },
-            ttl=86400
+            ttl=86400 * 7  # 7 Tage
         )
 
         self.prev_ob = None
@@ -81,8 +81,22 @@ class QuantAgent(PollingAgent):
             LogLevel.INFO,
             LogCategory.AGENT,
             "agent.quant",
-            "QuantAgent vollständig initialisiert und betriebsbereit"
+            f"QuantAgent setup completed for {self.symbol}",
+            {"ofi_threshold": self.ofi_threshold}
         )
+    
+    def _load_config_value(self, key: str, default: float) -> float:
+        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        try:
+            with open(config_path, "r") as f:
+                return float(json.load(f).get(key, default))
+        except Exception:
+            return default
 
     def get_interval(self) -> float:
         """5-Minuten-Intervall für Medium-Frequency (kein HFT)."""
@@ -243,6 +257,9 @@ class QuantAgent(PollingAgent):
 
     async def process(self) -> None:
         try:
+            # Config hot-reload: Threshold kann im laufenden Betrieb geändert werden
+            self.ofi_threshold = self._load_config_value("OFI_Threshold", 50.0)
+            
             # 1. Redundantes L2-Orderbuch (Public)
             self.state.sub_state = "fetching orderbook"
             ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)

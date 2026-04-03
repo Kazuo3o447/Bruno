@@ -5,6 +5,7 @@
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-Daten und API-Integration
 > ✅ **Port-Architektur:** Vollständig korrigiert und stabilisiert
+> ✅ **Critical Fixes:** Alle 8 kritischen Probleme behoben
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -20,8 +21,10 @@
 | **Daten-Börse** | **Binance** (WebSocket + REST) |
 | **LLM-Stack** | Ollama lokal: qwen2.5:14b + deepseek-r1:14b |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (native Ollama) |
-| **Dashboard** | Next.js mit Live-API-Integration |
+| **Dashboard** | Next.js mit Live-API-Integration und Preset-System |
 | **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
+| **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
+| **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
 
 **Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten.
 
@@ -34,9 +37,138 @@
 - **LLM:** Native Windows Ollama mit qwen2.5:14b und deepseek-r1:14b
 - **Agenten:** 6 spezialisierte Python-Agenten (Ingestion, Quant, Context, Sentiment, Risk, Execution)
 - **Container:** Docker Compose mit Service-Orchestrierung
-- **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:3000/ws/*`
+- **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:8000/ws/*` (korrigiert)
+- **Local Development:** Alle Services auf localhost (Docker Container-Namen entfernt)
 
 ---
+
+## 🚀 Quick Start
+
+> 🔧 **Primäre Entwicklungsumgebung:** Windows mit Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
+
+### Einfaches Starten mit den neuen Skripten:
+
+**Option 1 - Vollautomatisch (Empfohlen):**
+```powershell
+# Startet Backend und Frontend automatisch
+.\start_bruno.ps1
+```
+
+**Option 2 - Individuell:**
+```powershell
+# Nur Backend starten
+.\start_backend.ps1
+
+# Nur Frontend starten (nach Backend-Start)
+.\start_frontend.ps1
+```
+
+**Option 3 - Manuell (für Entwickler):**
+```powershell
+# Backend
+cd backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Frontend (neues Terminal)
+cd frontend
+npm run dev
+```
+
+## ⚙️ Wichtige Konfigurationsänderungen
+
+### Für Local Development (nicht Docker):
+
+**Backend Konfiguration (`backend/app/core/config.py`):**
+```python
+# Von Docker- auf Local-Hosts geändert:
+DB_HOST: str = "localhost"    # vorher: "postgres"
+REDIS_HOST: str = "localhost"  # vorher: "redis"
+```
+
+**Frontend WebSocket URLs:**
+Alle WebSocket-Verbindungen verwenden jetzt:
+```typescript
+const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/...`;
+```
+
+**Umgebungsvariablen (`.env`):**
+```
+DB_HOST=localhost
+REDIS_HOST=localhost
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+### Package Installation:
+```bash
+cd backend
+pip install alembic transformers torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+## 🛠️ Troubleshooting & Häufige Probleme
+
+### Portkonflikte (Gelöst!)
+**Symptom:** `[Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000)`
+
+**Lösung:** Die neuen Startskripte lösen dies automatisch:
+- `start_backend.ps1` findet automatisch freie Ports (8000-8010)
+- Beendet blockierende Prozesse automatisch
+- Passt Konfiguration dynamisch an
+
+### Ollama Verbindungsprobleme
+**Symptom:** `Request URL is missing an 'http://' or 'https://' protocol`
+
+**Lösung:** Stelle sicher, dass Ollama läuft:
+```bash
+# Ollama Service starten (wenn installiert)
+ollama serve
+
+# Modelle pullen
+ollama pull qwen2.5:14b
+ollama pull deepseek-r1:14b
+```
+
+### WebSocket Verbindungsfehler
+**Symptom:** Frontend zeigt keine Live-Daten/Agent-Status
+
+**Lösung:** 
+1. Backend mit `start_backend.ps1` starten
+2. Frontend mit `start_frontend.ps1` starten
+3. Browser: http://localhost:3000
+
+### Datenbankverbindungsprobleme
+**Symptom:** `Connection refused` oder `getaddrinfo failed`
+
+**Lösung:**
+- PostgreSQL muss laufen auf localhost:5432
+- Datenbank `bruno_trading` muss existieren
+- Benutzer `bruno` mit Passwort `bruno_secret`
+
+### Redis Verbindungsprobleme  
+**Symptom:** Redis Connection failed
+
+**Lösung:**
+- Redis Server muss laufen auf localhost:6379
+- Windows: Redis für Windows installieren
+
+## 📋 Startskript-Features
+
+### `start_backend.ps1`
+- ✅ Automatische Portkonflikt-Erkennung
+- ✅ Dynamische Port-Zuweisung (8000-8010)
+- ✅ Automatisches Beenden blockierender Prozesse
+- ✅ Echtzeit-Statusüberwachung
+
+### `start_frontend.ps1` 
+- ✅ Backend-Connectivity Check
+- ✅ Konfigurationsvalidierung
+- ✅ WebSocket-Verbindungstest
+
+### `start_bruno.ps1`
+- ✅ Vollautomatische Orchestrierung
+- ✅ Paralleles Starten von Backend + Frontend
+- ✅ PID-Management für einfaches Stoppen
+- ✅ Übersichtlicher Systemstatus
 
 ## 🚀 Quick Start
 

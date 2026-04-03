@@ -20,6 +20,7 @@ class RiskAgent(PollingAgent):
         super().__init__("risk", deps)
         self.last_price = 0.0
         self.last_cvd = 0.0
+        self._grss_threshold: float = 40.0
 
     def get_interval(self) -> float:
         """1-Minuten-Intervall — ausreichend für Medium-Frequency."""
@@ -32,10 +33,24 @@ class RiskAgent(PollingAgent):
             LogLevel.INFO,
             LogCategory.AGENT,
             "agent.risk",
-            "RiskAgent gestartet. Veto-Matrix aktiv."
+            "RiskAgent setup completed",
+            {"grss_threshold": self._grss_threshold}
         )
         self.last_price = 0.0
         self.last_cvd = 0.0
+
+    def _load_config_value(self, key: str, default: float) -> float:
+        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        try:
+            with open(config_path, "r") as f:
+                return float(json.load(f).get(key, default))
+        except Exception:
+            return default
 
     async def _report_health(self, source: str, status: str, latency: float):
         """Meldet Status und Latenz an den globalen Redis-Health-Hub."""
@@ -67,6 +82,9 @@ class RiskAgent(PollingAgent):
 
     async def process(self) -> None:
         try:
+            # Config hot-reload: GRSS Threshold kann im laufenden Betrieb geändert werden
+            self._grss_threshold = self._load_config_value("GRSS_Threshold", 40.0)
+            
             # 1. Signale sammeln
             signals = await self._fetch_all_signals()
             context = signals["context"]
@@ -81,6 +99,7 @@ class RiskAgent(PollingAgent):
             macro_status = "BULLISH"
             price = 0.0
             walls: List[Dict] = []
+            vol_multiplier = 1.0
             
             # Veto-Initialisierung
             veto = False
@@ -92,7 +111,6 @@ class RiskAgent(PollingAgent):
                 veto, reason, leverage = True, "DATA GAP: Missing input signals.", 0.0
             else:
                 # Default values
-                vol_multiplier = 1.0
                 reason_notes = []
                 
                 # 2. News Silence Watchdog (Harter Checkout 3600s)
@@ -111,8 +129,8 @@ class RiskAgent(PollingAgent):
                 
                 # --- VETO LOGIK (New Paradigm: Opportunity-Driven) ---
                 veto_reason = None
-                if grss < 40:
-                    veto_reason = f"VETO: Low GRSS ({grss}). Standby."
+                if grss < self._grss_threshold:
+                    veto_reason = f"VETO: Low GRSS ({grss:.1f} < {self._grss_threshold:.0f}). Standby."
                 elif vix > 45:
                     veto_reason = f"VETO: Extreme Panic (VIX: {vix})."
                 elif yields > 5.0:

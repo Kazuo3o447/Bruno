@@ -5,6 +5,7 @@
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-API-Integration
 > ✅ **Port-Architektur:** Vollständig korrigiert und stabilisiert
+> ✅ **Critical Fixes:** Alle 8 kritischen Probleme behoben
 > 
 > Dieses Dokument zeigt den technischen Ist-Stand.
 > Für Architektur, Phasen und Entscheidungen siehe Manifest.
@@ -19,19 +20,21 @@
 |----------|------|
 | **Manifest Version** | `v2.0` |
 | **Codename** | Fundament & Ehrlichkeit |
-| **Status** | ✅ Phase A COMPLETED — Phase B COMPLETED — Phase C COMPLETED — Phase D COMPLETED — Phase E COMPLETED |
+| **Status** | ✅ Phase A COMPLETED — Phase B COMPLETED — Phase C COMPLETED — Phase D COMPLETED — Phase E COMPLETED — Phase F COMPLETED |
 | **Dashboard** | ✅ Voll funktionsfähig mit API-Integration |
 | **Port-Konfiguration** | ✅ Vollständig korrigiert (Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/*) |
+| **Critical Fixes** | ✅ Alle 8 Probleme behoben (API, Config, OFI, Presets) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
-| **Letztes Update** | 31. März 2026 (Port-Korrektur & vollständiger Neustart) |
+| **Letztes Update** | 2. April 2026 (Critical Fixes & Config-Hot-Reload) |
 
 ---
 
-## 🎯 Aktueller Fokus: Phase E — Port-Architektur & WebSocket-Optimierung (COMPLETED)
+## 🎯 Aktueller Fokus: Phase F — Critical Fixes & Config-Hot-Reload (COMPLETED)
 
-> 🚀 **System-Status:** Voll funktionsfähig mit korrekter Port-Konfiguration und stabilen WebSockets
+> 🚀 **System-Status:** Voll funktionsfähig mit allen kritischen Fixes implementiert
 > 📊 **Dashboard-Status:** Alle API-Endpunkte erreichbar, Live-Daten funktionieren
-> 🔧 **Container-Status:** Vollständig neu aufgebaut mit sauberen Volumes und Environment-Konfiguration
+> 🔧 **Container-Status:** Vollständig neu aufgebaut mit sauberen Volumes und stabiler Konfiguration
+> ⚙️ **Config-System:** Hot-Reload implementiert, Presets verfügbar
 
 **Ziel:** Vollständiges Cockpit mit Live-Daten, Agenten-Status und Trading-Chart. Das Dashboard ist jetzt vollständig implementiert und funktionsfähig.
 
@@ -109,14 +112,24 @@
 - **GRSS-Score oft niedrig** (< 40) → Veto-Modus, System im Standby (korrektes Verhalten)
 - **Performance-Metriken leer** in DRY_RUN (normal, da keine echten Trades)
 
+### ✅ Kürzlich Gelöst (2026-04-02 - Critical Fixes)
+- **Doppeltes Prefix behoben:** export, config, decisions Router Endpunkte jetzt erreichbar
+- **Fresh-Source-Gate repariert:** Health-Reporting für alle 5 Datenquellen implementiert
+- **Config-Hot-Reload:** QuantAgent & RiskAgent lesen config.json live ohne Neustart
+- **OFI Schema korrigiert:** Frontend min=10 statt 200, bessere Beschreibungen und Warnungen
+- **Preset-System implementiert:** 3 Presets (Standard, Konservativ, Aggressiv) mit visueller Auswahl
+- **Gate-Schwelle optimiert:** Von <= 0 auf < 2 für bessere GRSS-Verfügbarkeit
+- **Startup Warm-Up:** ContextAgent initialisiert Datenquellen sofort nach Start
+- **API-Endpunkte verifiziert:** Alle kritischen Endpunkte geben 200 OK
+
 ### ✅ Kürzlich Gelöst (2026-03-31 - Port-Korrektur)
-- **Vollständige Port-Architektur korrigiert**: Alle localhost:8001 URLs auf /api/v1 umgestellt
-- **WebSocket-Optimierung**: Alle WebSockets verwenden jetzt localhost:3000/ws/*
-- **Environment-Konfiguration**: DB_HOST=postgres, REDIS_HOST=redis statt localhost
-- **Container-Neustart**: Vollständiger Neuaufbau mit sauberen Volumes für stabile Port-Konfiguration
-- **WebSocket-Fehlerbehebung**: "Cannot call send once close message has been sent" behoben
-- **Frontend-URL-Korrekturen**: 10+ Dateien mit Port-Problemen systematisch korrigiert
-- **Next.js Proxy**: WebSocket-Proxy /ws/* hinzugefügt für stabile Verbindungen
+- **Vollständige Port-Architektur korrigiert:** Alle localhost:8001 URLs auf /api/v1 umgestellt
+- **WebSocket-Optimierung:** Alle WebSockets verwenden jetzt localhost:3000/ws/*
+- **Environment-Konfiguration:** DB_HOST=postgres, REDIS_HOST=redis statt localhost
+- **Container-Neustart:** Vollständiger Neuaufbau mit sauberen Volumes für stabile Port-Konfiguration
+- **WebSocket-Fehlerbehebung:** "Cannot call send once close message" behoben
+- **Frontend-URL-Korrekturen:** 10+ Dateien mit Port-Problemen systematisch korrigiert
+- **Next.js Proxy:** WebSocket-Proxy /ws/* hinzugefügt für stabile Verbindungen
 
 ### ✅ Kürzlich Gelöst (2026-03-31 - API-Integration)
 - **Dashboard API-Verbindung**: Docker-Netzwerk und Next.js Proxy korrigiert

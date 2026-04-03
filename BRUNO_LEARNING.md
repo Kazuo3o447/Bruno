@@ -4,17 +4,25 @@
 > **PFLICHTLEKTÜRE für alle Agenten.**
 > Dieses Dokument definiert wie Bruno lernt, sich anpasst und messbar besser wird.
 > Es ist kein Feature — es ist das Fundament.
-> Letzte Aktualisierung: 2026-03-31 (Port-Architektur & vollständiger Neustart)
+> Letzte Aktualisierung: 2026-04-02 (Critical Fixes & Config-Hot-Reload)
 
 ---
 
-## 🎯 NEUE LERNERFAHRUNGEN (März 2026)
+## 🎯 NEUE LERNERFAHRUNGEN (April 2026)
+
+### Critical Fixes Lektionen (2. April 2026)
+1. **Doppelte Prefix sind tödlich:** /api/v1/api/v1/ führt zu 404 und macht System unbenutzbar
+2. **Fresh-Source-Gate ist entscheidend:** Ohne Health-Reporting für alle Quellen bleibt GRSS bei 0
+3. **Config-Hot-Reload ist Game-Changer:** Agenten können live konfiguriert werden ohne Neustart
+4. **OFI Schema muss realistisch sein:** min=10 statt 200 verhindert Slider-Probleme
+5. **Preset-System verbessert UX:** Visuelle Presets reduzieren Konfigurationsfehler
+6. **Startup Warm-Up vermeidet Start-Probleme:** Erste Datenabrufe sofort nach Start
 
 ### Port-Architektur Lektionen (31. März 2026)
-1. **Hartcodierte Ports sind tödlich:** localhost:8001 im Frontend verursacht kompletten Systemausfall
-2. **Environment-Konfiguration ist entscheidend:** DB_HOST=localhost vs DB_HOST=postgres macht den Unterschied zwischen funktionierend und kaputt
-3. **WebSocket-Proxy wird oft vergessen:** /ws/* Proxy ist genauso wichtig wie /api/* Proxy
-4. **Systematische Port-Korrektur ist notwendig:** 10+ Dateien müssen konsistent korrigiert werden, nicht nur eine
+7. **Hartcodierte Ports sind tödlich:** localhost:8001 im Frontend verursacht kompletten Systemausfall
+8. **Environment-Konfiguration ist entscheidend:** DB_HOST=localhost vs DB_HOST=postgres macht den Unterschied zwischen funktionierend und kaputt
+9. **WebSocket-Proxy wird oft vergessen:** /ws/* Proxy ist genauso wichtig wie /api/* Proxy
+10. **Systematische Port-Korrektur ist notwendig:** 10+ Dateien müssen konsistent korrigiert werden, nicht nur eine
 
 ### Dashboard-Integration Lektionen
 5. **Container-Netzwerk ist kritisch:** Docker-Netzwerk-Konfiguration kann API-Verbindung komplett verhindern

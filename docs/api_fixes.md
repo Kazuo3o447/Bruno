@@ -2,7 +2,7 @@
 
 > **Dokumentation der API-Verbindung, Fehlerbehebung und Container-Konfiguration**
 > 
-> ✅ **Stand:** 31. März 2026 - Vollständige Port-Korrektur & stabile API-Integration
+> ✅ **Stand:** 2. April 2026 - Critical Fixes & Config-Hot-Reload
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -18,6 +18,7 @@
 ✅ /api/v1/positions/open      - Offene Positionen
 ✅ /api/v1/performance/metrics - Performance-Kennzahlen
 ✅ /api/v1/config              - Konfiguration & Status
+✅ /api/v1/export/snapshot     - Vollständiger Bot-Snapshot
 ```
 
 ### 🔗 Frontend → Backend Verbindung
@@ -28,6 +29,106 @@
 ✅ Container-Abhängigkeiten: bruno-frontend depends_on api-backend
 ✅ Port-Mapping: Backend 8000, Frontend 3000
 ✅ Environment: DB_HOST=postgres, REDIS_HOST=redis
+✅ Config-Hot-Reload: Live-Konfigurationsänderungen ohne Neustart
+```
+
+---
+
+## 🚨 Kritische API-Probleme & Lösungen (2. April 2026)
+
+### **Problem 1: Doppeltes /api/v1 Prefix → 404 Errors**
+**Symptome:**
+- `/api/v1/config`, `/api/v1/export/snapshot`, `/api/v1/decisions/feed` geben 404 Not Found
+- Dashboard kann Konfiguration nicht laden
+
+**Ursache:**
+```python
+# Router definierten Prefix bereits intern
+router = APIRouter(prefix="/api/v1", tags=["config"])
+# main.py fügte erneut Prefix hinzu
+app.include_router(config_api.router, prefix="/api/v1")  # → /api/v1/api/v1/config
+```
+
+**Lösung:**
+```python
+# In export.py, config_api.py, decisions.py:
+router = APIRouter(tags=["export"])  # Prefix entfernt
+# In main.py bleibt:
+app.include_router(export.router, prefix="/api/v1")
+```
+
+**Behobene Dateien:**
+- ✅ `backend/app/routers/export.py`
+- ✅ `backend/app/routers/config_api.py` 
+- ✅ `backend/app/routers/decisions.py`
+
+### **Problem 2: Fresh-Source-Gate blockiert GRSS**
+**Symptome:**
+- GRSS Score immer 0.0 → dauerhafter Veto-Modus
+- "fresh_source_count" ist 0 beim Start
+
+**Ursache:**
+```python
+# Nur 2 von 5 Quellen reported Health
+if int(data.get("fresh_source_count", 0)) <= 0: return 0.0
+# Binance_REST, Deribit_Public, yFinance_Macro fehlten
+```
+
+**Lösung:**
+```python
+# Health-Reporting für alle Quellen:
+await self._report_health("Binance_REST", "online", latency)
+await self._report_health("Deribit_Public", "online", latency) 
+await self._report_health("yFinance_Macro", "online", latency)
+# Gate-Schwelle gesenkt:
+if int(data.get("fresh_source_count", 0)) < 2: return 0.0
+# Startup Warm-Up:
+await self._fetch_binance_rest_data()
+await self._fetch_deribit_data()
+```
+
+### **Problem 3: Config-Änderungen wirken nicht**
+**Symptome:**
+- Änderungen in Einstellungen haben keinen Effekt auf Agenten
+- Hardcoded Werte in QuantAgent und RiskAgent
+
+**Lösung:**
+```python
+# Config-Hot-Reload implementiert:
+def _load_config_value(self, key: str, default: float) -> float:
+    config_path = os.path.join(BASE_DIR, "config.json")
+    with open(config_path, "r") as f:
+        return float(json.load(f).get(key, default))
+
+# In jedem process() Zyklus:
+self.ofi_threshold = self._load_config_value("OFI_Threshold", 50.0)
+self._grss_threshold = self._load_config_value("GRSS_Threshold", 40.0)
+```
+
+### **Problem 4: OFI Schema falsch im Frontend**
+**Symptome:**
+- OFI Slider zeigt 0 obwohl Wert 50
+- Min=200, Max=1000, aber tatsächlicher Wert ist 50
+
+**Lösung:**
+```typescript
+// Frontend Schema korrigiert:
+OFI_Threshold: {
+  label: "OFI Schwellenwert (Full-Depth)", 
+  min: 10, max: 300, step: 5,  // Statt min: 200, max: 1000
+  description: "Full-Depth OFI über 20 Levels. Typische Werte: 20–150. Start: 50."
+}
+// Backend Schema ebenfalls angepasst
+```
+
+### **Problem 5: Preset-System fehlt**
+**Lösung:**
+```typescript
+// 3 Presets implementiert:
+- Standard: GRSS=40, OFI=50, StopLoss=1.2%
+- Konservativ: GRSS=50, OFI=80, StopLoss=1.0%  
+- Aggressiv: GRSS=35, OFI=30, StopLoss=1.5%
+// Visuelle Preset-Buttons mit Konfigurations-Erklärungs-Block
 ```
 
 ---
