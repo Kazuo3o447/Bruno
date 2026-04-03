@@ -7,27 +7,30 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-03-31 (Port-Architektur COMPLETED)
+> Letzte Aktualisierung: 2026-04-02 (Critical Fixes COMPLETED)
 > Repository: https://github.com/Kazuo3o447/Bruno
 
 ---
 
-## 🎯 STATUS UPDATE (31. März 2026)
+## 🎯 STATUS UPDATE (2. April 2026)
 
-### ✅ PHASE E COMPLETED - Port-Architektur & WebSocket-Optimierung
-- **Port-Architektur voll korrigiert** - Alle localhost:8001 URLs auf /api/v1 umgestellt
-- **WebSocket-System stabilisiert** - Alle WebSockets über localhost:3000/ws/*
-- **Environment-Konfiguration optimiert** - DB_HOST=postgres, REDIS_HOST=redis
-- **Container vollständig neu aufgebaut** - Mit sauberen Volumes und stabiler Konfiguration
-- **Frontend-URLs systematisch korrigiert** - 10+ Dateien mit Port-Problemen behoben
+### ✅ PHASE F COMPLETED - Critical Fixes & Config-Hot-Reload
+- **Doppeltes Prefix behoben** - export, config, decisions Router Endpunkte erreichbar
+- **Fresh-Source-Gate repariert** - Health-Reporting für alle Quellen, GRSS nicht mehr blockiert
+- **Config-Hot-Reload implementiert** - QuantAgent & RiskAgent lesen live config.json
+- **OFI Schema korrigiert** - min=10 statt 200 im Frontend und Backend
+- **Preset-System implementiert** - 3 Presets (Standard, Konservativ, Aggressiv) mit visueller Auswahl
+- **Startup Warm-Up** - ContextAgent initialisiert Datenquellen sofort nach Start
+- **SIGNAL-REFORM S1 (2026-04-03)** - OFI-Gate entfernt, zeitbasierter Zyklus, Decision Feed aktiv
 
 ### 📋 IMPLEMENTIERTE LÖSUNGEN
-1. **Port-Korrektur:** Alle API-Aufrufe über `/api/v1` (Next.js Proxy)
-2. **WebSocket-Proxy:** `/ws/:path*` → `http://api-backend:8000/ws/:path*`
-3. **Environment-Konfiguration:** Docker-korrekte Host-Namen statt localhost
-4. **WebSocket-Fehlerbehebung:** Verbindungsprüfung und automatische Bereinigung
-5. **Systematische URL-Korrektur:** 10+ Frontend-Dateien konsistent aktualisiert
-6. **Container-Neustart:** Vollständiger Neuaufbau mit sauberen Volumes
+1. **API-Endpunkt Fixes:** Doppeltes /api/v1 Prefix in 3 Routern entfernt
+2. **Fresh-Source-Gate:** Health-Reporting für Binance_REST, Deribit_Public, yFinance_Macro
+3. **Config-Hot-Reload:** _load_config_value() Methode in QuantAgent & RiskAgent
+4. **OFI Schema:** Frontend min=10, max=300, step=5 mit besseren Beschreibungen
+5. **Preset-System:** Visuelle Preset-Buttons mit Konfigurations-Erklärungs-Block
+6. **Gate-Schwelle:** Von <= 0 auf < 2 gesenkt für bessere Verfügbarkeit
+7. **Startup-Optimierung:** ContextAgent Warm-Up für sofortige Datenverfügbarkeit
 7. **Chart-Komponente robust:** isDisposed Flags und Race Condition Protection
 
 ---
@@ -141,6 +144,38 @@ pcr = puts_oi / calls_oi
 # PCR > 0.8 → bearish (Hedging-Druck)
 # PCR > 1.0 → extremes Hedging → potentieller Boden
 ```
+
+### 3.1b Signal-Architektur (nach Reform S1, 2026-04-03)
+
+**Paradigma-Wechsel:** Event-gesteuert → Zeitbasiert
+
+Der QuantAgent evaluiert JEDEN 300s-Zyklus — unabhängig vom OFI-Wert.
+OFI ist Input für den LLM, nicht Trigger für die Evaluation.
+
+**Pre-Gate (QuantAgent):**
+- GRSS < 20 → HOLD (Extremstress, LLM würde nichts lernen)
+- Data_Freshness_Active == False → HOLD (keine validen Daten)
+- Alles andere → LLM Cascade läuft
+
+**GRSS-Gate (innerhalb LLM Cascade, unverändert):**
+- GRSS < effective_threshold (regime-spezifisch, 45–60) → CASCADE_GRSS_HOLD
+- Dieser Gate ist korrekt und bleibt erhalten
+
+**OFI-Metrik (neu):**
+- `market:ofi:ticks` (Redis List): IngestionAgent schreibt bei jedem @depth20 Update
+- `OFI_Buy_Pressure`: Anteil Ticks mit bid_vol > ask_vol (0.0–1.0)
+- `OFI_Mean_Imbalance`: Durchschnittliches Verhältnis bid/ask (1.0 = neutral)
+- Kein absoluter Threshold — LLM interpretiert den Wert im Kontext
+
+**Decision Feed:**
+- Redis Key: `bruno:decisions:feed` (LPUSH, LTRIM 144)
+- API: GET /api/v1/decisions/feed (bestehender Router, unverändert)
+- Einträge: alle 300s, format-kompatibel mit bestehendem Frontend Interface
+
+**Fixierte Bugs:**
+- `grss_score` Key: war "score" → jetzt korrekt "GRSS_Score"
+- `grss_components`: war leeres {} → jetzt volles GRSS-Payload
+- `fresh_source_count == 0` → war return 0.0 → jetzt Penalty -20 (Minimum 10)
 
 #### BEZAHLT — CoinGlass API (Hobbyist: $29/Monat — optional / später)
 | Endpoint | Signal | Priorität |
@@ -375,11 +410,12 @@ def calculate_position_size(account_balance: float, grss: float,
 
 Der ContextAgent klassifiziert das aktuelle Regime. Vier Regime-Configs statt einer:
 
+*OFI threshold removed in Reform S1 (2026-04-03); OFI is now rolling-buffer input only.*
+
 ```python
 REGIME_CONFIGS = {
     "trending_bull": {
         "GRSS_Threshold": 45,       # Niedrigere Schwelle — Trend gibt Rückenwind
-        "OFI_Threshold": 400,
         "Max_Leverage": 1.0,
         "Stop_Loss_Pct": 0.008,
         "Take_Profit_Pct": 0.020,   # 2.5:1 R:R
@@ -388,7 +424,6 @@ REGIME_CONFIGS = {
     },
     "ranging": {
         "GRSS_Threshold": 55,       # Höhere Schwelle — weniger Klarheit
-        "OFI_Threshold": 600,
         "Max_Leverage": 1.0,
         "Stop_Loss_Pct": 0.006,
         "Take_Profit_Pct": 0.012,   # 2:1 R:R
@@ -398,7 +433,6 @@ REGIME_CONFIGS = {
     },
     "high_vola": {
         "GRSS_Threshold": 60,
-        "OFI_Threshold": 700,
         "Max_Leverage": 1.0,        # Kein Leverage bei hoher Vola
         "Stop_Loss_Pct": 0.015,     # Weiterer Stop wegen Rauschen
         "Take_Profit_Pct": 0.030,
@@ -408,7 +442,6 @@ REGIME_CONFIGS = {
     },
     "bear": {
         "GRSS_Threshold": 50,
-        "OFI_Threshold": 500,
         "Max_Leverage": 1.0,
         "Stop_Loss_Pct": 0.010,
         "Take_Profit_Pct": 0.020,

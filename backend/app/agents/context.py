@@ -539,10 +539,17 @@ class ContextAgent(StreamingAgent):
         VIX > 45 = Hard Veto (systemischer Crash).
         NDX BEARISH = -10 Punkte (kein Block mehr).
         """
-        if int(data.get("fresh_source_count", 0)) < 2:
-            return 0.0
-
         score = 50.0
+        fresh_count = int(data.get("fresh_source_count", 0))
+        if fresh_count == 0:
+            # Kein harter Kollaps — System arbeitet mit veralteten Daten weiter
+            # Penalty statt Nullung: -20 Punkte für kompletten Datenverlust
+            score -= 20
+        elif fresh_count < 2:
+            # Teilweise Daten: -8 Punkte pro fehlendem Source
+            score -= (2 - fresh_count) * 8
+        # Absoluter Minimalwert: 10 (nie 0.0 bei normalen API-Ausfällen)
+        # Der news_silence_seconds Veto am Ende der Funktion bleibt erhalten
 
         # ═══ TIER 1: DERIVATE ═══════════════════════════════════════════════
         f = data.get("funding_rate", 0.01)
@@ -673,6 +680,9 @@ class ContextAgent(StreamingAgent):
             score -= 7
 
         score += data.get("pattern_score", 0)
+
+        # Absoluter Minimalwert: 10 (nie 0.0 bei normalen API-Ausfällen)
+        score = max(score, 10.0)
 
         if data.get("news_silence_seconds", 0) > 3600:
             return 0.0

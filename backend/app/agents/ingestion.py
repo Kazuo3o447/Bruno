@@ -142,6 +142,18 @@ class IngestionAgentV2(StreamingAgent):
             redis_ob["time"] = redis_ob["time"].isoformat()
             await self.deps.redis.set_cache("market:orderbook:BTCUSDT", redis_ob, ttl=5)
             
+            # Rolling OFI Buffer: letzte 300 Ticks (= ca. 30 Sekunden bei 100ms Updates)
+            # Dient als akkumulierter Orderflow-Input für QuantAgent
+            import json as _json
+            ofi_tick = _json.dumps({
+                "t": datetime.now(timezone.utc).isoformat(),
+                "r": round(ob_data["imbalance_ratio"], 4)
+            })
+            pipe = self.deps.redis.redis.pipeline()
+            pipe.lpush("market:ofi:ticks", ofi_tick)
+            pipe.ltrim("market:ofi:ticks", 0, 299)  # Max 300 Ticks behalten
+            await pipe.execute()
+            
         elif "@forceOrder" in stream:
             o = data["o"]
             liq_data = {

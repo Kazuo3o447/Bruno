@@ -11,7 +11,7 @@ from app.agents.deps import AgentDependencies
 from app.agents.orchestrator import AgentOrchestrator
 
 from app.agents.ingestion import IngestionAgentV2
-from app.agents.quant import QuantAgent
+from app.agents.quant_v3 import QuantAgent
 from app.agents.context import ContextAgent
 from app.agents.risk import RiskAgent
 from app.agents.execution_v3 import ExecutionAgentV3
