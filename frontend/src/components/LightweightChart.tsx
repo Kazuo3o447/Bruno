@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, Time, CandlestickSeries } from "lightweight-charts";
+import { getBrowserWebSocketUrl } from "../app/utils/runtimeUrls";
 
 // Demo data generation function
 function generateDemoData(): CandlestickData[] {
@@ -121,9 +122,7 @@ export default function LightweightChart({ symbol }: LightweightChartProps) {
     // WS Updates
     let ws: WebSocket | null = null;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/${symbol.replace("/", "")}`;
-      ws = new WebSocket(wsUrl);
+      ws = new WebSocket(getBrowserWebSocketUrl(`/ws/market/${symbol.replace("/", "")}`));
       ws.onmessage = (event) => {
         try {
           const p = JSON.parse(event.data);

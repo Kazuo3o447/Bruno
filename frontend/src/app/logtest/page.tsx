@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
 
 export default function LogTest() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -9,9 +10,7 @@ export default function LogTest() {
   useEffect(() => {
     console.log("Starting log test...");
     
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/api/v1/logs/ws`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl("/api/v1/logs/ws"));
     
     ws.onopen = () => {
       console.log("WebSocket connected");

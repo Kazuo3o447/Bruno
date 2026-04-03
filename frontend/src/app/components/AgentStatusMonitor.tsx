@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
 
 interface Agent {
   agent_id: string;
@@ -75,9 +76,7 @@ export default function AgentStatusMonitor({ agents: initialAgents, isLoading = 
 
   // WebSocket für Live-Updates
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/agents`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl("/ws/agents"));
 
     ws.onopen = () => {
       setWsConnected(true);

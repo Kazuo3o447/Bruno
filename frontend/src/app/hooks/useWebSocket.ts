@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
 
 interface WebSocketMessage {
   type: string;
@@ -35,9 +36,7 @@ export function useWebSocket({
   }>({});
 
   const connectWebSocket = useCallback((endpoint: string, onMessage: (data: any) => void) => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}${endpoint}`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl(endpoint));
 
     ws.onopen = () => {
       console.log(`WebSocket connected: ${endpoint}`);

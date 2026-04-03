@@ -188,6 +188,8 @@ WHERE trade_mode = 'phantom';
 - **Strict MLOps Security:** Das Dashboard ist **Read-Only**; Parameter-Updates erfolgen ausschließlich offline.
 - **Offline Optimizer:** Erzwingt die Realität (PnL inkl. Gebühren & PF > 1.5).
 - **Phase B Hardening:** CoinGlass läuft graceful ohne API-Key, Telegram ist chat-authentifiziert und der Profit Factor basiert auf realisierter P&L-Historie.
+- **WebSocket Stabilität:** Robuste Retry-Logic mit Exponential Backoff und erweiterten Ping-Timeouts (30s) zur Vermeidung von Keepalive-Timeouts.
+- **Frontend Routing:** Browser-kompatible WebSocket-URLs statt Docker-interner Hosts für Live-Daten und Logs.
 
 - **Einheitliches Interface:** Alle Agenten erben von `BaseAgent` / `PollingAgent` / `StreamingAgent`.
 - **HFT-Performance:** Der `ExecutionAgentV3` nutzt einen lokalen RAM-Check (0ms Latenz) für Vetos.

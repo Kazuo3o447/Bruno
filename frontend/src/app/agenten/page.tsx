@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "../components/Sidebar";
 import { Play, Pause, Square, MessageSquare, Activity, AlertTriangle, CheckCircle, Clock, Send, Bot, Brain, Shield, TrendingUp } from "lucide-react";
+import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
 
-const API = process.env.NEXT_PUBLIC_API_URL + "/api/v1" || "http://localhost:8000/api/v1";
+const API = "/api/v1";
 
 // Agent-Typen
 interface AgentStatus {
@@ -192,9 +193,7 @@ export default function AgentenPage() {
   useEffect(() => {
     console.log("Attempting to connect to Agent WebSocket...");
     
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/agents`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl("/ws/agents"));
     
     ws.onopen = () => {
       setWsConnected(true);

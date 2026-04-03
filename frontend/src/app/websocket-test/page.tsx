@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
 
 export default function WebSocketTest() {
   const [wsStatus, setWsStatus] = useState("disconnected");
@@ -11,9 +12,7 @@ export default function WebSocketTest() {
     console.log("Starting WebSocket test...");
     
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/agents`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(getBrowserWebSocketUrl("/ws/agents"));
       
       ws.onopen = () => {
         console.log("WebSocket opened successfully");

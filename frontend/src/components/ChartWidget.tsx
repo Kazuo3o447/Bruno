@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType, CrosshairMode, CandlestickSeries } from 'lightweight-charts';
+import { getBrowserWebSocketUrl } from "../app/utils/runtimeUrls";
 
 export default function ChartWidget({ symbol }: { symbol: string }) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -121,9 +122,7 @@ export default function ChartWidget({ symbol }: { symbol: string }) {
 
     fetchTradeMarkers();
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/` + symbol;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl(`/ws/market/${symbol}`));
 
     ws.onmessage = (event) => {
       try {

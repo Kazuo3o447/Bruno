@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
 
 interface LogEntry {
   timestamp: string;
@@ -53,9 +54,7 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
     if (!isOpen) return;
 
     console.log("Attempting to connect to Log WebSocket...");
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/api/v1/logs/ws`;
-    const websocket = new WebSocket(wsUrl);
+    const websocket = new WebSocket(getBrowserWebSocketUrl("/api/v1/logs/ws"));
     
     websocket.onopen = () => {
       console.log("Log WebSocket connected successfully");

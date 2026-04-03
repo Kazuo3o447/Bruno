@@ -227,3 +227,70 @@ Das System erfasst für jeden (simulierten) Trade einen hochpräzisen Datensatz 
   "evaluated_at": "ISO timestamp"
 }
 ```
+
+---
+
+## WebSocket Stabilität & Retry-Logic
+
+### Problem: Keepalive Ping Timeouts
+- **Fehler:** `sent 1011 (internal error) keepalive ping timeout; no close frame received`
+- **Ursache:** Standard Ping-Timeout (20s) zu kurz bei temporären Netzwerk-Problemen
+
+### Lösung: Robuste WebSocket-Parameter
+```python
+async with websockets.connect(
+    self.ws_url,
+    ping_interval=30,      # Längerer Ping-Interval
+    ping_timeout=30,       # Längerer Ping-Timeout  
+    close_timeout=10,       # Expliziter Close-Timeout
+    open_timeout=15         # Connection-Timeout
+) as ws:
+```
+
+### Retry-Logic mit Exponential Backoff
+- **Max Retries:** 5 Versuche
+- **Base Delay:** 5 Sekunden
+- **Backoff:** Exponential (5s, 10s, 20s, 40s, 80s)
+- **Jitter:** ±10% Randomisierung zur Vermeidung von Thundering Herd
+
+### Health-Status-Management
+- **Healthy:** WebSocket verbunden und Daten empfangen
+- **Degraded:** Connection-Fehler, Retry-Phase aktiv
+- **Logging:** Detaillierte Fehler-Meldungen mit Retry-Zähler
+
+### Monitoring
+- **Log-Category:** `BINANCE` für WebSocket-Events
+- **Error-Tracking:** Vollständige Stack-Traces bei Verbindungsfehlern
+- **Recovery:** Automatischer Reset bei erfolgreicher Verbindung
+
+---
+
+## Frontend WebSocket Routing
+
+### Problem: Browser-kompatible URLs
+- **Fehler:** Frontend verwendet Docker-interne Hosts (`api-backend:8000`) direkt im Browser
+- **Ursache:** WebSocket-Verbindungen werden nicht über Next.js-Rewrites geroutet
+- **Symptom:** Keine Live-Daten und Logs im Frontend, obwohl Backend Daten liefert
+
+### Lösung: Browser-Origin Helper
+```typescript
+// frontend/src/app/utils/runtimeUrls.ts
+export function getBrowserWebSocketUrl(path: string): string {
+  if (typeof window === "undefined") {
+    return `ws://localhost:3000${path}`;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}${path}`;
+}
+```
+
+### Implementierung
+- **Alle WebSocket-Verbindungen** nutzen jetzt `getBrowserWebSocketUrl()`
+- **Relative API-Pfade** bleiben für `fetch()` (Next.js-Rewrites funktionieren)
+- **Charts, LogViewer, Dashboard** verwenden browser-sichere URLs
+
+### Ergebnis
+- **Live-Daten:** Preis-Feeds und Orderbook-Updates funktionieren wieder
+- **Logs:** Echtzeit-Log-Stream im LogViewer ist wieder sichtbar
+- **Agenten-Status:** Live-Updates werden im Frontend angezeigt

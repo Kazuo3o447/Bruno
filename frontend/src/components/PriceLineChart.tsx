@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { createChart, ColorType, CrosshairMode, LineSeries } from 'lightweight-charts';
+import { getBrowserWebSocketUrl } from "../app/utils/runtimeUrls";
 
 /**
  * Lightweight BTC price line chart for the Dashboard overview.
@@ -75,9 +76,7 @@ export default function PriceLineChart({ symbol }: { symbol: string }) {
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/` + symbol;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl(`/ws/market/${symbol}`));
 
     ws.onmessage = (event) => {
       try {

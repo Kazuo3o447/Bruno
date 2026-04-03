@@ -88,37 +88,76 @@ class IngestionAgentV2(StreamingAgent):
             await asyncio.sleep(86400) # Alle 24 Stunden
 
     async def run_stream(self) -> None:
-        async with websockets.connect(self.ws_url) as ws:
-            self.state.health = "healthy"
-            await self.deps.log_manager.add_log(
-                LogLevel.INFO,
-                LogCategory.BINANCE,
-                "agent.ingestion",
-                f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams"
-            )
-            self.logger.info(f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams")
-            
-            async for message in ws:
-                if not self.state.running:
+        retry_count = 0
+        max_retries = 5
+        base_delay = 5  # Sekunden
+        
+        while retry_count < max_retries and self.state.running:
+            try:
+                async with websockets.connect(
+                    self.ws_url,
+                    ping_interval=30,      # Längerer Ping-Interval
+                    ping_timeout=30,       # Längerer Ping-Timeout
+                    close_timeout=10,       # Expliziter Close-Timeout
+                    open_timeout=15         # Connection-Timeout
+                ) as ws:
+                    self.state.health = "healthy"
+                    retry_count = 0  # Reset bei erfolgreicher Verbindung
+                    
+                    await self.deps.log_manager.add_log(
+                        LogLevel.INFO,
+                        LogCategory.BINANCE,
+                        "agent.ingestion",
+                        f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams (Versuch {retry_count + 1})"
+                    )
+                    self.logger.info(f"Verbunden mit Binance Multiplex: {len(self.streams)} Streams")
+                    
+                    async for message in ws:
+                        if not self.state.running:
+                            break
+                        
+                        try:
+                            payload = json.loads(message)
+                            if "stream" in payload and "data" in payload:
+                                stream_name = payload["stream"]
+                                data = payload["data"]
+                                await self._route_event(stream_name, data)
+                                self.state.processed_count += 1
+                                
+                                # Check Flush Timer
+                                now = datetime.now(timezone.utc)
+                                if (now - self.last_flush).total_seconds() >= self.flush_interval:
+                                    await self._flush_buffers()
+                                    self.last_flush = now
+                        except json.JSONDecodeError:
+                            pass
+                        except Exception as e:
+                            self.logger.error(f"Error in stream routing: {e}")
+                            
+            except Exception as e:
+                retry_count += 1
+                self.state.health = "degraded"
+                
+                error_msg = f"WebSocket-Verbindungsfehler (Versuch {retry_count}/{max_retries}): {str(e)}"
+                await self.deps.log_manager.add_log(
+                    LogLevel.ERROR,
+                    LogCategory.BINANCE,
+                    "agent.ingestion",
+                    error_msg
+                )
+                self.logger.error(error_msg)
+                
+                if retry_count >= max_retries:
+                    self.logger.error("Maximale Retry-Versuche erreicht. Stream wird beendet.")
                     break
                 
-                try:
-                    payload = json.loads(message)
-                    if "stream" in payload and "data" in payload:
-                        stream_name = payload["stream"]
-                        data = payload["data"]
-                        await self._route_event(stream_name, data)
-                        self.state.processed_count += 1
-                        
-                        # Check Flush Timer
-                        now = datetime.now(timezone.utc)
-                        if (now - self.last_flush).total_seconds() >= self.flush_interval:
-                            await self._flush_buffers()
-                            self.last_flush = now
-                except json.JSONDecodeError:
-                    pass
-                except Exception as e:
-                    self.logger.error(f"Error in stream routing: {e}")
+                # Exponential Backoff mit Jitter
+                delay = base_delay * (2 ** (retry_count - 1))
+                jitter = delay * 0.1 * (0.5 + (hash(str(retry_count)) % 100) / 100)
+                total_delay = delay + jitter
+                
+                self.logger.info(f"Retry in {total_delay:.1f} Sekunden...")
+                await asyncio.sleep(total_delay)
 
     async def _route_event(self, stream: str, data: Dict[str, Any]):
         if "@kline" in stream:

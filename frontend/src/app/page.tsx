@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { getBrowserWebSocketUrl } from "./utils/runtimeUrls";
 import {
   TrendingUp, TrendingDown, Activity, ShieldAlert, Cpu, Zap,
   BarChart3, Radio, AlertTriangle, CheckCircle2, Clock, Wifi,
@@ -56,9 +57,7 @@ export default function HomePage() {
 
   // Realtime price via WS
   useEffect(() => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/market/BTCUSDT`;
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(getBrowserWebSocketUrl("/ws/market/BTCUSDT"));
     ws.onmessage = (e) => {
       try {
         const p = JSON.parse(e.data);
@@ -153,9 +152,7 @@ export default function HomePage() {
   // Live log stream for activity feed
   useEffect(() => {
     const connect = () => {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-      const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/api/v1/logs/ws`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(getBrowserWebSocketUrl("/api/v1/logs/ws"));
       wsLogRef.current = ws;
       ws.onmessage = (event) => {
         try {
