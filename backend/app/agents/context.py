@@ -22,6 +22,8 @@ class ContextAgent(StreamingAgent):
         # Makro-Werte (Cache)
         self.vix: float = 20.0
         self.dxy_change: float = 0.0
+        self.dxy: float = 104.0          # Aktueller DXY-Stand
+        self.btc_change_1h: float = 0.0  # BTC Änderung letzte Stunde
         self.yields_10y: float = 4.30
         self.ndx_status: str = "BULLISH"
         self.m2_yoy_pct: float = 0.0
@@ -371,19 +373,119 @@ class ContextAgent(StreamingAgent):
         return 4.3
 
     async def _fetch_vix_and_dxy(self) -> dict:
+        """
+        Fetcht VIX (Angst-Index) und DXY (Dollar Index, 24h Change).
+        DXY steigend = starker Dollar = Gegenwind für BTC.
+        DXY fallend = schwacher Dollar = Rückenwind für BTC.
+        """
         start_t = time.perf_counter()
+        result = {"VIX": self.vix, "DXY": self.dxy, "DXY_Change_24h": self.dxy_change}
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/^VIX", headers={"User-Agent": self._user_agent})
+            async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": self._user_agent}) as client:
+                # VIX
+                r_vix = await client.get("https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX")
+                if r_vix.status_code == 200:
+                    meta = r_vix.json()["chart"]["result"][0]["meta"]
+                    result["VIX"] = float(meta["regularMarketPrice"])
+
+                # DXY mit 2-Tage History für 24h-Änderung
+                r_dxy = await client.get(
+                    "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB",
+                    params={"interval": "1d", "range": "5d"}
+                )
+                if r_dxy.status_code == 200:
+                    dxy_chart = r_dxy.json()["chart"]["result"][0]
+                    closes = dxy_chart["indicators"]["quote"][0]["close"]
+                    closes = [c for c in closes if c is not None]
+                    if len(closes) >= 2:
+                        result["DXY"] = round(closes[-1], 3)
+                        result["DXY_Change_24h"] = round(
+                            (closes[-1] - closes[-2]) / closes[-2] * 100, 4
+                        )
+                    elif closes:
+                        result["DXY"] = round(closes[-1], 3)
+
+            latency = (time.perf_counter() - start_t) * 1000
+            await self._report_health("yFinance_Macro", "online", latency)
+        except Exception as e:
+            self.logger.warning(f"VIX/DXY Fetch Fehler: {e}")
+            await self._report_health("yFinance_Macro", "degraded", 0.0)
+        return result
+
+    async def _fetch_glassnode_metrics(self) -> dict:
+        """
+        On-Chain Metriken via Glassnode API (optional — braucht GLASSNODE_API_KEY).
+        SOPR: Spent Output Profit Ratio — < 1.0 = Kapitulation (Kaufsignal)
+        Exchange Netflow: negativ = BTC verlässt Exchanges (bullish)
+        Cache: 24 Stunden (Glassnode Updates täglich)
+        """
+        api_key = self.deps.config.GLASSNODE_API_KEY
+        if not api_key:
+            return {}
+
+        CACHE_KEY = "bruno:macro:glassnode"
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached:
+            return cached
+
+        start_t = time.perf_counter()
+        result = {}
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # SOPR — Spent Output Profit Ratio
+                r = await client.get(
+                    "https://api.glassnode.com/v1/metrics/indicators/sopr",
+                    params={"a": "BTC", "api_key": api_key, "i": "24h", "f": "json", "limit": 1}
+                )
                 if r.status_code == 200:
-                    price = r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"]
-                    latency = (time.perf_counter() - start_t) * 1000
-                    await self._report_health("yFinance_Macro", "online", latency)
-                    return {"VIX": float(price), "DXY_Change": 0.0}
-        except Exception:
-            pass
-        await self._report_health("yFinance_Macro", "degraded", 0.0)
-        return {"VIX": 20.0, "DXY_Change": 0.0}
+                    data = r.json()
+                    if data:
+                        result["sopr"] = round(float(data[-1]["v"]), 4)
+
+                # Exchange Net Position Change (BTC)
+                r = await client.get(
+                    "https://api.glassnode.com/v1/metrics/transactions/transfers_volume_exchanges_net",
+                    params={"a": "BTC", "api_key": api_key, "i": "24h", "f": "json", "limit": 1}
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    if data:
+                        result["exchange_netflow_btc"] = round(float(data[-1]["v"]), 2)
+
+            if result:
+                await self.deps.redis.set_cache(CACHE_KEY, result, ttl=86400)
+                latency = (time.perf_counter() - start_t) * 1000
+                await self._report_health("Glassnode", "online", latency)
+                self.logger.info(
+                    f"Glassnode: SOPR={result.get('sopr', 'n/a')} | "
+                    f"NetFlow={result.get('exchange_netflow_btc', 'n/a')} BTC"
+                )
+        except Exception as e:
+            self.logger.warning(f"Glassnode Fehler: {e}")
+            await self._report_health("Glassnode", "offline", 0.0)
+        return result
+
+    async def _fetch_btc_1h_change(self) -> float:
+        """
+        BTC Kursänderung der letzten Stunde via Binance 1h-Kline.
+        Wichtig für kurzfristige Momentum-Erkennung im Pattern Detector.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                r = await client.get(
+                    "https://api.binance.com/api/v3/klines",
+                    params={"symbol": "BTCUSDT", "interval": "1h", "limit": 2}
+                )
+                if r.status_code == 200:
+                    klines = r.json()
+                    if len(klines) >= 1:
+                        # Letzte abgeschlossene 1h-Kerze: open=1, close=4
+                        open_p = float(klines[-1][1])
+                        close_p = float(klines[-1][4])
+                        return round((close_p - open_p) / open_p, 6)
+        except Exception as e:
+            self.logger.debug(f"BTC 1h Change Fehler: {e}")
+        return 0.0
 
     async def _fetch_nasdaq_status(self) -> str:
         try:
@@ -732,6 +834,75 @@ class ContextAgent(StreamingAgent):
 
         score += data.get("pattern_score", 0)
 
+        # ═══ TIER 4b: DXY — Dollar-Stärke ════════════════════════════════════
+        # DXY steigend = starker Dollar = Gegenwind für risikobehaftete Assets
+        dxy_chg = data.get("dxy_change_24h", 0.0)
+        if dxy_chg > 1.0:
+            score -= 10   # Starker Dollar-Anstieg: erheblicher Gegenwind
+        elif dxy_chg > 0.5:
+            score -= 6
+        elif dxy_chg > 0.2:
+            score -= 3
+        elif dxy_chg < -1.0:
+            score += 8    # Dollar-Schwäche: BTC-Rückenwind
+        elif dxy_chg < -0.5:
+            score += 5
+        elif dxy_chg < -0.2:
+            score += 2
+
+        # ═══ TIER 5: RETAIL SENTIMENT (Kontra-Indikator) ══════════════════════
+        # Crypto-Retail ist ein klassischer Kontra-Indikator:
+        # Extreme Gier (>0.7) → Verkaufsdruck nahe; extreme Angst → Kaufgelegenheit
+        retail = data.get("retail_score", 0.0)
+        fomo_warn = data.get("retail_fomo_warning", False)
+        if fomo_warn:
+            score -= 12   # FOMO Top: alle gleichzeitig bullish = Warnsignal
+        elif retail > 0.6:
+            score -= 6    # Starke Retail-Euphorie = konträr bearish
+        elif retail > 0.3:
+            score -= 3
+        elif retail < -0.6:
+            score += 7    # Retail-Kapitulation = konträr bullisch
+        elif retail < -0.3:
+            score += 3
+
+        # ═══ TIER 6: OFI — Orderflow-Imbalance (Mikro-Struktur) ══════════════
+        # Direkte Käufer/Verkäufer-Balance aus dem Orderbook
+        ofi = data.get("ofi_buy_pressure", 0.5)
+        if ofi > 0.72:
+            score += 6    # Starker Kauf-Druck im Orderbook
+        elif ofi > 0.60:
+            score += 3
+        elif ofi < 0.28:
+            score -= 6    # Starker Verkaufs-Druck
+        elif ofi < 0.40:
+            score -= 3
+
+        # ═══ TIER 7: GLASSNODE On-Chain (optional) ════════════════════════════
+        # SOPR < 1.0 = Investoren realisieren Verluste (Kapitulation = Kaufsignal)
+        sopr = data.get("sopr", None)
+        if sopr is not None:
+            if sopr < 0.96:
+                score += 12   # Starke Kapitulation
+            elif sopr < 0.99:
+                score += 6
+            elif sopr > 1.08:
+                score -= 6    # Starke Gewinnmitnahmen
+            elif sopr > 1.04:
+                score -= 3
+
+        # Exchange Netflow: negativ = BTC verlässt Exchanges (bullish)
+        netflow = data.get("exchange_netflow_btc", None)
+        if netflow is not None:
+            if netflow < -3000:
+                score += 10   # Massive Outflows = Hodler akkumulieren
+            elif netflow < -1000:
+                score += 5
+            elif netflow > 3000:
+                score -= 10   # Massive Inflows = Verkaufsdruck
+            elif netflow > 1000:
+                score -= 5
+
         # Absoluter Minimalwert: 10 (nie 0.0 bei normalen API-Ausfällen)
         score = max(score, 10.0)
 
@@ -759,11 +930,18 @@ class ContextAgent(StreamingAgent):
                 self.yields_10y = await self._fetch_fred_yields()
                 macro = await self._fetch_vix_and_dxy()
                 self.vix = macro.get("VIX", self.vix)
-                self.dxy_change = macro.get("DXY_Change", self.dxy_change)
+                self.dxy = macro.get("DXY", self.dxy)
+                self.dxy_change = macro.get("DXY_Change_24h", self.dxy_change)
                 self.ndx_status = await self._fetch_nasdaq_status()
                 self.m2_yoy_pct = await self._fetch_m2_supply()
                 self.stablecoin_delta_bn = await self._fetch_stablecoin_supply()
                 self._last_macro_fetch = now_t
+
+            # BTC 1h Change — jeden Zyklus aktualisieren (30s Intervall)
+            self.btc_change_1h = await self._fetch_btc_1h_change()
+
+            # Glassnode On-Chain (optional, gecacht 24h)
+            glassnode = await self._fetch_glassnode_metrics()
 
             self.oi_trend = await self._fetch_oi_trend()
             self.etf_flows = await self._fetch_etf_flows()
@@ -816,6 +994,12 @@ class ContextAgent(StreamingAgent):
 
             oi_delta_pct = ((self.open_interest - self.oi_prev) / self.oi_prev * 100.0) if self.oi_prev > 0 else 0.0
 
+            # OFI aus dem Quant-Micro-Payload lesen
+            ofi_buy_pressure = float(quant_micro.get("OFI_Buy_Pressure", 0.5))
+            ofi_mean_imbalance = float(quant_micro.get("OFI_Mean_Imbalance", 1.0))
+
+            fear_greed = int((await self.deps.redis.get_cache("macro:fear_and_greed") or {}).get("value", 50))
+
             pattern_data = {
                 "oi_7d_change_pct": self.oi_trend.get("oi_7d_change_pct", 0),
                 "etf_flow_3d_m": self.etf_flows.get("flow_3d_m", 0),
@@ -825,8 +1009,8 @@ class ContextAgent(StreamingAgent):
                 "funding_divergence": self._funding_divergence,
                 "stablecoin_delta_bn": self.stablecoin_delta_bn,
                 "btc_change_24h": self.btc_change_24h,
-                "btc_change_1h": 0.0,
-                "fear_greed": int((await self.deps.redis.get_cache("macro:fear_and_greed") or {}).get("value", 50)),
+                "btc_change_1h": self.btc_change_1h,   # FIX: war hardcoded 0.0
+                "fear_greed": fear_greed,
                 "deleveraging_complete": self.oi_trend.get("deleveraging_complete", False),
                 "liq_bias": liq_asym.get("bias", "balanced"),
                 "liq_squeeze_potential": liq_asym.get("squeeze_potential", False),
@@ -845,6 +1029,16 @@ class ContextAgent(StreamingAgent):
                 "long_short_ratio": self.long_short_ratio,
                 "yields_10y": self.yields_10y,
                 "m2_yoy_pct": self.m2_yoy_pct,
+                # Neu: DXY, Retail, OFI, Glassnode
+                "dxy_change_24h": self.dxy_change,
+                "retail_score": retail_score,
+                "retail_fomo_warning": retail_fomo_warning,
+                "ofi_buy_pressure": ofi_buy_pressure,
+                "ofi_mean_imbalance": ofi_mean_imbalance,
+                **({
+                    "sopr": glassnode["sopr"],
+                    "exchange_netflow_btc": glassnode["exchange_netflow_btc"],
+                } if glassnode else {}),
             }
             
             grss = self.calculate_grss(grss_input)
@@ -864,7 +1058,8 @@ class ContextAgent(StreamingAgent):
                 "Macro_Status": self.ndx_status,
                 "VIX": round(self.vix, 2),
                 "Yields_10Y": round(self.yields_10y, 2),
-                "DXY_Change_Pct": round(self.dxy_change, 4),
+                "DXY": round(self.dxy, 3),
+                "DXY_Change_24h_Pct": round(self.dxy_change, 4),
                 "M2_YoY_Pct": round(self.m2_yoy_pct, 2),
                 "Funding_Rate": round(funding_rate, 4),
                 "Funding_Divergence": round(self._funding_divergence, 4),
@@ -882,8 +1077,12 @@ class ContextAgent(StreamingAgent):
                 "News_Silence_Seconds": round(news_silence_seconds, 1),
                 "Funding_Settlement_Window": self._is_funding_settlement_window(),
                 "CoinGlass_Active": self.coinglass.is_active,
+                "Glassnode_SOPR": glassnode.get("sopr"),
+                "Glassnode_NetFlow_BTC": glassnode.get("exchange_netflow_btc"),
                 "BTC_Change_24h_Pct": round(self.btc_change_24h, 4),
-                "BTC_Change_1h_Pct": 0.0,
+                "BTC_Change_1h_Pct": round(self.btc_change_1h, 6),
+                "OFI_Buy_Pressure": round(ofi_buy_pressure, 3),
+                "OFI_Mean_Imbalance": round(ofi_mean_imbalance, 4),
                 "pattern_score": self.pattern_result["pattern_score"],
                 "Active_Patterns": self.pattern_result["active_patterns"],
                 "OI_Trend": self.oi_trend,
