@@ -1,3 +1,7 @@
+# DEPRECATED — Nicht mehr verwendet. Aktive Version: execution_v3.py
+# Dieser Code wird nicht mehr durch worker.py importiert.
+raise ImportError("Diese Datei ist deprecated. Nutze execution_v3.py")
+
 from app.agents.base import StreamingAgent
 from app.agents.deps import AgentDependencies
 from app.core.exchange_manager import AuthenticatedExchangeClient

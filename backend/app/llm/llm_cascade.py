@@ -21,6 +21,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from app.core.llm_provider import BaseLLMProvider as LLMProvider
@@ -204,6 +205,43 @@ class LLMCascade:
         self.regime_manager = RegimeManager(redis_client)
         self._initialized = False
 
+    def _get_confidence_thresholds(self) -> tuple[float, float]:
+        """
+        Gibt (layer1_min, layer2_min) zurück.
+        DRY_RUN + Learning Mode: niedrigere Schwellen.
+        Live: immer Produktions-Schwellen.
+        """
+        import os
+
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        try:
+            with open(config_path) as f:
+                cfg = json.load(f)
+        except Exception:
+            return 0.60, 0.65
+
+        dry_run = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
+
+        if not dry_run:
+            return (
+                float(cfg.get("LEARNING_Layer1_Confidence_PROD", 0.60)),
+                float(cfg.get("LEARNING_Layer2_Confidence_PROD", 0.65)),
+            )
+
+        if cfg.get("LEARNING_MODE_ENABLED", False):
+            return (
+                float(cfg.get("LEARNING_Layer1_Confidence", 0.50)),
+                float(cfg.get("LEARNING_Layer2_Confidence", 0.55)),
+            )
+
+        return (
+            float(cfg.get("LEARNING_Layer1_Confidence_PROD", 0.60)),
+            float(cfg.get("LEARNING_Layer2_Confidence_PROD", 0.65)),
+        )
+
     async def initialize(self) -> None:
         """Einmalig beim Agenten-Start aufrufen."""
         await self.regime_manager.load_from_redis()
@@ -229,6 +267,7 @@ class LLMCascade:
         market_context["grss"] = grss_score  # Layer 3 braucht GRSS direkt
 
         result = CascadeResult()
+        layer1_min_confidence, layer2_min_confidence = self._get_confidence_thresholds()
 
         # ── GRSS Gate (vor Cascade) ───────────────────────────────────────
         await self._report_pulse("gate_grss", "checking")
@@ -273,14 +312,14 @@ class LLMCascade:
 
         # Gate 1
         l1_confidence = float(l1_raw.get("confidence", 0.0))
-        if l1_raw.get("_parse_error") or l1_confidence < GATE1_MIN_CONFIDENCE:
+        if l1_raw.get("_parse_error") or l1_confidence < layer1_min_confidence:
             result.aborted_at = "gate1"
             result.duration_ms = (time.perf_counter() - t_start) * 1000
             logger.info(
                 f"Cascade HOLD @ Gate1: confidence={l1_confidence:.2f} "
-                f"(min={GATE1_MIN_CONFIDENCE}) | regime={raw_regime}"
+                f"(min={layer1_min_confidence}) | regime={raw_regime}"
             )
-            await self._report_pulse("layer1", "aborted", {"reason": f"confidence {l1_confidence:.2f} < {GATE1_MIN_CONFIDENCE}"})
+            await self._report_pulse("layer1", "aborted", {"reason": f"confidence {l1_confidence:.2f} < {layer1_min_confidence}"})
             await self._log_to_redis(result)
             return result
         await self._report_pulse("layer1", "passed", {"regime": confirmed_regime})
@@ -309,12 +348,12 @@ class LLMCascade:
 
         if (l2_raw.get("_parse_error")
                 or l2_decision == "HOLD"
-                or l2_confidence < GATE2_MIN_CONFIDENCE):
+                or l2_confidence < layer2_min_confidence):
             result.aborted_at = "gate2"
             result.duration_ms = (time.perf_counter() - t_start) * 1000
             logger.info(
                 f"Cascade HOLD @ Gate2: decision={l2_decision} "
-                f"confidence={l2_confidence:.2f} (min={GATE2_MIN_CONFIDENCE})"
+                f"confidence={l2_confidence:.2f} (min={layer2_min_confidence})"
             )
             await self._report_pulse("layer2", "aborted", {"decision": l2_decision, "confidence": l2_confidence})
             await self._log_to_redis(result)

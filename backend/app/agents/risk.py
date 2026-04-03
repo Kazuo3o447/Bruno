@@ -52,6 +52,27 @@ class RiskAgent(PollingAgent):
         except Exception:
             return default
 
+    def _get_effective_grss_threshold(self) -> float:
+        """
+        Gibt den effektiven GRSS-Threshold zurück.
+        Im DRY_RUN + LEARNING_MODE: niedrigere Schwelle für mehr Trainingsdaten.
+        Im Live-Betrieb: immer Produktions-Schwelle, kein Learning Mode möglich.
+        """
+        prod_threshold = self._load_config_value("GRSS_Threshold", 40.0)
+
+        if not self.deps.config.DRY_RUN:
+            return prod_threshold
+
+        learning_enabled = self._load_config_value("LEARNING_MODE_ENABLED", 0.0)
+        if learning_enabled:
+            learning_threshold = self._load_config_value("LEARNING_GRSS_Threshold", 25.0)
+            self.logger.debug(
+                f"Learning Mode aktiv: GRSS-Threshold {prod_threshold} → {learning_threshold}"
+            )
+            return learning_threshold
+
+        return prod_threshold
+
     async def _report_health(self, source: str, status: str, latency: float):
         """Meldet Status und Latenz an den globalen Redis-Health-Hub."""
         health_data = {
@@ -83,7 +104,7 @@ class RiskAgent(PollingAgent):
     async def process(self) -> None:
         try:
             # Config hot-reload: GRSS Threshold kann im laufenden Betrieb geändert werden
-            self._grss_threshold = self._load_config_value("GRSS_Threshold", 40.0)
+            self._grss_threshold = self._get_effective_grss_threshold()
             
             # 1. Signale sammeln
             signals = await self._fetch_all_signals()
@@ -114,7 +135,7 @@ class RiskAgent(PollingAgent):
                 reason_notes = []
                 
                 # 2. News Silence Watchdog (Harter Checkout 3600s)
-                last_update_str = context.get("last_update")
+                last_update_str = context.get("timestamp")  # ContextAgent schreibt "timestamp"
                 if last_update_str:
                     last_update = datetime.fromisoformat(last_update_str)
                     age = (datetime.now(timezone.utc) - last_update).total_seconds()
@@ -192,6 +213,8 @@ class RiskAgent(PollingAgent):
                 "Max_Leverage": round(leverage, 2),
                 "Volatility_Size_Multiplier": round(vol_multiplier, 2),
                 "DVOL_At_Decision": round(dvol, 1),
+                "Learning_Mode_Active": self.deps.config.DRY_RUN and bool(self._load_config_value("LEARNING_MODE_ENABLED", 0)),
+                "Effective_GRSS_Threshold": round(self._grss_threshold, 2),
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
             

@@ -7,12 +7,12 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-02 (Critical Fixes COMPLETED)
+> Letzte Aktualisierung: 2026-04-03 (Learning Mode / Phantom Trades)
 > Repository: https://github.com/Kazuo3o447/Bruno
 
 ---
 
-## 🎯 STATUS UPDATE (2. April 2026)
+## 🎯 STATUS UPDATE (3. April 2026)
 
 ### ✅ PHASE F COMPLETED - Critical Fixes & Config-Hot-Reload
 - **Doppeltes Prefix behoben** - export, config, decisions Router Endpunkte erreichbar
@@ -22,6 +22,7 @@
 - **Preset-System implementiert** - 3 Presets (Standard, Konservativ, Aggressiv) mit visueller Auswahl
 - **Startup Warm-Up** - ContextAgent initialisiert Datenquellen sofort nach Start
 - **SIGNAL-REFORM S1 (2026-04-03)** - OFI-Gate entfernt, zeitbasierter Zyklus, Decision Feed aktiv
+- **PHASE G.0 (2026-04-03)** - Learning Mode für DRY_RUN, Phantom Trades und trade_mode-Tagging abgeschlossen
 
 ### 📋 IMPLEMENTIERTE LÖSUNGEN
 1. **API-Endpunkt Fixes:** Doppeltes /api/v1 Prefix in 3 Routern entfernt
@@ -59,6 +60,7 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ❌ NIEMALS: Polling-Intervall unter 60 Sekunden für Quant/Context/Risk Agenten
 ❌ NIEMALS: random.uniform() oder random.random() in produktivem Signal-Code
 ❌ NIEMALS: Echte Orders platzieren wenn DRY_RUN=True (Hardware-Level-Block)
+❌ NIEMALS: LEARNING_MODE_ENABLED berücksichtigen wenn DRY_RUN=False
 ❌ NIEMALS: GRSS-Score aus weniger als 4 echten Datenquellen berechnen
 ❌ NIEMALS: ExecutionAgent direkt auf Exchange zugreifen lassen ohne RAM-Veto-Check
 ❌ NIEMALS: API-Keys in Code committen (ausschließlich .env, nie .env.example mit echten Werten)
@@ -68,6 +70,8 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ❌ NIEMALS: Mehr als MAX_LEVERAGE * Kontokapital als Positionsgröße berechnen
 ❌ NIEMALS: Max_Leverage über 1.0 setzen — kein Kredit, keine Hebelwirkung
 ❌ NIEMALS: SIMULATED_CAPITAL_EUR unter 10 EUR setzen
+❌ NIEMALS: Phantom-Trade-P&L in Portfolio-State oder Capital-Berechnung einfließen lassen
+❌ NIEMALS: trade_mode='phantom' oder trade_mode='learning' in Live-Profit-Statistiken mischen
 ```
 
 ---
@@ -79,6 +83,9 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 - **VETO-RELAXATION: VIX Limit 45, NDX Bearish blockiert nicht mehr — NEU**
 - **INSTITUTIONALE SIGNALE: ETF Flows (Farside), OI-Trend (Binance), Max Pain (Deribit) — NEU**
 - **FULL-DEPTH QUANT: 20-Level OFI & Liquidation Asymmetry — NEU**
+- **LEARNING MODE (DRY_RUN only):** Niedrigere Signalschwellen für Trainingsdaten-Beschleunigung
+- **PHANTOM TRADES:** HOLD-Zyklen werden hypothetisch ausgewertet (240min Outcome-Tracking)
+- **TRADE MODE FLAG:** Jeder Trade in DB markiert als "learning" | "production" | "phantom"
 - **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse)**
 - LLM-Kaskade (3-Layer Entscheidungslogik mit qwen2.5/deepseek-r1)
 - Docker Compose Stack (PostgreSQL/TimescaleDB, Redis Stack, FastAPI, Next.js)
@@ -93,6 +100,7 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 - **Frontend Phase E:** Open Position Panel, Kill-Switch und GRSS Breakdown fehlen noch
 - **Dashboard-Integration:** Phase-E-Komponenten sind noch nicht in `dashboard/page.tsx` verdrahtet
 - **Phase G:** Backtest Engine / Optuna-Kalibrierung ist noch offen
+- **Phase G.0:** Learning Mode / Phantom Trades / trade_mode-Tagging ist jetzt in Arbeit
 - **Phase H:** Live-Freigabe (`DRY_RUN=False`) ist noch offen
 
 ---
@@ -689,6 +697,17 @@ Ziel erreicht: Der Bot ist ehrlich. Kein Trade auf Basis von Zufallsdaten.
 3. Manuelles Feedback-UI im Dashboard ist noch offen
 4. Debrief-Analyse im MLOps-Dashboard ist noch offen
 
+**PHASE G.0 — Learning Mode (DRY_RUN only) ✅ COMPLETED (2026-04-03)**
+1. DRY_RUN-aware GRSS-Threshold (25 statt 40 im Learning Mode)
+2. DRY_RUN-aware LLM Confidence-Schwellen (0.50/0.55 statt 0.60/0.65)
+3. `trade_mode` Flag in `trade_audit_logs` und `trade_debriefs`
+4. Phantom Trade System für HOLD-Zyklen (240min Outcome-Tracking)
+5. Phantom Trade Evaluator als Scheduler-Loop (30min Intervall)
+6. Migration `010_trade_mode_column.py` erstellt
+7. `config.json` um Learning-Mode-Keys erweitert
+
+Ziel erreicht: Mehr Paper-Trades/Tag + deutlich mehr Trainingsdaten, ohne Produktions-Logik zu kontaminieren.
+
 **PHASE G — Backtest + Kalibrierung (Woche 7–9)**
 
 1. Historische Binance Klines + Funding Rates laden (6 Monate)
@@ -703,6 +722,18 @@ Ziel erreicht: Der Bot ist ehrlich. Kein Trade auf Basis von Zufallsdaten.
 3. Daily Loss Limit setzen (empfohlen: 2% des deployed Kapitals)
 4. Telegram-Monitoring aktiv
 5. Erste Woche: Manuelles Monitoring jedes Trades
+
+---
+
+### ✅ PHASE F+ - Trade-Pipeline Diagnose & Startup-Race-Fix (2026-04-03)
+- Debug Endpoint /api/v1/debug/trade-pipeline implementiert
+- ContextAgent Warm-Up schreibt jetzt Minimal-GRSS Payload direkt nach setup()
+- worker.py datetime Import Bug behoben (pause_bot NameError)
+- /api/v1/agents/kill Endpoint implementiert (KillSwitch war wirkungslos)
+- _audit_trade log_manager API Bug behoben (TypeError)
+- risk.py News-Silence Key korrigiert: "last_update" → "timestamp"
+- OllamaProvider Init-Logging in quant_v3 (LLM Config Transparenz)
+- quant.py / execution.py als DEPRECATED markiert
 
 ---
 
@@ -721,6 +752,8 @@ Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
 | TimescaleDB für Zeitreihendaten | Native Hypertable-Performance für OHLCV-Queries |
 | Redis als Kommunikationsbus | Sub-Millisekunde Pub/Sub zwischen Agenten |
 | Reasoning Trail für jeden Trade | Transparenz ist Voraussetzung für Vertrauen und Lernen |
+| Learning Mode nur in DRY_RUN | Produktions-Schwellen werden niemals durch Lernmodus kontaminiert. Trennung über trade_mode Flag in DB. |
+| Phantom Trades für HOLDs | 288 auswertbare Zyklen/Tag statt 2. Kein Kapital-Einfluss. Outcome nach 240min aus Echtpreisen berechnet. |
 
 ---
 

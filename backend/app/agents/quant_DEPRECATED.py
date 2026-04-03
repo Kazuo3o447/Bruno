@@ -1,3 +1,7 @@
+# DEPRECATED — Nicht mehr verwendet. Aktive Version: quant_v3.py
+# Dieser Code wird nicht mehr durch worker.py importiert.
+raise ImportError("Diese Datei ist deprecated. Nutze quant_v3.py")
+
 import asyncio
 import json
 import logging

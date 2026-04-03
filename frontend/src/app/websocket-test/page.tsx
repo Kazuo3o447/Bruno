@@ -11,7 +11,9 @@ export default function WebSocketTest() {
     console.log("Starting WebSocket test...");
     
     try {
-      const ws = new WebSocket("ws://localhost:3000/ws/agents");
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/agents`;
+      const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {
         console.log("WebSocket opened successfully");

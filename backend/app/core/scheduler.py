@@ -223,6 +223,116 @@ class SystemtestScheduler:
         except Exception as e:
             logger.error(f"Fehler beim Aktualisieren des Intervalls: {e}")
             return {"status": "error", "message": str(e)}
+
+    async def _evaluate_phantom_trades(self):
+        """
+        Wertet abgelaufene Phantom-Trades aus.
+        Holt den aktuellen Preis und berechnet den hypothetischen P&L.
+        Schreibt Ergebnis in trade_debriefs mit trade_mode='phantom'.
+        """
+        try:
+            from app.core.database import AsyncSessionLocal
+            from sqlalchemy import text
+
+            now = datetime.now(timezone.utc)
+            pending_raw = await redis_client.redis.lrange("bruno:phantom_trades:pending", 0, -1)
+            completed_key = "bruno:phantom_trades:completed_ids"
+
+            remaining = []
+            evaluated_count = 0
+
+            for item_raw in pending_raw:
+                phantom = json.loads(item_raw)
+                phantom_id = phantom["phantom_id"]
+
+                if await redis_client.redis.sismember(completed_key, phantom_id):
+                    continue
+
+                lock_key = f"bruno:phantom_trades:lock:{phantom_id}"
+                acquired = await redis_client.redis.set(lock_key, now.isoformat(), nx=True, ex=86400)
+                if not acquired:
+                    remaining.append(item_raw)
+                    continue
+
+                should_keep = False
+                evaluate_at = datetime.fromisoformat(phantom["evaluate_at"])
+
+                try:
+                    if now < evaluate_at:
+                        should_keep = True
+                        continue
+
+                    ticker = await redis_client.get_cache("market:ticker:BTCUSDT") or {}
+                    current_price = float(ticker.get("last_price", 0))
+                    entry_price = float(phantom.get("entry_price", 0))
+
+                    if current_price <= 0 or entry_price <= 0:
+                        should_keep = True
+                        continue
+
+                    phantom_long_pct = (current_price - entry_price) / entry_price
+                    phantom_short_pct = (entry_price - current_price) / entry_price
+
+                    phantom["exit_price"] = current_price
+                    phantom["phantom_long_pct"] = round(phantom_long_pct, 4)
+                    phantom["phantom_short_pct"] = round(phantom_short_pct, 4)
+                    phantom["status"] = "evaluated"
+                    phantom["evaluated_at"] = now.isoformat()
+
+                    async with AsyncSessionLocal() as session:
+                        await session.execute(
+                            text("""
+                                INSERT INTO trade_debriefs (
+                                    id, trade_id, timestamp, decision_quality,
+                                    key_signal, improvement, pattern, regime_assessment,
+                                    trade_mode, raw_llm_response
+                                ) VALUES (
+                                    :id, :trade_id, :timestamp, :decision_quality,
+                                    :key_signal, :improvement, :pattern, :regime_assessment,
+                                    :trade_mode, :raw_llm_response
+                                )
+                                ON CONFLICT (id) DO NOTHING
+                            """),
+                            {
+                                "id": phantom_id,
+                                "trade_id": phantom_id,
+                                "timestamp": now,
+                                "decision_quality": "PHANTOM",
+                                "key_signal": f"phantom_long_pct={phantom['phantom_long_pct']}, phantom_short_pct={phantom['phantom_short_pct']}",
+                                "improvement": "N/A",
+                                "pattern": phantom.get("aborted_at", "hold_cycle"),
+                                "regime_assessment": phantom.get("regime", "unknown"),
+                                "trade_mode": "phantom",
+                                "raw_llm_response": json.dumps(phantom),
+                            },
+                        )
+                        await session.commit()
+
+                    await redis_client.redis.sadd(completed_key, phantom_id)
+                    await redis_client.redis.lpush(
+                        "bruno:phantom_trades:evaluated", json.dumps(phantom)
+                    )
+                    await redis_client.redis.ltrim("bruno:phantom_trades:evaluated", 0, 999)
+                    evaluated_count += 1
+
+                except Exception as e:
+                    should_keep = True
+                    logger.error(f"Phantom Trade {phantom_id} Evaluation Fehler: {e}")
+                finally:
+                    await redis_client.redis.delete(lock_key)
+
+                if should_keep:
+                    remaining.append(item_raw)
+
+            if pending_raw:
+                await redis_client.redis.delete("bruno:phantom_trades:pending")
+                for item in remaining:
+                    await redis_client.redis.rpush("bruno:phantom_trades:pending", item)
+                if evaluated_count > 0:
+                    logger.info(f"Phantom Trades ausgewertet: {evaluated_count}")
+
+        except Exception as e:
+            logger.error(f"Phantom Trade Evaluation Fehler: {e}")
     
     async def _run_scheduler(self):
         """
@@ -252,6 +362,11 @@ class SystemtestScheduler:
                     logger.info(f"Automatischer Systemtest abgeschlossen: {result.overall_status}")
                 except Exception as test_error:
                     logger.error(f"Fehler beim automatischen Systemtest: {test_error}")
+
+                try:
+                    await self._evaluate_phantom_trades()
+                except Exception as phantom_error:
+                    logger.error(f"Fehler bei der Phantom-Trade-Auswertung: {phantom_error}")
                 
                 # Last run aktualisieren
                 config.last_run = datetime.now(timezone.utc).isoformat()

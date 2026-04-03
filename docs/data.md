@@ -190,3 +190,40 @@ Das System erfasst für jeden (simulierten) Trade einen hochpräzisen Datensatz 
 > [!CAUTION]
 > **Performance-Vorgabe:** In Phase 7.5 ist die Simulation der Gebühren (0.04%) zwingend einzuhalten. Shadow-Trades ohne Fees gelten als ungültig und verzerren die MLOps-Optimierung.
 
+---
+
+## 7. Learning Mode Redis Keys
+
+| Key | Typ | Inhalt |
+|-----|-----|--------|
+| `bruno:phantom_trades:pending` | List | Noch nicht ausgewertete Phantom-Trades (max 500) |
+| `bruno:phantom_trades:evaluated` | List | Ausgewertete Phantom-Trades mit Outcome (max 1000) |
+
+### Phantom Trade Schema (pending)
+```json
+{
+  "phantom_id": "uuid",
+  "ts": "ISO timestamp",
+  "evaluate_at": "ISO timestamp",
+  "entry_price": 84500.0,
+  "grss_at_decision": 38.5,
+  "regime": "ranging",
+  "aborted_at": "gate2",
+  "layer1": {},
+  "layer2": {},
+  "ofi_buy_pressure": 0.48,
+  "trade_mode": "phantom",
+  "status": "pending_evaluation"
+}
+```
+
+### Phantom Trade Schema (evaluated, zusätzlich)
+```json
+{
+  "exit_price": 85200.0,
+  "phantom_long_pct": 0.0083,
+  "phantom_short_pct": -0.0083,
+  "status": "evaluated",
+  "evaluated_at": "ISO timestamp"
+}
+```

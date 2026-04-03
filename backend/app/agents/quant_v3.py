@@ -22,6 +22,22 @@ class QuantAgent(PollingAgent):
         self.cvd_cumulative = 0.0
         self.exm = PublicExchangeClient(redis=deps.redis)
         self._last_price: float = 0.0   # Für Decision Logging
+
+    def _load_config_value(self, key: str, default: float) -> float:
+        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        try:
+            with open(config_path, "r") as f:
+                value = json.load(f).get(key, default)
+                if isinstance(value, bool):
+                    return 1.0 if value else 0.0
+                return float(value)
+        except Exception:
+            return default
         
     async def setup(self) -> None:
         self.logger.info(f"QuantAgent für {self.symbol} gestartet.")
@@ -140,6 +156,56 @@ class QuantAgent(PollingAgent):
         except Exception as e:
             self.logger.warning(f"Decision Log Fehler: {e}")
 
+    async def _record_phantom_trade(
+        self,
+        cascade_result,
+        grss_score: float,
+        price: float,
+        ofi_data: dict,
+    ) -> None:
+        """
+        Speichert einen hypothetischen Trade für HOLD-Entscheidungen.
+        Wird nach PHANTOM_HOLD_DURATION_MINUTES ausgewertet (Preis-Outcome).
+
+        Diese Daten gehen AUSSCHLIESSLICH in trade_debriefs mit trade_mode='phantom'.
+        Kein Einfluss auf Portfolio, Capital, P&L oder Veto-Logik.
+        """
+        try:
+            import uuid
+            from datetime import timedelta
+
+            hold_duration = int(self._load_config_value("PHANTOM_HOLD_DURATION_MINUTES", 240.0))
+            phantom_id = str(uuid.uuid4())
+            evaluate_at = (
+                datetime.now(timezone.utc) + timedelta(minutes=hold_duration)
+            ).isoformat()
+
+            phantom = {
+                "phantom_id": phantom_id,
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "evaluate_at": evaluate_at,
+                "entry_price": price,
+                "grss_at_decision": grss_score,
+                "regime": cascade_result.regime,
+                "aborted_at": cascade_result.aborted_at,
+                "layer1": cascade_result.layer1,
+                "layer2": cascade_result.layer2,
+                "ofi_buy_pressure": ofi_data.get("buy_pressure_ratio", 0),
+                "ofi_mean_imbalance": ofi_data.get("mean_imbalance", 1.0),
+                "trade_mode": "phantom",
+                "status": "pending_evaluation",
+            }
+
+            await self.deps.redis.redis.lpush(
+                "bruno:phantom_trades:pending", json.dumps(phantom)
+            )
+            await self.deps.redis.redis.ltrim("bruno:phantom_trades:pending", 0, 499)
+
+            self.logger.debug(f"Phantom Trade gespeichert: {phantom_id} | evaluate_at={evaluate_at}")
+
+        except Exception as e:
+            self.logger.warning(f"Phantom Trade Fehler (nicht kritisch): {e}")
+
     async def _get_liquidation_walls(self) -> List[Dict]:
         """Aggregiert Liquidations-Cluster via SQL (Rounding -2)."""
         start = time.perf_counter()
@@ -251,6 +317,12 @@ class QuantAgent(PollingAgent):
                 llm_provider = OllamaProvider()
                 self._llm_cascade = LLMCascade(self.deps.redis, llm_provider)
                 await self._llm_cascade.initialize()
+                self.logger.info(
+                    f"LLM Cascade initialisiert | Provider: {type(llm_provider).__name__} | "
+                    f"Base URL: {getattr(llm_provider, 'base_url', 'UNBEKANNT')} | "
+                    f"Models: layer1={getattr(llm_provider, 'fast_model', 'UNBEKANNT')} "
+                    f"layer2={getattr(llm_provider, 'reasoning_model', 'UNBEKANNT')}"
+                )
 
             # market_context enthält alle Daten für Layer 2 und 3
             market_context = {
@@ -301,6 +373,20 @@ class QuantAgent(PollingAgent):
                 ofi_data=ofi_data,
                 cascade_result=cascade_result,
             )
+
+            # ── PHANTOM TRADE für HOLD-Zyklen ──────────────────────────────────────
+            # Nur in DRY_RUN + Learning Mode. Niemals in Live.
+            if (
+                not cascade_result.is_actionable
+                and self.deps.config.DRY_RUN
+                and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
+            ):
+                await self._record_phantom_trade(
+                    cascade_result=cascade_result,
+                    grss_score=grss_score,
+                    price=best_bid_p,
+                    ofi_data=ofi_data,
+                )
 
             # ── 12. Bei BUY/SELL → Signal publizieren ────────────────────────────
             if cascade_result.is_actionable:

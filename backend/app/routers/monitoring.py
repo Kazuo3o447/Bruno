@@ -114,6 +114,110 @@ async def get_live_telemetry():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/debug/trade-pipeline")
+async def trade_pipeline_debug():
+    """
+    Zeigt den Zustand jedes Gates in der Trade-Execution-Pipeline.
+    Nutze diesen Endpoint um zu diagnostizieren wo Trades blockiert werden.
+    """
+    import json
+
+    # 1. GRSS & Freshness (ContextAgent Output)
+    grss_data = await redis_client.get_cache("bruno:context:grss") or {}
+
+    # 2. Veto State (RiskAgent Output)
+    veto_raw = await redis_client.redis.get("bruno:veto:state")
+    veto_data = json.loads(veto_raw) if veto_raw else {"error": "key_not_found"}
+
+    # 3. Veto History (letzte 5 Zustandswechsel)
+    veto_history_raw = await redis_client.redis.lrange("bruno:veto:history", 0, 4)
+    veto_history = [json.loads(x) for x in veto_history_raw] if veto_history_raw else []
+
+    # 4. Decision Feed (letzte 5 Zyklen aus QuantAgent)
+    feed_raw = await redis_client.redis.lrange("bruno:decisions:feed", 0, 4)
+    decision_feed = [json.loads(x) for x in feed_raw] if feed_raw else []
+
+    # 5. Quant Micro (QuantAgent letzter Output)
+    quant_micro = await redis_client.get_cache("bruno:quant:micro") or {}
+
+    # 6. Portfolio State
+    portfolio = await redis_client.get_cache("bruno:portfolio:state") or {}
+
+    # 7. Health Sources
+    health = await redis_client.get_cache("bruno:health:sources") or {}
+
+    # 8. Offene Position
+    position = await redis_client.get_cache("bruno:positions:BTCUSDT") or {}
+
+    # 9. Daily Limit
+    daily_limit = await redis_client.get_cache("bruno:portfolio:daily_limit_hit") or {}
+
+    # Klartext-Diagnose bauen
+    gates = {
+        "gate_1_data_freshness": {
+            "fresh_source_count": grss_data.get("Fresh_Source_Count", "MISSING"),
+            "data_freshness_active": grss_data.get("Data_Freshness_Active", "MISSING"),
+            "blocked": grss_data.get("Data_Freshness_Active") == False,
+            "note": "Wenn False: quant_v3 Pre-Gate blockiert LLM Cascade komplett"
+        },
+        "gate_2_grss_precheck": {
+            "grss_score": grss_data.get("GRSS_Score", "MISSING"),
+            "grss_score_raw": grss_data.get("GRSS_Score_Raw", "MISSING"),
+            "blocked": float(grss_data.get("GRSS_Score", 100)) < 20,
+            "note": "Wenn GRSS < 20: quant_v3 Pre-Gate hält (Extremstress)"
+        },
+        "gate_3_risk_veto": {
+            "veto_active": veto_data.get("Veto_Active", "MISSING"),
+            "reason": veto_data.get("Reason", "MISSING"),
+            "blocked": veto_data.get("Veto_Active", True),
+            "veto_history": veto_history,
+            "note": "Wenn True: ExecutionAgent blockiert ALLE Trades"
+        },
+        "gate_4_llm_cascade": {
+            "last_5_decisions": decision_feed,
+            "note": "Prüfe outcome-Felder: OFI_BELOW_THRESHOLD/CASCADE_*/SIGNAL_BUY/SIGNAL_SELL"
+        },
+        "gate_5_position_guard": {
+            "has_open_position": bool(position and position.get("status") == "open"),
+            "position": position,
+            "blocked": bool(position and position.get("status") == "open"),
+            "note": "Wenn True: kein neuer Trade bis Position geschlossen"
+        },
+        "gate_6_daily_limit": {
+            "limit_hit": daily_limit.get("hit", False),
+            "blocked": daily_limit.get("hit", False),
+            "note": "Wenn True: kein Trade heute mehr"
+        },
+    }
+
+    # Summary
+    blocking_gates = [k for k, v in gates.items() if v.get("blocked") == True]
+
+    return {
+        "summary": {
+            "blocking_gates": blocking_gates,
+            "trade_possible": len(blocking_gates) == 0,
+            "grss_score": grss_data.get("GRSS_Score"),
+            "vix": grss_data.get("VIX"),
+            "data_freshness_active": grss_data.get("Data_Freshness_Active"),
+            "context_timestamp": grss_data.get("timestamp"),
+        },
+        "gates": gates,
+        "health_sources": health,
+        "portfolio": {
+            "capital_eur": portfolio.get("capital_eur"),
+            "total_trades": portfolio.get("total_trades"),
+            "daily_pnl_eur": portfolio.get("daily_pnl_eur"),
+        },
+        "quant_micro": {
+            "price": quant_micro.get("price"),
+            "ofi": quant_micro.get("OFI"),
+            "ofi_buy_pressure": quant_micro.get("OFI_Buy_Pressure"),
+            "source": quant_micro.get("Source"),
+            "timestamp": quant_micro.get("timestamp"),
+        }
+    }
+
 
 @router.get("/monitoring/phase-a/status")
 async def phase_a_verification():

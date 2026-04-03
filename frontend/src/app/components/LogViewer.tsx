@@ -53,7 +53,9 @@ export default function LogViewer({ isOpen, onClose }: LogViewerProps) {
     if (!isOpen) return;
 
     console.log("Attempting to connect to Log WebSocket...");
-    const websocket = new WebSocket("ws://localhost:3000/api/v1/logs/ws");
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/api/v1/logs/ws`;
+    const websocket = new WebSocket(wsUrl);
     
     websocket.onopen = () => {
       console.log("Log WebSocket connected successfully");

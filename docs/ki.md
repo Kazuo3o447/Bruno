@@ -128,6 +128,54 @@ Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
 
 ---
 
+## Learning Mode (DRY_RUN only)
+
+### Zweck
+Das System sammelt im Paper-Trading-Modus Trainingsdaten für LLM-Kalibrierung und
+Regime-Erkennung. Ohne Learning Mode: ~2 Trades/Tag = 3–8 Monate bis belastbare Daten.
+Mit Learning Mode: 8–15 Trades/Tag + Phantom-Datenpunkte = deutlich schnellere Kalibrierung.
+
+### Schwellen im Learning Mode
+| Parameter | Produktion | Learning Mode |
+|-----------|-----------|---------------|
+| GRSS_Threshold (RiskAgent) | 40 | 25 |
+| Layer 1 Confidence | 0.60 | 0.50 |
+| Layer 2 Confidence | 0.65 | 0.55 |
+
+### Aktivierung
+`backend/config.json`: `"LEARNING_MODE_ENABLED": true` — nur wirksam wenn `DRY_RUN=True`.
+
+### Trade Mode Flag
+Jeder Trade wird in `trade_audit_logs.trade_mode` markiert:
+- `production` — Produktions-Schwellen, DRY_RUN=False oder Learning Mode aus
+- `learning` — Learning-Schwellen, DRY_RUN=True und Learning Mode aktiv
+- `phantom` — HOLD-Zyklus nur für Auswertung, kein echter Trade
+
+### Phantom Trades
+Für jeden HOLD-Zyklus wird ein hypothetischer Trade gespeichert.
+Nach `PHANTOM_HOLD_DURATION_MINUTES` (Standard: 240) wird der Outcome mit dem echten Preispfad berechnet.
+Phantom Trades fließen **nie** in Portfolio, Kapital oder Live-Performance ein.
+
+### Getrennte Auswertung
+```sql
+-- Nur Produktions-Trades
+SELECT *
+FROM trade_audit_logs
+WHERE trade_mode = 'production';
+
+-- Nur Learning-Mode-Trades
+SELECT *
+FROM trade_audit_logs
+WHERE trade_mode = 'learning';
+
+-- Phantom-Outcomes für HOLD-Qualität
+SELECT *
+FROM trade_debriefs
+WHERE trade_mode = 'phantom';
+```
+
+---
+
 ## 2. Aktueller Status (Phase 7.5 - MLOps & Audit)
 
 > **Das System verfügt über institutional-grade Monitoring und exakte Shadow-Trading Analytik.**

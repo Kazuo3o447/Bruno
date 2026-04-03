@@ -42,6 +42,22 @@ class ExecutionAgentV3(StreamingAgent):
 
         self._portfolio_initialized = False
 
+    def _load_config_value(self, key: str, default: float) -> float:
+        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        try:
+            with open(config_path, "r") as f:
+                value = json.load(f).get(key, default)
+                if isinstance(value, bool):
+                    return 1.0 if value else 0.0
+                return float(value)
+        except Exception:
+            return default
+
     async def setup(self) -> None:
         self.logger.info("ExecutionAgentV3 (Zero-Latency) gestartet.")
         # Startzustand aus Redis laden
@@ -121,6 +137,18 @@ class ExecutionAgentV3(StreamingAgent):
         if self._local_veto_active:
             self.logger.info(f"Signal blockiert durch Veto: {self._last_veto_reason}")
             return
+
+        learning_mode_active = (
+            self.deps.config.DRY_RUN
+            and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
+        )
+        trade_mode = "learning" if learning_mode_active else "production"
+
+        self.logger.info(
+            f"Trade Mode: {trade_mode.upper()} | "
+            f"DRY_RUN={self.deps.config.DRY_RUN} | "
+            f"Learning={learning_mode_active}"
+        )
 
         # ── Preis-Validierung ──────────────────────────────────
         signal_price = signal.get("price", 0.0)
@@ -273,12 +301,12 @@ class ExecutionAgentV3(StreamingAgent):
                 self.logger.warning(f"PositionTracker Guard (race): {ve}")
 
             # Async Audit
-            asyncio.create_task(self._audit_trade(signal, order, exec_latency))
+            await self._audit_trade(signal, order, exec_latency, trade_mode=trade_mode)
 
         except Exception as e:
             self.logger.error(f"KRITISCHER FEHLER BEI ORDER-AUSFÜHRUNG: {e}")
 
-    async def _audit_trade(self, signal: Dict, order: Dict, latency: float):
+    async def _audit_trade(self, signal: Dict, order: Dict, latency: float, trade_mode: str = "production"):
         """Speichert den Audit-Trail in der DB (nachdem die Order raus ist)."""
         try:
             async with self.deps.db_session_factory() as session:
@@ -298,17 +326,13 @@ class ExecutionAgentV3(StreamingAgent):
                     simulated_fill_price=order.get('price', 0.0),
                     slippage_bps=((order.get('price', 0.0) / signal.get('price', 1.0)) - 1) * 10000,
                     simulated_fee_usdt=order.get('fee', 0.0), # 0.04% for simulated, or real fee
-                    latency_ms=latency # Total processing latency
+                    latency_ms=latency, # Total processing latency
+                    trade_mode=trade_mode,
                 )
                 session.add(log)
                 await session.commit()
                 
-            await self.log_manager.info(
-                category="TRADE",
-                source=self.agent_id,
-                message=f"Audit completed for order {order.get('id')}",
-                details={"latency_ms": latency}
-            )
+            self.logger.info(f"Audit completed for order {order.get('id')} | latency={latency:.1f}ms")
                 
         except Exception as e:
             self.logger.error(f"Audit-Log Fehler: {e}")
@@ -587,6 +611,11 @@ class ExecutionAgentV3(StreamingAgent):
             trade_id = None
 
             if self.deps.config.DRY_RUN:
+                learning_mode_active = (
+                    self.deps.config.DRY_RUN
+                    and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
+                )
+                trade_mode = "learning" if learning_mode_active else "production"
                 trade_id = f"sim_exit_{int(datetime.now().timestamp())}"
                 self.logger.info(
                     f"🚧 SIMULIERTER EXIT (DRY_RUN): {exit_side.upper()} "
@@ -605,10 +634,12 @@ class ExecutionAgentV3(StreamingAgent):
                     self._audit_trade(
                         {"symbol": symbol, "side": exit_side, "price": exit_price, "reason": reason},
                         exit_order,
-                        0.0
+                        0.0,
+                        trade_mode=trade_mode,
                     )
                 )
             else:
+                trade_mode = "production"
                 if not self.deps.config.LIVE_TRADING_APPROVED:
                     self.logger.error("Exit abgebrochen: LIVE_TRADING_APPROVED=False")
                     return

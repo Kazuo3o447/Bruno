@@ -20,12 +20,12 @@
 |----------|------|
 | **Manifest Version** | `v2.0` |
 | **Codename** | Fundament & Ehrlichkeit |
-| **Status** | ✅ Phase A COMPLETED — Phase B COMPLETED — Phase C COMPLETED — Phase D COMPLETED — Phase E COMPLETED — Phase F COMPLETED |
+| **Status** | ✅ Phase A COMPLETED — Phase B COMPLETED — Phase C COMPLETED — Phase D COMPLETED — Phase E COMPLETED — Phase F COMPLETED — Phase G.0 COMPLETED |
 | **Dashboard** | ✅ Voll funktionsfähig mit API-Integration |
 | **Port-Konfiguration** | ✅ Vollständig korrigiert (Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/*) |
 | **Critical Fixes** | ✅ Alle 8 Probleme behoben (API, Config, OFI, Presets) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
-| **Letztes Update** | 2. April 2026 (Critical Fixes & Config-Hot-Reload) |
+| **Letztes Update** | 3. April 2026 (Learning Mode, Phantom Trades, trade_mode-Tagging, abgeschlossen) |
 
 ---
 
@@ -37,6 +37,19 @@
 > ⚙️ **Config-System:** Hot-Reload implementiert, Presets verfügbar
 
 **Ziel:** Vollständiges Cockpit mit Live-Daten, Agenten-Status und Trading-Chart. Das Dashboard ist jetzt vollständig implementiert und funktionsfähig.
+
+### Aktueller Zusatz-Fokus: Phase G.0 — Learning Mode (DRY_RUN only) ✅ COMPLETED
+
+**Ziel:** Mehr Paper-Trades und deutlich mehr auswertbare HOLD-Daten, ohne die Produktionslogik zu kontaminieren.
+
+**Implementiert:**
+- DRY_RUN-aware GRSS-Threshold: 40 → 25 im Learning Mode
+- DRY_RUN-aware LLM Confidence-Schwellen: 0.60/0.65 → 0.50/0.55 im Learning Mode
+- `trade_mode`-Markierung in `trade_audit_logs` und `trade_debriefs`
+- Phantom Trades für HOLD-Zyklen mit 240 Minuten Outcome-Tracking
+- Scheduler-Auswertung der Phantom Trades alle 30 Minuten
+
+**Eiserne Regel:** Learning Mode wirkt nur bei `DRY_RUN=True`. Bei `DRY_RUN=False` gelten immer die Produktions-Schwellen.
 
 ### Phase A ✅ COMPLETED (2026-03-29)
 - [x] **ContextAgent**: Alle `random.uniform()` und `random.random()` entfernt
@@ -112,6 +125,15 @@
 - **GRSS-Score oft niedrig** (< 40) → Veto-Modus, System im Standby (korrektes Verhalten)
 - **Performance-Metriken leer** in DRY_RUN (normal, da keine echten Trades)
 
+### ✅ Kürzlich Gelöst (2026-04-03 - Learning Mode)
+- **Learning Mode vorbereitet:** config.json um Learning-Mode-Keys erweitert
+- **RiskAgent:** effektive GRSS-Schwelle ist jetzt DRY_RUN-aware
+- **LLM Cascade:** Confidence-Schwellen lesen jetzt Learning-Mode-Konfiguration
+- **ExecutionAgentV3:** `trade_mode` wird im Audit-Log mitgeschrieben
+- **QuantAgent:** HOLD-Zyklen erzeugen Phantom Trades für Debrief-Training
+- **Scheduler:** Phantom-Trade-Auswertung wird im 30-Minuten-Loop angestoßen
+- **Dokumentation:** Manifest, `docs/ki.md` und `docs/data.md` sind aktualisiert
+
 ### ✅ Kürzlich Gelöst (2026-04-02 - Critical Fixes)
 - **Doppeltes Prefix behoben:** export, config, decisions Router Endpunkte jetzt erreichbar
 - **Fresh-Source-Gate repariert:** Health-Reporting für alle 5 Datenquellen implementiert
@@ -158,10 +180,9 @@
   - `systemtest/news_health` wird jetzt korrekt ausgewertet, auch wenn Feeds `healthy` statt `success` liefern
 
 ### ❌ Fehlt Noch (nach Phase D)
-- LLM-Kaskade Testing mit echten Daten (Phase C)
-- Failure WatchList Mechanismus (Phase C)
 - Bybit Live-Trading-Freigabe (Phase H)
 - Backtest Engine (Phase G)
+- Vollständige Auswertung der Learning-Mode-Daten über mehrere Tage
 
 ---
 

@@ -192,7 +192,7 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
                 "regime_assessment": "Unklar"
             }
     
-    async def _save_debrief(self, trade_id: str, debrief: Dict[str, Any], raw_response: str) -> None:
+    async def _save_debrief(self, trade_id: str, debrief: Dict[str, Any], raw_response: str, trade_mode: str = "production") -> None:
         """
         Speichert Debrief in Datenbank
         """
@@ -208,6 +208,7 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
                     "improvement": debrief["improvement"],
                     "pattern": debrief["pattern"],
                     "regime_assessment": debrief["regime_assessment"],
+                    "trade_mode": trade_mode,
                     "raw_llm_response": raw_response
                 }
                 
@@ -216,11 +217,12 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
                     """
                     INSERT INTO trade_debriefs (
                         id, trade_id, timestamp, decision_quality, 
-                        key_signal, improvement, pattern, regime_assessment, 
-                        raw_llm_response
+                        key_signal, improvement, pattern, regime_assessment,
+                        trade_mode, raw_llm_response
                     ) VALUES (
                         :id, :trade_id, :timestamp, :decision_quality,
                         :key_signal, :improvement, :pattern, :regime_assessment,
+                        :trade_mode,
                         :raw_llm_response
                     )
                     """,
@@ -260,7 +262,8 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
                         "improvement": row[5],
                         "pattern": row[6],
                         "regime_assessment": row[7],
-                        "raw_llm_response": row[8]
+                        "trade_mode": row[8],
+                        "raw_llm_response": row[9]
                     }
                 return None
                 

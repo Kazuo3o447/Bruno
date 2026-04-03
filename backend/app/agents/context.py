@@ -93,6 +93,57 @@ class ContextAgent(StreamingAgent):
         except Exception as e:
             self.logger.warning(f"Warm-Up Fehler (nicht kritisch): {e}")
 
+        # NEU: Minimal-GRSS sofort schreiben damit RiskAgent nicht mit context={} startet
+        # Dieser Platzhalter-Payload verhindert den DATA GAP Veto beim ersten RiskAgent-Zyklus
+        try:
+            from datetime import datetime, timezone
+            health = await self.deps.redis.get_cache("bruno:health:sources") or {}
+            sources_to_check = ["Binance_REST", "Deribit_Public", "yFinance_Macro", "Binance_OI_Trend", "ETF_Flows_Farside"]
+            fresh_count = sum(
+                1 for s in sources_to_check
+                if self._is_fresh_health_status(health.get(s, {}).get("status"))
+                or self._is_warning_health_status(health.get(s, {}).get("status"))
+            )
+
+            # Minimal GRSS berechnen aus den bereits geholten Daten
+            minimal_grss_input = {
+                "vix": self.vix,
+                "ndx_status": self.ndx_status,
+                "fresh_source_count": fresh_count,
+                "funding_rate": 0.01,  # neutral default
+                "news_silence_seconds": 0,
+                # alle anderen Felder auf 0/neutral
+                "oi_7d_change_pct": 0, "etf_flow_3d_m": 0, "etf_consecutive_inflow_days": 0,
+                "etf_consecutive_outflow_days": 0, "funding_divergence": 0, "stablecoin_delta_bn": 0,
+                "btc_change_24h": 0, "btc_change_1h": 0, "fear_greed": 50, "deleveraging_complete": False,
+                "liq_bias": "balanced", "liq_squeeze_potential": False, "llm_news_sentiment": 0,
+                "pattern_score": 0, "put_call_ratio": 0.6, "dvol": 55, "long_short_ratio": 1.0,
+                "yields_10y": self.yields_10y, "m2_yoy_pct": 0,
+            }
+            minimal_grss = self.calculate_grss(minimal_grss_input)
+
+            warmup_payload = {
+                "GRSS_Score_Raw": round(minimal_grss, 1),
+                "GRSS_Score": round(minimal_grss, 1),
+                "GRSS_Velocity_30min": 0.0,
+                "Macro_Status": self.ndx_status,
+                "VIX": round(self.vix, 2),
+                "Yields_10Y": round(self.yields_10y, 2),
+                "Fresh_Source_Count": fresh_count,
+                "Data_Freshness_Active": fresh_count > 0,
+                "News_Silence_Seconds": 0.0,
+                "Veto_Active": minimal_grss < 40,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "_warmup": True,  # Flag dass dies ein Warm-Up-Payload ist
+            }
+            await self.deps.redis.set_cache("bruno:context:grss", warmup_payload)
+            self.logger.info(
+                f"ContextAgent Warm-Up GRSS Payload gesetzt: GRSS={minimal_grss:.1f} | "
+                f"Fresh Sources={fresh_count} | Data_Freshness_Active={fresh_count > 0}"
+            )
+        except Exception as e:
+            self.logger.warning(f"Warm-Up GRSS Payload Fehler: {e}")
+
     async def run_stream(self) -> None:
         """Implementierung der abstrakten Methode für StreamingAgent."""
         while self.state.running:

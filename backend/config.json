@@ -1,7 +1,14 @@
 {
-    "GRSS_Threshold": 35,
+    "GRSS_Threshold": 40,
+    "OFI_Threshold": 50,
     "Liq_Distance": 0.004,
-    "OFI_Threshold": 30,
     "Max_Leverage": 1,
-    "Stop_Loss_Pct": 0.015
+    "Stop_Loss_Pct": 0.015,
+    "LEARNING_MODE_ENABLED": true,
+    "LEARNING_GRSS_Threshold": 25,
+    "LEARNING_Layer1_Confidence": 0.5,
+    "LEARNING_Layer2_Confidence": 0.55,
+    "LEARNING_Layer1_Confidence_PROD": 0.6,
+    "LEARNING_Layer2_Confidence_PROD": 0.65,
+    "PHANTOM_HOLD_DURATION_MINUTES": 240
 }

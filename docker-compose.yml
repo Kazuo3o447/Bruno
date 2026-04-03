@@ -54,12 +54,10 @@ services:
       - postgres
       - redis
     environment:
-      - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
       - DB_USER=${DB_USER:-bruno}
       - DB_PASS=${DB_PASS:-bruno_secret}
       - DB_NAME=${DB_NAME:-bruno_trading}
-      - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - FRED_API_KEY=${FRED_API_KEY}
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
@@ -72,7 +70,6 @@ services:
     volumes:
       - ./backend:/app
       - ./backups:/app/backups
-      - ./.env:/app/.env:ro
     logging:
       driver: "json-file"
       options:
@@ -91,12 +88,10 @@ services:
       - redis
       - api-backend
     environment:
-      - DB_HOST=${DB_HOST:-postgres}
       - DB_PORT=${DB_PORT:-5432}
       - DB_USER=${DB_USER:-bruno}
       - DB_PASS=${DB_PASS:-bruno_secret}
       - DB_NAME=${DB_NAME:-bruno_trading}
-      - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - FRED_API_KEY=${FRED_API_KEY}
       - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
@@ -106,7 +101,6 @@ services:
       - DRY_RUN=${DRY_RUN:-true}
     volumes:
       - ./backend:/app
-      - ./.env:/app/.env:ro
     logging:
       driver: "json-file"
       options:

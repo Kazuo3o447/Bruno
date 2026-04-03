@@ -95,6 +95,7 @@ class TradeAuditLog(Base):
     status = Column(String(20), default="open")  # open, filled, cancelled, failed
     filled_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
+    trade_mode = Column(String(20), default="production")
     
     # HFT Metrics & Telemetry (Phase 7.5 Audit)
     latency_exec_ms = Column(Float)
