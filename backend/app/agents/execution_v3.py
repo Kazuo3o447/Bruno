@@ -42,20 +42,40 @@ class ExecutionAgentV3(StreamingAgent):
 
         self._portfolio_initialized = False
 
+        # Locks für kritische Abschnitte
+        self._trade_lock = asyncio.Lock()       # verhindert Double-Entry bei Race
+        self._portfolio_lock = asyncio.Lock()   # schützt atomare Portfolio-Updates
+
+        # Config-Cache (TTL = 30s) — vermeidet Disk-I/O pro Zyklus
+        self._config_cache: dict = {}
+        self._config_cache_ts: float = 0.0
+        self._config_cache_ttl: float = 30.0
+
     def _load_config_value(self, key: str, default: float) -> float:
-        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
-        import os
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
+        """
+        Lädt einen Wert aus config.json mit In-Memory-Caching (TTL 30s).
+        Verhindert unnötigen Disk-I/O bei häufigen Aufrufen pro Zyklus.
+        """
+        import os, time as _time
+        now = _time.monotonic()
+        if not self._config_cache or (now - self._config_cache_ts) > self._config_cache_ttl:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__)))), "config.json"
+            )
+            try:
+                with open(config_path, "r") as f:
+                    self._config_cache = json.load(f)
+                    self._config_cache_ts = now
+            except Exception:
+                pass  # Cache bleibt leer → Fallback auf defaults
+
+        value = self._config_cache.get(key, default)
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
         try:
-            with open(config_path, "r") as f:
-                value = json.load(f).get(key, default)
-                if isinstance(value, bool):
-                    return 1.0 if value else 0.0
-                return float(value)
-        except Exception:
+            return float(value)
+        except (TypeError, ValueError):
             return default
 
     async def setup(self) -> None:
@@ -158,6 +178,13 @@ class ExecutionAgentV3(StreamingAgent):
                 f"Prüfe ob QuantAgent/LLM-Cascade 'price' im Signal-Dict hat."
             )
             return
+        # Sanity-Check: BTC-Preis muss in plausiblem Bereich liegen
+        if signal_price > 10_000_000:
+            self.logger.error(
+                f"ABBRUCH: Preis unrealistisch hoch ({signal_price:,.0f}). "
+                f"LLM-Output prüfen."
+            )
+            return
 
         symbol = signal.get("symbol")
         side = signal.get("side")
@@ -175,25 +202,16 @@ class ExecutionAgentV3(StreamingAgent):
             self.logger.error(f"ABBRUCH: Ungültige Menge: {signal}")
             return
 
-        # ── POSITION GUARD (Phase D) ───────────────────────────
-        # Kein neuer Trade wenn bereits eine Position offen ist.
-        # Ausnahme: Signal kommt mit reason=close (dann _fire_exit_order nutzen)
-        if await self.position_tracker.has_open_position(symbol):
-            self.logger.info(
-                f"Signal ignoriert — Position für {symbol} bereits offen. "
-                f"PositionTracker Guard aktiv. Signal: {side}"
-            )
-            return
-
         # Daily Loss Limit Check
         daily_limit_hit = await self.deps.redis.get_cache("bruno:portfolio:daily_limit_hit")
         if daily_limit_hit and daily_limit_hit.get("hit"):
             self.logger.warning("ABBRUCH: Daily Loss Limit bereits heute erreicht.")
             return
 
-        # ── ATR aktualisieren (stündlich) ──────────────────────
+        # ── ATR aktualisieren (stündlich, konfigurierbar) ─────
+        atr_interval = self._load_config_value("ATR_Update_Interval_Seconds", 3600.0)
         now = time.time()
-        if now - self._last_atr_update > self._atr_update_interval:
+        if now - self._last_atr_update > atr_interval:
             self._last_atr_update = now
             await self.atr_calc.calculate_atr(symbol)
             await self.atr_calc.calculate_atr_baseline(symbol)
@@ -224,87 +242,103 @@ class ExecutionAgentV3(StreamingAgent):
                 f"Dynamic SL={dynamic_sl_pct:.2%}"
             )
 
-        # 2. IMMEDIATE ORDER FIRING (OR SHADOW SIMULATION)
-        try:
-            if self.deps.config.DRY_RUN:
-                exec_latency = (time.perf_counter() - start_exec) * 1000
-                simulated_fee = (amount * signal_price) * 0.0004
-
-                simulated_fill_price = signal_price * 1.0001 if side == "buy" else signal_price * 0.9999
-
+        # ── KRITISCHER PFAD: POSITION GUARD + ORDER + OPEN (atomar) ───────
+        # asyncio.Lock verhindert Double-Entry wenn zwei Signale gleichzeitig eintreffen.
+        # has_open_position() → order_fire → open_position() sind als Einheit atomar.
+        order = None
+        exec_latency = 0.0
+        async with self._trade_lock:
+            # Erneuter Check unter Lock — nur einer darf durch
+            if await self.position_tracker.has_open_position(symbol):
                 self.logger.info(
-                    f"🚧 SIMULIERTER TRADE (DRY_RUN): {side.upper()} "
-                    f"{amount:.4f} {symbol} @ {simulated_fill_price:,.2f}"
+                    f"Signal ignoriert — Position für {symbol} bereits offen. "
+                    f"PositionTracker Guard aktiv. Signal: {side}"
                 )
+                return
 
-                order = {
-                    "id": f"sim_{int(datetime.now().timestamp())}",
-                    "price": simulated_fill_price,
-                    "amount": amount,
-                    "cost": amount * simulated_fill_price,
-                    "fee": simulated_fee,
-                    "status": "simulated"
-                }
-
-            else:
-                # ECHTE ORDER — nur wenn DRY_RUN=False UND LIVE_TRADING_APPROVED=True
-                if not self.deps.config.LIVE_TRADING_APPROVED:
-                    self.logger.error(
-                        "ABBRUCH: LIVE_TRADING_APPROVED=False. "
-                        "Setze in .env auf True nach bestandenem Backtest."
-                    )
-                    return
-
-                order = await self.exm.create_order(symbol, side, amount)
-                exec_latency = (time.perf_counter() - start_exec) * 1000
-                self.logger.info(
-                    f"✅ ECHTE ORDER GEFEUERT: {side.upper()} "
-                    f"{amount:.4f} {symbol} in {exec_latency:.1f}ms"
-                )
-
-            exec_latency = (time.perf_counter() - start_exec) * 1000
-
-            # ── POSITION ÖFFNEN (Phase D) ──────────────────────
-            # Jetzt wo die Order durch ist, Position in Tracker eintragen
-            fill_price = order["price"]
-            position_side = "long" if side == "buy" else "short"
-
-            # SL/TP aus Signal (LLM-Cascade) oder ATR-Default
-            sl_pct = signal.get("stop_loss_pct", dynamic_sl_pct)
-            tp_pct = signal.get("take_profit_pct", dynamic_sl_pct * 2.0)
-
-            if position_side == "long":
-                sl_price = fill_price * (1 - sl_pct)
-                tp_price = fill_price * (1 + tp_pct)
-            else:
-                sl_price = fill_price * (1 + sl_pct)
-                tp_price = fill_price * (1 - tp_pct)
-
+            # 2. IMMEDIATE ORDER FIRING (OR SHADOW SIMULATION)
             try:
-                await self.position_tracker.open_position(
-                    symbol=symbol,
-                    side=position_side,
-                    entry_price=fill_price,
-                    quantity=amount,
-                    stop_loss_price=round(sl_price, 2),
-                    take_profit_price=round(tp_price, 2),
-                    entry_trade_id=order["id"],
-                    # Phase C Felder — aus Signal wenn vorhanden
-                    grss_at_entry=signal.get("grss", 0.0),
-                    layer1_output=signal.get("layer1_output"),
-                    layer2_output=signal.get("layer2_output"),
-                    layer3_output=signal.get("layer3_output"),
-                    regime=signal.get("regime", "unknown"),
-                )
-            except ValueError as ve:
-                # Guard hat angeschlagen (race condition) — kein Problem
-                self.logger.warning(f"PositionTracker Guard (race): {ve}")
+                slippage = self._load_config_value("Simulated_Slippage_Pct", 0.0001)
+                fee_pct = self._load_config_value("Simulated_Fee_Pct", 0.0004)
 
-            # Async Audit
+                if self.deps.config.DRY_RUN:
+                    simulated_fill_price = (
+                        signal_price * (1 + slippage) if side == "buy"
+                        else signal_price * (1 - slippage)
+                    )
+                    simulated_fee = (amount * signal_price) * fee_pct
+
+                    self.logger.info(
+                        f"SIMULIERTER TRADE (DRY_RUN): {side.upper()} "
+                        f"{amount:.4f} {symbol} @ {simulated_fill_price:,.2f}"
+                    )
+
+                    order = {
+                        "id": f"sim_{int(datetime.now().timestamp())}",
+                        "price": simulated_fill_price,
+                        "amount": amount,
+                        "cost": amount * simulated_fill_price,
+                        "fee": simulated_fee,
+                        "status": "simulated"
+                    }
+
+                else:
+                    # ECHTE ORDER — nur wenn DRY_RUN=False UND LIVE_TRADING_APPROVED=True
+                    if not self.deps.config.LIVE_TRADING_APPROVED:
+                        self.logger.error(
+                            "ABBRUCH: LIVE_TRADING_APPROVED=False. "
+                            "Setze in .env auf True nach bestandenem Backtest."
+                        )
+                        return
+
+                    order = await self.exm.create_order(symbol, side, amount)
+                    self.logger.info(
+                        f"ECHTE ORDER GEFEUERT: {side.upper()} "
+                        f"{amount:.4f} {symbol}"
+                    )
+
+                exec_latency = (time.perf_counter() - start_exec) * 1000
+
+                # ── POSITION ÖFFNEN (Phase D) ──────────────────────
+                fill_price = order["price"]
+                position_side = "long" if side == "buy" else "short"
+
+                sl_pct = signal.get("stop_loss_pct", dynamic_sl_pct)
+                tp_pct = signal.get("take_profit_pct", dynamic_sl_pct * 2.0)
+
+                if position_side == "long":
+                    sl_price = fill_price * (1 - sl_pct)
+                    tp_price = fill_price * (1 + tp_pct)
+                else:
+                    sl_price = fill_price * (1 + sl_pct)
+                    tp_price = fill_price * (1 - tp_pct)
+
+                try:
+                    await self.position_tracker.open_position(
+                        symbol=symbol,
+                        side=position_side,
+                        entry_price=fill_price,
+                        quantity=amount,
+                        stop_loss_price=round(sl_price, 2),
+                        take_profit_price=round(tp_price, 2),
+                        entry_trade_id=order["id"],
+                        grss_at_entry=signal.get("grss", 0.0),
+                        layer1_output=signal.get("layer1_output"),
+                        layer2_output=signal.get("layer2_output"),
+                        layer3_output=signal.get("layer3_output"),
+                        regime=signal.get("regime", "unknown"),
+                    )
+                except ValueError as ve:
+                    # Sollte unter Lock nicht mehr auftreten — defensiver Fallback
+                    self.logger.error(f"PositionTracker Double-Entry trotz Lock: {ve}")
+
+            except Exception as e:
+                self.logger.error(f"KRITISCHER FEHLER BEI ORDER-AUSFÜHRUNG: {e}")
+                return
+
+        # ── Audit (außerhalb Lock — nicht zeitkritisch) ────────
+        if order:
             await self._audit_trade(signal, order, exec_latency, trade_mode=trade_mode)
-
-        except Exception as e:
-            self.logger.error(f"KRITISCHER FEHLER BEI ORDER-AUSFÜHRUNG: {e}")
 
     async def _audit_trade(self, signal: Dict, order: Dict, latency: float, trade_mode: str = "production"):
         """Speichert den Audit-Trail in der DB (nachdem die Order raus ist)."""
@@ -341,10 +375,16 @@ class ExecutionAgentV3(StreamingAgent):
         """
         Aktualisiert das simulierte Portfolio nach einem Trade.
         Berechnet P&L, Drawdown und Daily Loss Limit.
+        Lock verhindert Race Conditions bei parallelen Portfolio-Updates.
         """
         if not self.deps.config.DRY_RUN:
             return
 
+        async with self._portfolio_lock:
+            await self._update_portfolio_locked(trade_result)
+
+    async def _update_portfolio_locked(self, trade_result: dict) -> None:
+        """Interne Implementierung — nur unter self._portfolio_lock aufrufen."""
         portfolio = await self.deps.redis.get_cache(
             "bruno:portfolio:state"
         ) or {}

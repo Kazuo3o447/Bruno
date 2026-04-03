@@ -106,7 +106,17 @@ async def main():
         logger.warning("Telegram nicht aktiv — Keys fehlen in .env")
     
     ollama_ok = await ollama.health_check()
-    logger.info(f"Ollama Status: {'✅ Ok' if ollama_ok else '⚠️ Down (Fallback)'}")
+    logger.info(f"Ollama Status: {'Ok' if ollama_ok else 'Down — QuantAgent schaltet auf HOLD bis Reconnect'}")
+
+    # LLM-Status in Redis schreiben — QuantAgent liest diesen Key vor jeder Cascade
+    await redis.set_cache(
+        "bruno:llm:status",
+        {
+            "status": "online" if ollama_ok else "offline",
+            "checked_at": __import__("datetime").datetime.utcnow().isoformat(),
+        },
+        ttl=3600
+    )
 
     # 2. Dependency Injection
     deps = AgentDependencies(

@@ -129,17 +129,18 @@ class PollingAgent(BaseAgent):
     async def run(self) -> None:
         self.state.running = True
         self.state.start_time = datetime.now(timezone.utc)
+        error_backoff = 1  # Exponential Backoff bei Fehlern (wie StreamingAgent)
 
         # Starte Heartbeat-Task im Hintergrund (Universal Pulse)
         heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
         while self.state.running:
             try:
-                # Heartbeat wird jetzt parallel im _heartbeat_loop gesendet
                 await self.process()
                 self.state.processed_count += 1
                 self.state.last_process_time = datetime.now(timezone.utc)
                 self.state.consecutive_errors = 0
+                error_backoff = 1  # Backoff nach Erfolg zurücksetzen
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -154,6 +155,14 @@ class PollingAgent(BaseAgent):
                     self.state.sub_state = "error_paused"
                     await asyncio.sleep(300)
                     self.state.consecutive_errors = 0
+                    error_backoff = 1
+                else:
+                    # Exponential Backoff vor dem nächsten Intervall (1s → 2s → 4s → max 60s)
+                    wait = min(error_backoff, 60)
+                    self.logger.info(f"Backoff {wait}s vor nächstem Zyklus...")
+                    self.state.sub_state = f"error_backoff ({wait}s)"
+                    await asyncio.sleep(wait)
+                    error_backoff = min(error_backoff * 2, 60)
 
             if self.state.running:
                 interval = self.get_interval()

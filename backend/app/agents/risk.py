@@ -22,6 +22,11 @@ class RiskAgent(PollingAgent):
         self.last_cvd = 0.0
         self._grss_threshold: float = 40.0
 
+        # Config-Cache (TTL = 30s) — vermeidet Disk-I/O pro Zyklus
+        self._config_cache: dict = {}
+        self._config_cache_ts: float = 0.0
+        self._config_cache_ttl: float = 30.0
+
     def get_interval(self) -> float:
         """1-Minuten-Intervall — ausreichend für Medium-Frequency."""
         return 60.0
@@ -40,16 +45,28 @@ class RiskAgent(PollingAgent):
         self.last_cvd = 0.0
 
     def _load_config_value(self, key: str, default: float) -> float:
-        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
-        import os
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
+        """
+        Lädt einen Wert aus config.json mit In-Memory-Caching (TTL 30s).
+        Verhindert unnötigen Disk-I/O bei häufigen Aufrufen pro Zyklus.
+        """
+        import os, time as _time
+        now = _time.monotonic()
+        if not self._config_cache or (now - self._config_cache_ts) > self._config_cache_ttl:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__)))), "config.json"
+            )
+            try:
+                with open(config_path, "r") as f:
+                    self._config_cache = json.load(f)
+                    self._config_cache_ts = now
+            except Exception:
+                pass
+
+        value = self._config_cache.get(key, default)
         try:
-            with open(config_path, "r") as f:
-                return float(json.load(f).get(key, default))
-        except Exception:
+            return float(value)
+        except (TypeError, ValueError):
             return default
 
     def _get_effective_grss_threshold(self) -> float:
@@ -220,7 +237,12 @@ class RiskAgent(PollingAgent):
             
             # Veto-State-Change detektieren und loggen
             prev_veto_raw = await self.deps.redis.redis.get("bruno:veto:previous")
-            prev_veto = json.loads(prev_veto_raw).get("Veto_Active", None) if prev_veto_raw else None
+            prev_veto = None
+            if prev_veto_raw:
+                try:
+                    prev_veto = json.loads(prev_veto_raw).get("Veto_Active", None)
+                except (json.JSONDecodeError, AttributeError) as e:
+                    self.logger.warning(f"Veto-Previous Parse-Fehler (Redis-Wert korrupt): {e}")
 
             if prev_veto != veto:  # Nur bei Zustandswechsel
                 veto_event = {

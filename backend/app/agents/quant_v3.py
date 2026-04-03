@@ -23,20 +23,36 @@ class QuantAgent(PollingAgent):
         self.exm = PublicExchangeClient(redis=deps.redis)
         self._last_price: float = 0.0   # Für Decision Logging
 
+        # Config-Cache (TTL = 30s) — vermeidet Disk-I/O pro Zyklus
+        self._config_cache: dict = {}
+        self._config_cache_ts: float = 0.0
+        self._config_cache_ttl: float = 30.0
+
     def _load_config_value(self, key: str, default: float) -> float:
-        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
-        import os
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
+        """
+        Lädt einen Wert aus config.json mit In-Memory-Caching (TTL 30s).
+        Verhindert unnötigen Disk-I/O bei häufigen Aufrufen pro Zyklus.
+        """
+        import os, time as _time
+        now = _time.monotonic()
+        if not self._config_cache or (now - self._config_cache_ts) > self._config_cache_ttl:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(
+                    os.path.abspath(__file__)))), "config.json"
+            )
+            try:
+                with open(config_path, "r") as f:
+                    self._config_cache = json.load(f)
+                    self._config_cache_ts = now
+            except Exception:
+                pass  # Cache bleibt leer → Fallback auf defaults
+
+        value = self._config_cache.get(key, default)
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
         try:
-            with open(config_path, "r") as f:
-                value = json.load(f).get(key, default)
-                if isinstance(value, bool):
-                    return 1.0 if value else 0.0
-                return float(value)
-        except Exception:
+            return float(value)
+        except (TypeError, ValueError):
             return default
         
     async def setup(self) -> None:
@@ -206,6 +222,79 @@ class QuantAgent(PollingAgent):
         except Exception as e:
             self.logger.warning(f"Phantom Trade Fehler (nicht kritisch): {e}")
 
+    async def _evaluate_phantom_trades(self, current_price: float) -> None:
+        """
+        Wertet fällige Phantom Trades aus (BUG #6 Fix: Evaluator war fehlend).
+
+        Läuft jeden Zyklus. Prüft ob PHANTOM_HOLD_DURATION_MINUTES abgelaufen sind.
+        Verschiebt fällige Trades von pending → evaluated mit Outcome-Berechnung.
+        Kein Einfluss auf Portfolio, Capital oder Veto-Logik.
+        """
+        try:
+            raw_pending = await self.deps.redis.redis.lrange(
+                "bruno:phantom_trades:pending", 0, -1
+            )
+            if not raw_pending:
+                return
+
+            now = datetime.now(timezone.utc)
+            still_pending = []
+            evaluated_count = 0
+
+            for raw in raw_pending:
+                try:
+                    phantom = json.loads(raw)
+                    evaluate_at_str = phantom.get("evaluate_at")
+                    if not evaluate_at_str:
+                        continue
+
+                    evaluate_at = datetime.fromisoformat(evaluate_at_str)
+                    if now < evaluate_at:
+                        # Noch nicht fällig
+                        still_pending.append(raw)
+                        continue
+
+                    # Fällig → Outcome berechnen
+                    entry_price = phantom.get("entry_price", 0.0)
+                    if entry_price <= 0:
+                        continue
+
+                    price_change_pct = (current_price - entry_price) / entry_price
+                    # Phantom waren HOLD-Entscheidungen — hätte die Cascade BUY gesagt?
+                    # Wir prüfen: War der HOLD richtig (kein Verlust vermieden)?
+                    phantom_outcome = {
+                        **phantom,
+                        "status": "evaluated",
+                        "exit_price": current_price,
+                        "price_change_pct": round(price_change_pct, 6),
+                        "hold_was_correct": abs(price_change_pct) < 0.01,  # < 1% Bewegung = HOLD richtig
+                        "evaluated_at": now.isoformat(),
+                        "trade_mode": "phantom",
+                    }
+
+                    # In evaluated-Liste schreiben
+                    pipe = self.deps.redis.redis.pipeline()
+                    pipe.lpush("bruno:phantom_trades:evaluated", json.dumps(phantom_outcome))
+                    pipe.ltrim("bruno:phantom_trades:evaluated", 0, 999)
+                    await pipe.execute()
+                    evaluated_count += 1
+
+                except Exception as e:
+                    self.logger.debug(f"Phantom Eval Einzelfehler: {e}")
+                    still_pending.append(raw)
+
+            # Pending-Liste neu schreiben (nur noch nicht fällige)
+            if evaluated_count > 0:
+                pipe = self.deps.redis.redis.pipeline()
+                pipe.delete("bruno:phantom_trades:pending")
+                for item in still_pending:
+                    pipe.rpush("bruno:phantom_trades:pending", item)
+                await pipe.execute()
+                self.logger.info(f"Phantom Trades ausgewertet: {evaluated_count} | verbleibend: {len(still_pending)}")
+
+        except Exception as e:
+            self.logger.warning(f"Phantom Trade Evaluator Fehler: {e}")
+
     async def _get_liquidation_walls(self) -> List[Dict]:
         """Aggregiert Liquidations-Cluster via SQL (Rounding -2)."""
         start = time.perf_counter()
@@ -289,16 +378,23 @@ class QuantAgent(PollingAgent):
             }
             await self.deps.redis.set_cache("bruno:quant:micro", payload)
 
-            # ── 7. GRSS lesen (FIX: korrekte Key-Namen) ─────────────────────────
+            # ── 7. GRSS lesen ────────────────────────────────────────────────────
             grss_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
-            grss_score = grss_data.get("GRSS_Score", 0.0)   # FIX: war "score" → FALSCH
-            # grss_data ist selbst die Komponenten-Map (kein "components"-Sub-Key)
+            grss_score = grss_data.get("GRSS_Score", 0.0)
 
-            # ── 8. Pre-Gate: nur absolute Extremfälle blockieren ─────────────────
-            # GRSS < 20 = extremer Marktstress (VIX > 45 oder Systemausfall)
-            # Normales "HOLD"-Verhalten entscheidet die LLM-Cascade selbst
-            if grss_score < 20:
-                reason = f"Pre-Gate: GRSS={grss_score:.1f} < 20 (Extremstress)"
+            # ── 8. Pre-Gate: Warmup-Guard (Context Agent noch nicht bereit) ──────
+            if not grss_data:
+                reason = "Pre-Gate: GRSS-Daten nicht verfügbar — Context Agent noch nicht bereit"
+                self.logger.info(reason)
+                await self._log_decision("PRE_GATE_HOLD", reason, grss=0.0,
+                                         price=best_bid_p, ofi_data=ofi_data)
+                return
+
+            # Pre-Gate: Extremstress-Filter (konfigurierbarer Threshold)
+            # Default 20 = nur echter Marktkollaps; kein normaler HOLD-Filter
+            pre_gate_threshold = self._load_config_value("PRE_GATE_GRSS_Threshold", 20.0)
+            if grss_score < pre_gate_threshold:
+                reason = f"Pre-Gate: GRSS={grss_score:.1f} < {pre_gate_threshold:.0f} (Extremstress)"
                 self.logger.info(reason)
                 await self._log_decision("PRE_GATE_HOLD", reason, grss=grss_score,
                                          price=best_bid_p, ofi_data=ofi_data)
@@ -311,7 +407,8 @@ class QuantAgent(PollingAgent):
                                          price=best_bid_p, ofi_data=ofi_data)
                 return
 
-            # ── 9. LLM Cascade — immer ausführen ────────────────────────────────
+            # ── 9. LLM Cascade — Health-Check vor jedem Aufruf ──────────────────
+            # Wenn Ollama nicht erreichbar: HOLD (kein Signal = kein Trade = sicher)
             if not hasattr(self, "_llm_cascade"):
                 from app.llm import LLMCascade
                 llm_provider = OllamaProvider()
@@ -323,6 +420,15 @@ class QuantAgent(PollingAgent):
                     f"Models: layer1={getattr(llm_provider, 'fast_model', 'UNBEKANNT')} "
                     f"layer2={getattr(llm_provider, 'reasoning_model', 'UNBEKANNT')}"
                 )
+
+            # LLM-Status aus Redis prüfen (wird von worker.py beim Start gesetzt)
+            llm_status = await self.deps.redis.get_cache("bruno:llm:status") or {}
+            if llm_status.get("status") == "offline":
+                reason = "Pre-Gate: LLM (Ollama) nicht erreichbar — HOLD bis Reconnect"
+                self.logger.warning(reason)
+                await self._log_decision("PRE_GATE_HOLD", reason, grss=grss_score,
+                                         price=best_bid_p, ofi_data=ofi_data)
+                return
 
             # market_context enthält alle Daten für Layer 2 und 3
             market_context = {
@@ -376,17 +482,18 @@ class QuantAgent(PollingAgent):
 
             # ── PHANTOM TRADE für HOLD-Zyklen ──────────────────────────────────────
             # Nur in DRY_RUN + Learning Mode. Niemals in Live.
-            if (
-                not cascade_result.is_actionable
-                and self.deps.config.DRY_RUN
-                and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
-            ):
-                await self._record_phantom_trade(
-                    cascade_result=cascade_result,
-                    grss_score=grss_score,
-                    price=best_bid_p,
-                    ofi_data=ofi_data,
-                )
+            if self.deps.config.DRY_RUN and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0:
+                # Fällige Phantom Trades auswerten (Evaluator läuft jeden Zyklus)
+                await self._evaluate_phantom_trades(best_bid_p)
+
+                # Neue Phantom Trade für HOLD-Entscheidungen aufzeichnen
+                if not cascade_result.is_actionable:
+                    await self._record_phantom_trade(
+                        cascade_result=cascade_result,
+                        grss_score=grss_score,
+                        price=best_bid_p,
+                        ofi_data=ofi_data,
+                    )
 
             # ── 12. Bei BUY/SELL → Signal publizieren ────────────────────────────
             if cascade_result.is_actionable:

@@ -10,5 +10,9 @@
     "LEARNING_Layer2_Confidence": 0.55,
     "LEARNING_Layer1_Confidence_PROD": 0.6,
     "LEARNING_Layer2_Confidence_PROD": 0.65,
-    "PHANTOM_HOLD_DURATION_MINUTES": 240
+    "PHANTOM_HOLD_DURATION_MINUTES": 240,
+    "PRE_GATE_GRSS_Threshold": 20,
+    "ATR_Update_Interval_Seconds": 3600,
+    "Simulated_Slippage_Pct": 0.0001,
+    "Simulated_Fee_Pct": 0.0004
 }
