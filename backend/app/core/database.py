@@ -1,7 +1,15 @@
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.orm import declarative_base
-from app.core.config import settings
+import asyncio
 import logging
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import declarative_base
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +40,67 @@ Base = declarative_base()
 # Legacy compatibility - SessionLocal alias for AsyncSessionLocal
 SessionLocal = AsyncSessionLocal
 
+ALEMBIC_INI_PATH = Path(__file__).resolve().parents[2] / "alembic.ini"
+MIGRATION_LOCK_KEY_1 = 8421
+MIGRATION_LOCK_KEY_2 = 20260402
+
+
+def _build_alembic_config() -> Config:
+    if not ALEMBIC_INI_PATH.exists():
+        raise FileNotFoundError(f"Alembic config not found: {ALEMBIC_INI_PATH}")
+
+    return Config(str(ALEMBIC_INI_PATH))
+
+
+def _run_alembic_upgrade_head() -> None:
+    """Runs Alembic migrations synchronously."""
+    command.upgrade(_build_alembic_config(), "head")
+
+
+async def _schema_needs_migration() -> bool:
+    """Checks whether the database schema is missing required Bruno tables."""
+    async with engine.connect() as conn:
+        market_candles_exists = await conn.scalar(
+            text("SELECT to_regclass('public.market_candles') IS NOT NULL")
+        )
+        alembic_version_exists = await conn.scalar(
+            text("SELECT to_regclass('public.alembic_version') IS NOT NULL")
+        )
+
+        if not market_candles_exists or not alembic_version_exists:
+            return True
+
+        current_version = await conn.scalar(text("SELECT version_num FROM alembic_version LIMIT 1"))
+        head_version = ScriptDirectory.from_config(_build_alembic_config()).get_current_head()
+        return current_version != head_version
+
+
+async def ensure_schema() -> None:
+    """Ensures the database schema is migrated to the latest revision."""
+    try:
+        needs_migration = await _schema_needs_migration()
+        if not needs_migration:
+            logger.info("Datenbankschema ist bereits aktuell")
+            return
+
+        logger.info("Datenbankschema unvollständig oder veraltet. Starte Alembic upgrade head...")
+
+        async with engine.connect() as conn:
+            await conn.execute(
+                text(f"SELECT pg_advisory_lock({MIGRATION_LOCK_KEY_1}, {MIGRATION_LOCK_KEY_2})")
+            )
+            try:
+                await asyncio.to_thread(_run_alembic_upgrade_head)
+            finally:
+                await conn.execute(
+                    text(f"SELECT pg_advisory_unlock({MIGRATION_LOCK_KEY_1}, {MIGRATION_LOCK_KEY_2})")
+                )
+
+        logger.info("Alembic-Migrationen erfolgreich ausgeführt")
+    except Exception as e:
+        logger.error(f"Datenbankschema-Migration fehlgeschlagen: {e}")
+        raise
+
 
 async def get_db() -> AsyncSession:
     """Dependency für FastAPI Endpoints."""
@@ -43,18 +112,17 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db():
-    """Initialisiert die Datenbank (falls nötig)."""
+    """Initialisiert die Datenbank und stellt das Schema sicher."""
     try:
-        from sqlalchemy import text
-        
         async with engine.begin() as conn:
             # Prüfe ob Extensions existieren
             await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'"))
             await conn.execute(text("SELECT 1 FROM pg_extension WHERE extname = 'vector'"))
         logger.info("Datenbank-Extensions vorhanden")
+        await ensure_schema()
     except Exception as e:
         logger.error(f"Datenbank-Initialisierung fehlgeschlagen: {e}")
-        # Nicht fatal - Extensions könnten über Alembic erstellt werden
+        raise
 
 
 async def close_db():

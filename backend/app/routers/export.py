@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.redis_client import redis_client
 from app.core.config import settings
 
-router = APIRouter(prefix="/api/v1", tags=["export"])
+router = APIRouter(tags=["export"])
 
 
 @router.get("/export/snapshot")
@@ -106,6 +106,8 @@ async def get_export_snapshot():
                 "stablecoin_delta_bn": grss_data.get("Stablecoin_Delta_Bn"),
                 "news_silence_seconds": grss_data.get("News_Silence_Seconds"),
                 "llm_sentiment": grss_data.get("LLM_News_Sentiment"),
+                "pattern_score": grss_data.get("pattern_score"),
+                "active_patterns": grss_data.get("Active_Patterns", []),
             },
             "decision_stats_last_20": stats,
             "last_20_decisions": decisions,
