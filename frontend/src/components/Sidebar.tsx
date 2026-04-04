@@ -6,12 +6,14 @@ import {
   LayoutDashboard,
   Settings,
   TrendingUp,
-  Terminal
+  Terminal,
+  BrainCircuit
 } from "lucide-react";
 
 const menuItems = [
   { href: "/",            label: "Dashboard",     icon: LayoutDashboard, description: "Bruno v2 Overview" },
   { href: "/dashboard",   label: "Trading",       icon: TrendingUp,      description: "Charts & Positions" },
+  { href: "/logic",       label: "Logic",         icon: BrainCircuit,    description: "Pipeline & Decisions" },
   { href: "/logs",        label: "Logs",          icon: Terminal,        description: "System Logs" },
   { href: "/einstellungen", label: "Settings",    icon: Settings,        description: "Configuration" },
 ];

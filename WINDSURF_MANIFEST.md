@@ -7,7 +7,7 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-06 (Bruno v2 Umbau - Prompt-Kaskade System)
+> Letzte Aktualisierung: 2026-04-06 (Bruno v2.1 Dashboard + Logic Page)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
 ---
@@ -24,6 +24,8 @@
 - **Breakeven-Stop** — SL auf Entry wenn Trade > 0.5% im Plus
 - **60s Zykluszeit** — kein LLM-Overhead mehr
 - **Post-Trade LLM Debrief** — Reasoning nach jedem Trade → DB für Lernloop
+- **Dashboard v2.1** — 4 Sections: Trading & Market, Decision Analysis, Pipeline Status, System Health
+- **Logic Page (`/logic`)** — 6-Gate Pipeline, GRSS Composition, Composite Radar, Decision Timeline
 
 ## AGENT-PIPELINE v2
 

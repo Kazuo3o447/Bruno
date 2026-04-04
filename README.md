@@ -36,7 +36,7 @@
 - **Backend:** FastAPI mit PostgreSQL (TimescaleDB + pgvector), Redis, WebSocket
 - **Frontend:** Next.js mit TailwindCSS, Lightweight Charts, WebSocket Client
 - **LLM (Legacy):** Native Windows Ollama nur für Post-Trade-Debrief und historische Analyse
-- **Agenten:** 6 spezialisierte Python-Agenten plus v2 Technical Analysis Engine (Ingestion, Technical, Quant, Context, Sentiment, Risk, Execution)
+- **Agenten:** 7 spezialisierte Python-Agenten (Ingestion, Technical, Quant, Context, Sentiment, Risk, Execution)
 - **Container:** Docker Compose mit Service-Orchestrierung
 - **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:8000/ws/*` (korrigiert)
 - **Local Development:** Alle Services auf localhost (Docker Container-Namen entfernt)
@@ -242,37 +242,57 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 
 ## 📊 Dashboard Features
 
-### ✅ Voll implementiert (Stand März 2026)
+### ✅ Voll implementiert (Stand April 2026)
+
+**Dashboard v2.1 — 4 Sections:**
+- **Section 1: Trading & Market** — Live Chart, Position P&L, Market Data, Sentiment & Bias, GRSS Components
+- **Section 2: Decision Analysis** — Top 3 Blockers, Blocker Distribution Chart, Recent Decisions Timeline
+- **Section 3: Pipeline Status** — 6-Gate Status (CLEAR/BLOCKED), Active Blocker Chain
+- **Section 4: System Health** — Agent Status, Data Sources Health
+
+**Neue Logic Page (`/logic`):**
+- 6-Gate Pipeline Visualisierung
+- GRSS Score Composition (VIX 25%, Macro 25%, Yields 15%, PCR 15%, Funding 10%, Sentiment 10%)
+- Composite Scoring Radar Chart
+- Decision Timeline über 30 Zyklen
+- Top Blocker Statistiken
+- Agent Pipeline Status
+
+**Features:**
 - **Live BTC-Preis** mit 24h/1h Änderungen
-- **GRSS-Score** mit实时 Updates (0-100 Skala)
+- **GRSS-Score** mit real-time Updates (0-100 Skala)
 - **Agenten-Status** mit Health-Monitoring
-- **Trading Chart** mit Candlesticks und Preis-Changes
+- **Trading Chart** mit Candlesticks
+- **Sentiment & Bias** (News, Retail Score, F&G, P/C Ratio)
 - **Performance-Metriken** (simuliert in DRY_RUN)
 - **WebSocket Logs** mit Echtzeit-Updates
 - **System-Status** für API, DB, Redis, WebSocket
 
 ### API-Endpunkte (alle aktiv)
 ```
-✅ /api/v1/telemetry/live      - System-Status
-✅ /api/v1/market/grss-full    - GRSS-Daten
-✅ /api/v1/decisions/feed      - Decision-Feed
-✅ /api/v1/positions/open      - Offene Positionen
-✅ /api/v1/performance/metrics - Performance-Kennzahlen
-✅ /api/v1/config              - Konfiguration
+✅ /api/v1/telemetry/live                    - System-Status
+✅ /api/v1/market/grss-full                 - GRSS-Daten
+✅ /api/v1/decisions/feed                   - Decision-Feed für Timeline
+✅ /api/v1/monitoring/phase-a/status      - GRSS Breakdown & Sentiment
+✅ /api/v1/monitoring/debug/trade-pipeline  - 6-Gate Pipeline Status
+✅ /api/v1/positions/open                   - Offene Positionen
+✅ /api/v1/performance/metrics              - Performance-Kennzahlen
+✅ /api/v1/config                           - Konfiguration
 ```
 
 ---
 
-## 🤖 Agenten-Architektur (6 Agenten)
+## 🤖 Agenten-Architektur (7 Agenten)
 
 | Agent | Aufgabe | Börse | Status |
 |-------|---------|-------|--------|
 | **Ingestion** | Binance WebSocket Daten | Binance | ✅ V2 Online |
-| **Quant** | Technische Analyse (OFI, CVD) | Binance | ✅ V2 Online |
+| **Technical** | TA Engine (EMA, RSI, MTF, Wick) | Binance | ✅ V2 Online |
+| **Quant** | Composite Scoring (OFI, CVD, Liquidity) | Binance | ✅ V4 Online |
 | **Context** | GRSS-Berechnung, Makro-Daten | FRED/Deribit | ✅ V2 Online |
 | **Sentiment** | LLM-basierte News-Analyse | RSS/CryptoCompare/CoinMarketCap | ✅ V2 Online |
-| **Risk** | Risiko-Bewertung & RAM-Veto | — | ✅ V2 Online |
-| **Execution** | **Bybit Futures** Order-Ausführung | Bybit | ✅ V2 Online |
+| **Risk** | Risiko-Bewertung & 6 Hard Vetos | — | ✅ V2 Online |
+| **Execution** | **Bybit Futures** Order-Ausführung | Bybit | ✅ V3 Online |
 
 **Execution-Details:**
 - Börse: Bybit Unified Account (Futures)
@@ -326,7 +346,7 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 | **[docs/status.md](docs/status.md)** | Aktueller Projekt-Status | ✅ Aktuell |
 | **[docs/ki.md](docs/ki.md)** | LLM-Infrastruktur (Ollama, Modelle) | ✅ Aktuell |
 | **[docs/agent.md](docs/agent.md)** | Agenten-Core Rules | ✅ Aktuell |
-| **[docs/log.md](docs/log.md)** | Fehler-Logbuch | ✅ Aktuell |
+| **[docs/trading_logic_v2.md](docs/trading_logic_v2.md)** | Trading Logic v2 (Deterministisch) | ✅ Aktuell |
 | **[docs/api_fixes.md](docs/api_fixes.md)** | API-Verbindung & Fehlerbehebung | ✅ Neu |
 
 ---
@@ -407,7 +427,8 @@ curl http://localhost:3000/api/v1/health      # Über Next.js Proxy
 ## 📞 Support & Kontakt
 
 **Dashboard:** http://localhost:3000/dashboard  
+**Logic Page:** http://localhost:3000/logic  
 **API-Dokumentation:** http://localhost:8000/docs  
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
-**Letztes Update:** 31. März 2026 - Voll funktionsfähiges Dashboard mit API-Integration
+**Letztes Update:** 4. April 2026 - Dashboard v2.1 mit Logic Page, 4 Sections, GRSS Composition

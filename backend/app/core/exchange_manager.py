@@ -78,6 +78,9 @@ class AuthenticatedExchangeClient(PublicExchangeClient):
         super().__init__(redis)
         self.logger = logging.getLogger("execution_exchange")
 
+        if getattr(settings, "PAPER_TRADING_ONLY", True):
+            self.logger.info("Paper-Trading-Only-Modus aktiv: echte Orders sind gesperrt.")
+
         if settings.BYBIT_MODE.lower() == "live" and not settings.LIVE_TRADING_APPROVED:
             raise RuntimeError(
                 "BYBIT_MODE='live' ist gesperrt. Setze LIVE_TRADING_APPROVED=True "
@@ -136,6 +139,16 @@ class AuthenticatedExchangeClient(PublicExchangeClient):
     async def create_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> Dict:
         """Führt eine Order an der Binance Futures Börse aus."""
         try:
+            if getattr(settings, "PAPER_TRADING_ONLY", True):
+                raise RuntimeError(
+                    "Paper-Trading-Only ist aktiv. Echte Order-Erstellung ist gesperrt."
+                )
+
+            if settings.DRY_RUN:
+                raise RuntimeError(
+                    "DRY_RUN ist aktiv. Echte Order-Erstellung ist gesperrt."
+                )
+
             if price:
                 return await self.binance.create_limit_order(symbol, side, amount, price)
             else:

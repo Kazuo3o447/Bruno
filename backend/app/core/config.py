@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     BYBIT_SECRET: Optional[str] = None
     BYBIT_MODE: str = "demo"   # "demo" = api-demo.bybit.com | "live" = api.bybit.com
                                # NIEMALS auf "live" ohne bestandenen Backtest
+    PAPER_TRADING_ONLY: bool = True
     LIVE_TRADING_APPROVED: bool = False
 
     # Glassnode On-Chain (Phase C)
@@ -91,6 +92,14 @@ class Settings(BaseSettings):
             raise ValueError("MAX_LEVERAGE must not exceed 1.0")
         if self.SIMULATED_CAPITAL_EUR < 10:
             raise ValueError("SIMULATED_CAPITAL_EUR must be at least 10 EUR")
+        if not self.PAPER_TRADING_ONLY:
+            raise ValueError("This build is locked to paper trading only")
+        if not self.DRY_RUN:
+            raise ValueError("PAPER_TRADING_ONLY requires DRY_RUN=true")
+        if self.LIVE_TRADING_APPROVED:
+            raise ValueError("PAPER_TRADING_ONLY requires LIVE_TRADING_APPROVED=false")
+        if self.BYBIT_MODE.lower() == "live":
+            raise ValueError("PAPER_TRADING_ONLY requires BYBIT_MODE=demo")
         return self
 
 

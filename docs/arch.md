@@ -25,7 +25,48 @@
 | **PostgreSQL** | TimescaleDB + pgvector | Zeitserien-Daten, Positionen, Trades |
 | **Redis** | Redis Stack | Caching, Pub/Sub, State-Management |
 | **FastAPI** | Python ASGI | Backend API, Agenten-Orchestration |
-| **Frontend** | Next.js + React | Trading Cockpit |
+| **Frontend** | Next.js + React | Trading Cockpit mit 4 Dashboard-Sections + Logic Page |
+
+### Frontend Pages
+
+| Route | Zweck | Features |
+|-------|-------|----------|
+| `/` (Dashboard) | **Trading Command Center** | Live Chart, Position Status, Market Data, Sentiment & Bias, GRSS Breakdown |
+| `/dashboard` | **Trading View** | Detaillierte Trading-Ansicht mit allen Marktdaten |
+| `/logic` | **Decision Logic** | 6-Gate Pipeline, GRSS Composition, Composite Scoring, Decision Timeline, Top Blockers |
+| `/logs` | **System Logs** | Echtzeit-Logs aus allen Agenten |
+| `/einstellungen` | **Settings** | Konfigurationsmanagement |
+
+### Dashboard Abschnitte (v2.1)
+
+**Section 1: Trading & Market**
+- TradingChart (BTCUSDT) mit Lightweight Charts
+- Position Panel (Live P&L, Entry, SL, TP)
+- Market Data Sidebar (24h/1h Change, OFI, Funding)
+- Sentiment & Bias (News Sentiment, Retail Score, F&G, P/C Ratio)
+- GRSS Components (VIX, Macro Status, Yields, DVOL)
+
+**Section 2: Decision Analysis**
+- Top 3 Blockers (mit Fortschrittsbalken)
+- Blocker Distribution (Bar Chart)
+- Recent Timeline (20 Entscheidungen, Signal vs Blocked)
+
+**Section 3: Pipeline Status**
+- 6-Gate Pipeline Status (CLEAR/BLOCKED)
+- Active Blocker Chain
+- Gate Details: Data Freshness → Context → Sentiment → Quant → Risk → Portfolio
+
+**Section 4: System Health**
+- Agent Status (Ingestion, Technical, Quant, Context, Risk, Execution)
+- Data Sources Health (mit Zeitstempeln)
+
+### Neue API-Endpunkte (Dashboard v2.1)
+
+```
+✅ /api/v1/decisions/feed        - Decision Feed für Timeline
+✅ /api/v1/monitoring/phase-a/status  - GRSS Breakdown & Sentiment
+✅ /api/v1/monitoring/debug/trade-pipeline  - 6-Gate Pipeline Status
+```
 
 ---
 
