@@ -15,7 +15,8 @@ class AgentOrchestrator:
     # Ingestion liefert Daten -> Quant/Context/Sentiment berechnen daraus Indikatoren -> Risk prüft -> Execution führt aus
     STARTUP_STAGES: List[List[str]] = [
         ["ingestion"],
-        ["quant", "context", "sentiment"],
+        ["technical", "context", "sentiment"],
+        ["quant"],
         ["risk"],
         ["execution"],
     ]

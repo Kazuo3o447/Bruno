@@ -82,16 +82,26 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 
 ---
 
-## Die 6-Agenten-Kaskade
+## Die 7-Agenten-Kaskade (v2)
 
-| Agent | Input | Output | Zweck |
-|-------|-------|--------|-------|
-| **Ingestion** | Binance WebSocket (5 Streams) | Redis Streams | OHLCV, OFI, Liquidations, Funding |
-| **Context** | Makro-Daten (FRED, Deribit, RSS) | Redis `bruno:context:grss` | **GRSS Score** (0–100) |
-| **Sentiment** | RSS Feeds + CryptoCompare + CoinMarketCap | Redis `bruno:sentiment` | LLM-basierte News-Analyse |
-| **Quant** | Redis + Orderbook | Redis `bruno:signals` | OFI, CVD, technische Signale |
-| **Risk** | Alle Signals (RAM-Check) | Redis `bruno:veto` | **0ms Veto** (GRSS < 40 = Block) |
-| **Execution** | Risk + Signals | **Bybit API** | **Limit/PostOnly Orders** + PositionTracker |
+| Agent | Version | Input | Output | Zweck |
+|-------|---------|-------|--------|-------|
+| **Ingestion** | V2 | Binance WebSocket (5 Streams) | Redis Streams | OHLCV, OFI, Liquidations, Funding |
+| **Technical** | V2 | `market_candles` + Binance depth | `bruno:ta:snapshot` | EMA, RSI, VWAP, ATR, MTF, Wick, S/R |
+| **Context** | V1 | Makro-Daten (FRED, Deribit, RSS) | Redis `bruno:context:grss` | **GRSS Score** (0–100) |
+| **Sentiment** | V1 | RSS Feeds + CryptoCompare + CoinMarketCap | Redis `bruno:sentiment` | News- und Ereignis-Sentiment |
+| **Quant** | **V4** | Redis + Orderbook + TA/Liquidity Services | Redis `bruno:quant:micro`, `bruno:liq:intelligence`, `bruno:decisions:feed` | **Composite Scoring**, MTF, Liquidity Intelligence |
+| **Risk** | V2 | Alle Signals (RAM-Check) | Redis `bruno:veto:state` | **Daily Limits**, Cooldowns, **0ms Veto** |
+| **Execution** | V3 | Risk + Signals | **Bybit API** | **Breakeven Stops**, PositionTracker |
+
+### v2 Service Layer
+
+| Service | Zweck | Integration |
+|---------|-------|-------------|
+| **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls | QuantAgentV4 |
+| **LiquidityEngine** | OI-Delta, Sweep Detection, Entry Confirmation | QuantAgentV4 |
+| **CompositeScorer** | Dynamic Weighting, Regime Detection | QuantAgentV4 |
+| **TradeDebriefV2** | Post-Trade Debrief / Legacy LLM-Analyse | ExecutionAgentV3 |
 
 ---
 
@@ -112,11 +122,14 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 - Profit Factor wird aus realisierter P&L-Historie berechnet und per Endpoint angezeigt
 - Funding- und Liquidations-Daten sind in GRSS und Status-Checks integriert
 
-### Phase C/D Runtime (aktuell)
-- LLM Cascade läuft über `QuantAgent`
-- `ExecutionAgentV3` ist im Worker registriert
-- `PositionTracker` hält den Live-Positions-State in Redis und schreibt asynchron in die DB
-- `PositionMonitor` prüft SL/TP im 30s-Intervall
+### Phase C/D Runtime (v2) - AKTUELL
+- **QuantAgentV4** mit vollständiger Service-Integration
+- **TechnicalAnalysisAgent**: MTF-Alignment, Wick Detection, Session Awareness, Orderbuch-Walls
+- **LiquidityEngine**: OI-Delta, Sweep Detection, Entry Confirmation
+- **CompositeScorer**: Dynamic Weighting, Regime-adaptive Scoring
+- **RiskAgentV2**: Daily Limits (3%), Trade Cooldowns (5min)
+- **ExecutionAgentV3**: Breakeven Stops, Enhanced Position Management
+- **Legacy (v1):** LLM Cascade bleibt nur für Post-Trade-Debriefs / historische Referenzen erhalten
 
 ---
 
@@ -175,13 +188,25 @@ ADD COLUMN layer3_output JSONB;
 - [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag implementiert
 - [x] CryptoCompare + CoinMarketCap Health: Health-Telemetrie integriert
 
-### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
-- [ ] CoinGlass API Integration ($29/Monat)
-- [ ] Telegram Notifications
-- [ ] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
+### Phase B — Daten-Erweiterung (Woche 2–3) ✅ COMPLETED
+- [x] CoinGlass API Integration ($29/Monat)
+- [x] Telegram Notifications
+- [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
 
-### Geplant: Phasen C–H
-Siehe WINDSURF_MANIFEST.md Abschnitt 13
+### Phase v2 — Prompt Kaskade (April 2026) ✅ COMPLETED
+- [x] **TechnicalAnalysisEngine**: MTF-Alignment, Wick Detection, Session Awareness
+- [x] **LiquidityEngine**: OI-Delta, Sweep Detection, Entry Confirmation
+- [x] **CompositeScorer**: Dynamic Weighting, Regime Detection
+- [x] **QuantAgentV4**: Service Integration, Daily Limits, Trade Cooldowns
+- [x] **RiskAgentV2**: Enhanced Risk Management, Breakeven Stops
+- [x] **ExecutionAgentV3**: Breakeven Stop Logic, Position Management
+- [x] **Configuration**: v2 Parameters, Dynamic Thresholds
+- [x] **Documentation**: Complete v2 Architecture Documentation
+
+### Geplant: Phasen v2.1–v2.2
+- [ ] Trailing Stops, Multi-Symbol Support
+- [ ] Advanced Regimes, ML Integration
+- [ ] Portfolio Management, Advanced Risk Analytics
 
 ---
 

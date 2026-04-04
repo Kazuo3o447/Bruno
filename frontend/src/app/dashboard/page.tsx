@@ -1,14 +1,28 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import Sidebar from "../components/Sidebar";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import TradingChart from "../components/TradingChart";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Cell,
+  PieChart,
+  Pie,
+} from "recharts";
 
 interface Telemetry {
   status: "ARMED" | "HALTED";
   veto_active: boolean;
   veto_reason: string;
   dry_run: boolean;
+  live_trading_approved?: boolean;
   grss: {
     score: number | null;
     velocity_30min: number | null;
@@ -37,6 +51,76 @@ interface Position {
   take_profit_price: number;
 }
 
+interface PhaseAStatus {
+  phase_a_complete: boolean;
+  checks: Record<string, boolean>;
+  current_grss: number | null;
+  grss_breakdown: {
+    vix: number | null;
+    ndx: string | null;
+    yields: number | null;
+    pcr: number | null;
+    dvol: number | null;
+    funding: number | null;
+    sentiment: number | null;
+  };
+  data_sources: Record<string, string | number | null>;
+}
+
+interface TradePipelineGate {
+  blocked?: boolean;
+  note?: string;
+  [key: string]: unknown;
+}
+
+interface TradePipelineStatus {
+  summary: {
+    blocking_gates: string[];
+    trade_possible: boolean;
+    grss_score: number | null;
+    vix: number | null;
+    data_freshness_active: boolean | null;
+    context_timestamp: string | null;
+  };
+  gates: Record<string, TradePipelineGate>;
+  health_sources: Record<string, { status: string; latency_ms: number; last_update: string }>;
+  portfolio: {
+    capital_eur: number | null;
+    total_trades: number | null;
+    daily_pnl_eur: number | null;
+  };
+  quant_micro: {
+    price: number | null;
+    ofi: number | null;
+    ofi_buy_pressure: number | null;
+    source: string | null;
+    timestamp: string | null;
+  };
+}
+
+interface DecisionFeedResponse {
+  events: Array<{
+    ts?: string;
+    outcome?: string;
+    reason?: string;
+    regime?: string;
+  }>;
+  count: number;
+  stats: {
+    ofi_below_threshold: number;
+    cascade_hold: number;
+    signals_generated: number;
+  };
+}
+
+interface DecisionTimelinePoint {
+  ts: string;
+  label: string;
+  blocked: number;
+  signal: number;
+  reason: string;
+}
+
 function fmt(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined) return "—";
   return n.toFixed(digits);
@@ -53,6 +137,13 @@ function timeAgo(isoStr: string | null | undefined): string {
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   return `${Math.floor(diff / 3600)}h`;
+}
+
+function chartColor(value: number, active = false): string {
+  if (active) return "#f97316";
+  if (value >= 1) return "#ef4444";
+  if (value === 0) return "#10b981";
+  return "#64748b";
 }
 
 function HeaderBar({ telemetry }: { telemetry: Telemetry | null }) {
@@ -203,24 +294,108 @@ export default function Dashboard() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const [phaseA, setPhaseA] = useState<PhaseAStatus | null>(null);
+  const [tradePipeline, setTradePipeline] = useState<TradePipelineStatus | null>(null);
+  const [decisionFeed, setDecisionFeed] = useState<DecisionFeedResponse | null>(null);
   const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
     try {
-      const [telRes, posRes] = await Promise.allSettled([
+      const [telRes, posRes, phaseARes, pipelineRes, decisionsRes] = await Promise.allSettled([
         fetch("/api/v1/telemetry/live").then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
         fetch("/api/v1/positions/open").then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+        fetch("/api/v1/monitoring/phase-a/status").then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+        fetch("/api/v1/monitoring/debug/trade-pipeline").then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+        fetch("/api/v1/decisions/feed?limit=50").then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
       ]);
 
       if (telRes.status === "fulfilled") setTelemetry(telRes.value);
       if (posRes.status === "fulfilled") {
-        setPosition(posRes.value.position ?? null);
-        setCurrentPrice(posRes.value.current_price ?? null);
+        setPosition(posRes.value.position ?? posRes.value.positions?.[0] ?? null);
+        setCurrentPrice(telRes.status === "fulfilled" ? telRes.value.market?.btc_price ?? null : null);
       }
+      if (phaseARes.status === "fulfilled") setPhaseA(phaseARes.value);
+      if (pipelineRes.status === "fulfilled") setTradePipeline(pipelineRes.value);
+      if (decisionsRes.status === "fulfilled") setDecisionFeed(decisionsRes.value);
     } catch (e: any) {
       setError(e.message);
     }
   }, []);
+
+  const tradeReasonData = useMemo(() => {
+    const counts: Record<string, number> = {
+      "Signal gesetzt": 0,
+      "Composite Hold": 0,
+      "OFI Gate": 0,
+      "Risk/Veto": 0,
+      "Position Guard": 0,
+      "Daily Limit": 0,
+      "Sonstiges": 0,
+    };
+
+    for (const event of decisionFeed?.events ?? []) {
+      const text = `${event.outcome ?? ""} ${event.reason ?? ""}`.toUpperCase();
+      if (text.includes("SIGNAL_")) counts["Signal gesetzt"] += 1;
+      else if (text.includes("OFI")) counts["OFI Gate"] += 1;
+      else if (text.includes("RISK") || text.includes("VETO")) counts["Risk/Veto"] += 1;
+      else if (text.includes("POSITION")) counts["Position Guard"] += 1;
+      else if (text.includes("DAILY")) counts["Daily Limit"] += 1;
+      else if (text.includes("HOLD") || text.includes("THRESHOLD") || text.includes("CASCADE")) counts["Composite Hold"] += 1;
+      else counts["Sonstiges"] += 1;
+    }
+
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name, value }))
+      .filter((item) => item.value > 0);
+  }, [decisionFeed]);
+
+  const topNoTradeReasons = useMemo(() => {
+    return tradeReasonData
+      .filter((item) => item.name !== "Signal gesetzt")
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 3);
+  }, [tradeReasonData]);
+
+  const blockerTimelineData = useMemo<DecisionTimelinePoint[]>(() => {
+    const events = [...(decisionFeed?.events ?? [])].reverse().slice(0, 20);
+
+    return events.map((event, index) => {
+      const outcome = String(event.outcome ?? "").toUpperCase();
+      const reason = String(event.reason ?? "");
+      const blocked = outcome.includes("HOLD") || outcome.includes("BLOCK") || outcome.includes("VETO") || outcome.includes("LIMIT") || reason.toUpperCase().includes("VETO") ? 1 : 0;
+      const signal = outcome.includes("SIGNAL_") ? 1 : 0;
+
+      return {
+        ts: event.ts ?? `event-${index}`,
+        label: event.ts ? new Date(event.ts).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : `#${index + 1}`,
+        blocked,
+        signal,
+        reason: reason || event.outcome || "—",
+      };
+    });
+  }, [decisionFeed]);
+
+  const gateHealthData = useMemo(() => {
+    const gates = tradePipeline?.gates ?? {};
+    return Object.entries(gates).map(([key, gate]) => ({
+      name: key.replace(/^gate_\d+_/, "").replaceAll("_", " "),
+      blocked: gate.blocked ? 1 : 0,
+      note: String(gate.note ?? ""),
+    }));
+  }, [tradePipeline]);
+
+  const platformSummary = useMemo(() => {
+    const freshCount = Object.values(phaseA?.checks ?? {}).filter(Boolean).length;
+    const blocking = tradePipeline?.summary.blocking_gates?.length ?? 0;
+    return [
+      { label: "Platform", value: telemetry?.status ?? "—", tone: telemetry?.status === "ARMED" ? "emerald" : "red" },
+      { label: "Dry Run", value: telemetry?.dry_run ? "ON" : "OFF", tone: telemetry?.dry_run ? "amber" : "emerald" },
+      { label: "Live Approved", value: telemetry?.live_trading_approved ? "YES" : "NO", tone: telemetry?.live_trading_approved ? "emerald" : "red" },
+      { label: "Fresh Checks", value: `${freshCount}/${Object.keys(phaseA?.checks ?? {}).length || 0}`, tone: freshCount >= 5 ? "emerald" : "amber" },
+      { label: "Blocking Gates", value: String(blocking), tone: blocking > 0 ? "red" : "emerald" },
+      { label: "Current Veto", value: telemetry?.veto_active ? "ACTIVE" : "CLEAR", tone: telemetry?.veto_active ? "red" : "emerald" },
+    ];
+  }, [phaseA, telemetry, tradePipeline]);
 
   useEffect(() => {
     refresh();
@@ -228,35 +403,188 @@ export default function Dashboard() {
     return () => clearInterval(iv);
   }, [refresh]);
 
+  // ... (rest of the code remains the same)
   if (error) return <div className="min-h-screen bg-[#0a0a0f] text-white p-8 text-red-400">Error: {error}</div>;
   if (!telemetry) return <div className="min-h-screen bg-[#0a0a0f] text-white p-8">Loading...</div>;
 
   return (
-    <div className="flex min-h-screen bg-[#0a0a0f] text-white">
-      <Sidebar />
-      <div className="flex-1 flex flex-col">
-        <HeaderBar telemetry={telemetry} />
-        <div className="flex-1 p-4 space-y-3 overflow-y-auto">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-            <div className="lg:col-span-2 h-[320px] overflow-hidden">
-              <div className="w-full h-full">
-                <TradingChart symbol="BTCUSDT" />
-              </div>
-            </div>
-            <div className="space-y-3">
-              <OpenPositionPanel position={position} currentPrice={currentPrice} />
+    <div className="min-h-screen bg-[#0a0a0f] text-white p-4 lg:p-6 space-y-4">
+      <HeaderBar telemetry={telemetry} />
+
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        {platformSummary.map((item) => (
+          <div key={item.label} className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-3">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1">{item.label}</div>
+            <div className={`text-sm font-bold ${item.tone === "emerald" ? "text-emerald-400" : item.tone === "amber" ? "text-amber-400" : "text-red-400"}`}>
+              {item.value}
             </div>
           </div>
+        ))}
+      </div>
 
-          <div className="border-t border-zinc-800 pt-3 mt-6">
-            <h2 className="text-zinc-500 uppercase tracking-widest text-xs font-mono mb-3">System Monitoring</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-              <MarketOverview market={telemetry?.market} />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-start">
+        <div className="lg:col-span-2 h-[420px]">
+          <TradingChart symbol="BTCUSDT" />
+        </div>
+        <div className="space-y-3">
+          <OpenPositionPanel position={position} currentPrice={currentPrice} />
+          <MarketOverview market={telemetry?.market} />
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <div className="text-[11px] text-slate-500 font-bold uppercase tracking-wider mb-3">Plattform-Zustand</div>
+            <div className="space-y-2 text-xs font-mono">
+              <div className="flex items-center justify-between"><span className="text-slate-500">Phase A</span><span className={phaseA?.phase_a_complete ? "text-emerald-400" : "text-amber-400"}>{phaseA?.phase_a_complete ? "Complete" : "Pending"}</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-500">Data Freshness</span><span className={tradePipeline?.summary.data_freshness_active ? "text-emerald-400" : "text-red-400"}>{tradePipeline?.summary.data_freshness_active ? "Active" : "Blocked"}</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-500">Decision Gate</span><span className={tradePipeline?.summary.trade_possible ? "text-emerald-400" : "text-red-400"}>{tradePipeline?.summary.trade_possible ? "Trade möglich" : "Blockiert"}</span></div>
+              <div className="flex items-center justify-between"><span className="text-slate-500">Blocking Gates</span><span className="text-white">{tradePipeline?.summary.blocking_gates?.join(", ") || "—"}</span></div>
             </div>
-            <AgentStatusRow agents={telemetry?.agents ?? {}} />
-            <DataFreshnessBar sources={telemetry?.data_sources ?? {}} />
           </div>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Warum Trades nicht gesetzt wurden</div>
+              <div className="text-xs text-slate-600 mt-1">Letzte 50 Entscheidungszyklen</div>
+            </div>
+            <div className="text-xs text-slate-500 font-mono">{decisionFeed?.count ?? 0} Events</div>
+          </div>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={tradeReasonData} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f1f33" />
+                <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={{ stroke: "#1f1f33" }} tickLine={false} />
+                <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={{ stroke: "#1f1f33" }} tickLine={false} allowDecimals={false} />
+                <Tooltip contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }} />
+                <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                  {tradeReasonData.map((entry) => (
+                    <Cell key={entry.name} fill={chartColor(entry.value, entry.name === "Risk/Veto" || entry.name === "Daily Limit")} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Aktive Blocker im Pipeline-Check</div>
+              <div className="text-xs text-slate-600 mt-1">Live Gate-Zustände aus `debug/trade-pipeline`</div>
+            </div>
+            <div className="text-xs text-slate-500 font-mono">{tradePipeline?.summary.grss_score?.toFixed(1) ?? "—"} GRSS</div>
+          </div>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={gateHealthData} dataKey="blocked" nameKey="name" innerRadius={60} outerRadius={95} paddingAngle={3}>
+                  {gateHealthData.map((entry) => (
+                    <Cell key={entry.name} fill={entry.blocked ? "#ef4444" : "#10b981"} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 text-xs font-mono">
+            {gateHealthData.map((gate) => (
+              <div key={gate.name} className="flex items-center justify-between border border-[#1a1a2e] rounded px-2 py-1.5">
+                <span className="text-slate-400 capitalize">{gate.name}</span>
+                <span className={gate.blocked ? "text-red-400" : "text-emerald-400"}>{gate.blocked ? "BLOCKED" : "CLEAR"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Why no trade? — Top 3</div>
+            <div className="text-xs text-slate-600 mt-1">Die häufigsten Blocker aus den letzten Decision-Feed-Zyklen</div>
+          </div>
+          <div className="text-xs text-slate-500 font-mono">{decisionFeed?.count ?? 0} Zyklen</div>
+        </div>
+
+        {topNoTradeReasons.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {topNoTradeReasons.map((reason, index) => {
+              const max = topNoTradeReasons[0]?.value || 1;
+              const width = Math.max(12, Math.round((reason.value / max) * 100));
+              const color = index === 0 ? "text-red-400" : index === 1 ? "text-amber-400" : "text-sky-400";
+              const bar = index === 0 ? "bg-red-500" : index === 1 ? "bg-amber-500" : "bg-sky-500";
+
+              return (
+                <div key={reason.name} className="border border-[#1a1a2e] rounded-lg p-3 bg-[#0a0a0f]">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div>
+                      <div className="text-[10px] text-slate-600 uppercase tracking-wider">#{index + 1}</div>
+                      <div className={`text-sm font-bold ${color}`}>{reason.name}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-bold text-white font-mono">{reason.value}</div>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider">Events</div>
+                    </div>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-[#111122] overflow-hidden">
+                    <div className={`h-full ${bar}`} style={{ width: `${width}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-sm text-slate-500 font-mono border border-dashed border-[#1a1a2e] rounded-lg p-4">
+            Noch keine Blocker-Daten vorhanden.
+          </div>
+        )}
+      </div>
+
+      <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Blocker-Zeitreihe</div>
+            <div className="text-xs text-slate-600 mt-1">Letzte 20 Entscheidungszyklen, Signal vs. Blocked</div>
+          </div>
+          <div className="text-xs text-slate-500 font-mono">
+            {blockerTimelineData.filter((p) => p.blocked === 1).length} blocked / {blockerTimelineData.filter((p) => p.signal === 1).length} signals
+          </div>
+        </div>
+        <div className="h-72">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={blockerTimelineData} margin={{ top: 8, right: 16, left: -8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1f1f33" />
+              <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={{ stroke: "#1f1f33" }} tickLine={false} />
+              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} axisLine={{ stroke: "#1f1f33" }} tickLine={false} allowDecimals={false} domain={[0, 1]} />
+              <Tooltip
+                contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }}
+                formatter={(value: any, name: any, props: any) => {
+                  if (name === "blocked") return [value === 1 ? "Yes" : "No", "Blocked"];
+                  if (name === "signal") return [value === 1 ? "Yes" : "No", "Signal"];
+                  return [value, name];
+                }}
+                labelFormatter={(_, payload: any) => payload?.[0]?.payload?.reason ? `Reason: ${payload[0].payload.reason}` : "Decision"}
+              />
+              <Line type="monotone" dataKey="blocked" name="blocked" stroke="#ef4444" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="signal" name="signal" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs font-mono">
+          {blockerTimelineData.slice(-6).map((point) => (
+            <div key={point.ts} className="flex items-center justify-between border border-[#1a1a2e] rounded px-2 py-1.5">
+              <span className="text-slate-400">{point.label}</span>
+              <span className={point.blocked ? "text-red-400" : "text-emerald-400"}>{point.blocked ? "BLOCKED" : "ALLOWED"}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="border-t border-zinc-800 pt-3 mt-6 space-y-3">
+        <h2 className="text-zinc-500 uppercase tracking-widest text-xs font-mono">System Monitoring</h2>
+        <AgentStatusRow agents={telemetry?.agents ?? {}} />
+        <DataFreshnessBar sources={telemetry?.data_sources ?? {}} />
       </div>
     </div>
   );

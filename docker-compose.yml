@@ -60,7 +60,8 @@ services:
       - DB_NAME=${DB_NAME:-bruno_trading}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - FRED_API_KEY=${FRED_API_KEY}
-      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
+      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
@@ -94,7 +95,7 @@ services:
       - DB_NAME=${DB_NAME:-bruno_trading}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - FRED_API_KEY=${FRED_API_KEY}
-      - CRYPTOPANIC_API_KEY=${CRYPTOPANIC_API_KEY}
+      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
@@ -111,6 +112,8 @@ services:
     build:
       context: ./frontend
       dockerfile: ../docker/Dockerfile.frontend
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://api-backend:8000}
     container_name: bruno-frontend
     restart: unless-stopped
     depends_on:
@@ -120,8 +123,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
       - /app/node_modules
+      # Kein Mapping von ./frontend:/app, da sonst Build-Ordner überschrieben wird
     logging:
       driver: "json-file"
       options:

@@ -11,11 +11,12 @@ from app.agents.deps import AgentDependencies
 from app.agents.orchestrator import AgentOrchestrator
 
 from app.agents.ingestion import IngestionAgentV2
-from app.agents.quant_v3 import QuantAgent
+from app.agents.quant_v4 import QuantAgentV4
+from app.agents.technical import TechnicalAnalysisAgent
 from app.agents.context import ContextAgent
+from app.agents.sentiment import SentimentAgent
 from app.agents.risk import RiskAgent
 from app.agents.execution_v3 import ExecutionAgentV3
-from app.agents.sentiment import SentimentAgent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -121,7 +122,8 @@ async def main():
     # 3. Agenten Registrierung
     orchestrator = AgentOrchestrator(deps)
     orchestrator.register("ingestion", IngestionAgentV2(deps))
-    orchestrator.register("quant", QuantAgent(deps, symbol="BTCUSDT"))
+    orchestrator.register("technical", TechnicalAnalysisAgent(deps))
+    orchestrator.register("quant", QuantAgentV4(deps, symbol="BTCUSDT"))
     orchestrator.register("context", ContextAgent(deps))
     orchestrator.register("sentiment", SentimentAgent(deps))
     orchestrator.register("risk", RiskAgent(deps))

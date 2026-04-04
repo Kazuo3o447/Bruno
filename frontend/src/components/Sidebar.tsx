@@ -4,22 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  DatabaseBackup,
-  Activity,
   Settings,
   TrendingUp,
-  BrainCircuit,
   Terminal
 } from "lucide-react";
 
 const menuItems = [
-  { href: "/",            label: "Dashboard",     icon: LayoutDashboard, description: "Markt-Übersicht" },
-  { href: "/dashboard",   label: "Trading",       icon: TrendingUp,      description: "Charts & Trades" },
-  { href: "/agenten",     label: "Agenten",       icon: BrainCircuit,    description: "KI-Pipeline" },
-  { href: "/monitoring",  label: "Monitoring",    icon: Activity,        description: "MLOps & Telemetry" },
-  { href: "/logs",        label: "Logs",          icon: Terminal,        description: "System-Terminal" },
-  { href: "/backup",      label: "Backups",       icon: DatabaseBackup,  description: "Datensicherung" },
-  { href: "/einstellungen", label: "Settings",    icon: Settings,        description: "Konfiguration" },
+  { href: "/",            label: "Dashboard",     icon: LayoutDashboard, description: "Bruno v2 Overview" },
+  { href: "/dashboard",   label: "Trading",       icon: TrendingUp,      description: "Charts & Positions" },
+  { href: "/logs",        label: "Logs",          icon: Terminal,        description: "System Logs" },
+  { href: "/einstellungen", label: "Settings",    icon: Settings,        description: "Configuration" },
 ];
 
 export default function Sidebar() {
@@ -35,7 +29,7 @@ export default function Sidebar() {
           </span>
         </h1>
         <p className="text-[10px] text-slate-600 font-bold uppercase tracking-[0.2em] mt-0.5">
-          Trading Intelligence
+          v2 Deterministic Trading
         </p>
       </div>
 
@@ -92,7 +86,7 @@ export default function Sidebar() {
           </div>
           <div className="flex items-center gap-2.5 mt-1.5">
             <span className="flex h-2 w-2 rounded-full bg-indigo-500" />
-            <span className="text-[10px] text-slate-500">Paper Trading Mode</span>
+            <span className="text-[10px] text-slate-500">Composite Scoring Active</span>
           </div>
         </div>
       </div>

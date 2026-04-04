@@ -7,12 +7,49 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-03 (Learning Mode / Phantom Trades)
+> Letzte Aktualisierung: 2026-04-06 (Bruno v2 Umbau - Prompt-Kaskade System)
 > Repository: https://github.com/Kazuo3o447/Bruno
+>
+---
+
+## STATUS UPDATE (April 2026)
+
+### ✅ BRUNO v2 — Deterministic Composite Scoring
+- **LLM-Cascade entfernt** — 3-Layer LLM durch deterministischen Composite Scorer ersetzt
+- **Technical Analysis Engine** — EMA, RSI, VWAP, ATR, S/R, MTF-Alignment, Wick-Detection
+- **Liquidity Intelligence** — Cluster-Magneten, 3×-Sweep-Konfirmation (Spike+Wick+OI-Drop)
+- **Orderbuch-Walls** — depth=1000 als Live-Liquiditätsradar
+- **Regime-adaptive Gewichtung** — Trending: TA 50%, Ranging: Liq 40%
+- **Risk: Daily Drawdown Limit** — 3% Tagesverlust oder 3 Fehltrades → 24h Pause
+- **Breakeven-Stop** — SL auf Entry wenn Trade > 0.5% im Plus
+- **60s Zykluszeit** — kein LLM-Overhead mehr
+- **Post-Trade LLM Debrief** — Reasoning nach jedem Trade → DB für Lernloop
+
+## AGENT-PIPELINE v2
+
+| Stage | Agenten | Redis Output |
+|-------|---------|-------------|
+| 1 | ingestion | market_candles, liquidations, market:ticker, market:funding, market:ofi:ticks |
+| 2 | technical, context, sentiment | bruno:ta:snapshot, bruno:context:grss, bruno:sentiment:aggregate |
+| 3 | quant | bruno:quant:micro, bruno:liq:intelligence, bruno:decisions:feed, bruno:pubsub:signals |
+| 4 | risk | bruno:veto:state |
+| 5 | execution | bruno:portfolio:state |
+
+### Entscheidungslogik: Composite Scorer
+
+Regime-adaptive Gewichtung:
+
+| Regime | TA | Liq | Flow | Macro |
+|--------|-----|-----|------|-------|
+| Trending (bull/bear) | 50% | 15% | 20% | 15% |
+| Ranging/Mixed | 20% | 40% | 25% | 15% |
+
+Sweep-Bonus: 3×-bestätigter Sweep senkt Threshold um 15 Punkte.
+MTF-Filter: Score ×0.3 wenn Multi-Timeframe nicht aligned.
 
 ---
 
-## 🎯 STATUS UPDATE (3. April 2026)
+## LEGACY (v1) — VORHERIGER STATUS (3. April 2026)
 
 ### ✅ PHASE F COMPLETED - Critical Fixes & Config-Hot-Reload
 - **Doppeltes Prefix behoben** - export, config, decisions Router Endpunkte erreichbar
@@ -24,7 +61,7 @@
 - **SIGNAL-REFORM S1 (2026-04-03)** - OFI-Gate entfernt, zeitbasierter Zyklus, Decision Feed aktiv
 - **PHASE G.0 (2026-04-03)** - Learning Mode für DRY_RUN, Phantom Trades und trade_mode-Tagging abgeschlossen
 
-### 📋 IMPLEMENTIERTE LÖSUNGEN
+### 📋 IMPLEMENTIERTE LÖSUNGEN (Legacy v1)
 1. **API-Endpunkt Fixes:** Doppeltes /api/v1 Prefix in 3 Routern entfernt
 2. **Fresh-Source-Gate:** Health-Reporting für Binance_REST, Deribit_Public, yFinance_Macro
 3. **Config-Hot-Reload:** _load_config_value() Methode in QuantAgent & RiskAgent
@@ -46,17 +83,26 @@ Das ist keine Präferenz. Das ist eine architektonische Entscheidung, die nicht 
 - Signal-Intervall: 5–15 Minuten (NICHT 5 Sekunden)
 - Trade-Haltezeit: 30 Minuten bis 4 Stunden
 - Ziel-Trades: 2–8 pro Tag
-- Latenz-Sensitivität: niedrig — der LLM HAT Zeit zum Denken
+- Latenz-Sensitivität: niedrig — die Trade-Entscheidung ist deterministisch; LLMs sind nur noch für Legacy-/Debrief-Analysen relevant
 
-**Warum:** Das System läuft auf Windows-Hybrid-Architektur (Ryzen 7 7800X3D + RX 7900 XT) ohne redundante Netzwerkleitung. HFT ist auf dieser Infrastruktur strukturell unmöglich und gefährlich (offene Positionen bei Verbindungsabbruch). Der LLM-Stack (qwen2.5:14b, deepseek-r1:14b via Ollama) hat 2–8 Sekunden Inferenz-Latenz — das ist ein Feature auf dieser Zeitebene, nicht ein Bug.
+**Warum:** Das System läuft auf Windows-Hybrid-Architektur (Ryzen 7 7800X3D + RX 7900 XT) ohne redundante Netzwerkleitung. HFT ist auf dieser Infrastruktur strukturell unmöglich und gefährlich (offene Positionen bei Verbindungsabbruch). Die Trade-Entscheidungskette ist jetzt deterministisch; LLMs bleiben nur für Legacy-/Post-Trade-Debrief-Analysen erhalten.
 
 ---
 
-## 1. VERBOTEN — EISERNE REGELN
+## 1. VERBOTEN — EISERNE REGELN (v2 + Legacy)
 
 Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert ist:
 
 ```
+❌ NIEMALS: LLM in der Trade-Entscheidungskette
+❌ NIEMALS: Gate-Logik statt gewichtetem Scoring
+❌ NIEMALS: Entry ohne MTF-Alignment-Prüfung
+❌ NIEMALS: Sweep-Entry ohne 3-fache Konfirmation (Spike+Wick+OI-Drop)
+❌ NIEMALS: Composite Gewichte ohne Dokumentation ändern
+❌ NIEMALS: TA-Berechnungen mit pandas/numpy
+❌ NIEMALS: Trade ohne Breakeven-Stop-Mechanismus
+
+# Legacy (v1) rules below remain valid
 ❌ NIEMALS: Polling-Intervall unter 60 Sekunden für Quant/Context/Risk Agenten
 ❌ NIEMALS: random.uniform() oder random.random() in produktivem Signal-Code
 ❌ NIEMALS: Echte Orders platzieren wenn DRY_RUN=True (Hardware-Level-Block)
@@ -87,7 +133,7 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 - **PHANTOM TRADES:** HOLD-Zyklen werden hypothetisch ausgewertet (240min Outcome-Tracking)
 - **TRADE MODE FLAG:** Jeder Trade in DB markiert als "learning" | "production" | "phantom"
 - **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse)**
-- LLM-Kaskade (3-Layer Entscheidungslogik mit qwen2.5/deepseek-r1)
+- **Legacy (v1):** LLM-Kaskade (3-Layer Entscheidungslogik mit qwen2.5/deepseek-r1)
 - Docker Compose Stack (PostgreSQL/TimescaleDB, Redis Stack, FastAPI, Next.js)
 - IngestionAgent: Binance WebSocket Multiplex (5 Streams), Batching, DB-Flush
 - AgentOrchestrator: Supervision Tree, Staged Startup, Restart-Logic mit Agent Heartbeats (15s)
@@ -211,7 +257,8 @@ divergence = abs(binance_funding - bybit_funding)
 | CBOE CSV `VIX_History` | VIX Index | ✅ implementiert (31.05 aktuell) |
 | Yahoo Finance `^NDX` | Nasdaq SMA200 | ✅ implementiert (429-anfällig) |
 | Alternative.me | Fear & Greed Index | ✅ implementiert |
-| CryptoPanic API | Breaking News | ✅ v2 implementiert |
+| CryptoCompare API | News, Preise, Historie, Social, Blockchain | ✅ implementiert |
+| CoinMarketCap API | Bitcoin-Marktmetriken + Global Metrics | ✅ implementiert |
 | 8x RSS Feeds | FinBERT/CryptoBERT Input | ✅ implementiert |
 | CoinGecko `coins/markets` | Stablecoin Supply Delta (USDT + USDC, 7d) | ✅ implementiert |
 | Bybit Public + OKX Public | Cross-Exchange Funding Divergenz | ✅ implementiert |
@@ -590,7 +637,8 @@ Woche: +$127.80           Daily Loss Limit: -$XX (XX% verbleibend)
 |-----|-------|--------|-----------|--------------|
 | **Binance API** | Order Execution (Live) | Kostenlos | P1 | `BINANCE_API_KEY`, `BINANCE_SECRET` |
 | **FRED API** | 10Y Yields | Kostenlos | ✅ P1 | `FRED_API_KEY` |
-| **CryptoPanic API** | News Aggregation | Kostenlos | ✅ P1 | `CRYPTOPANIC_API_KEY` |
+| **CryptoCompare API** | News Aggregation + Market Bundle | Kostenlos | ✅ P1 | `CRYPTOCOMPARE_API_KEY` |
+| **CoinMarketCap API** | BTC Quotes + Global Metrics | Kostenlos | ✅ P1 | `COINMARKETCAP_API_KEY` |
 | **Alpha Vantage API** | NDX Fallback | Kostenlos | ✅ P1 | `ALPHA_VANTAGE_API_KEY` |
 | **CoinGlass API** | Funding, OI, ETF Flows, Liq Maps | $29/Monat (Hobbyist) | P1 | `COINGLASS_API_KEY` |
 | **Telegram Bot Token** | Notifications | Kostenlos | P2 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
@@ -659,7 +707,7 @@ Ziel erreicht: Der Bot ist ehrlich. Kein Trade auf Basis von Zufallsdaten.
 8. CVD State: In Redis persistiert statt In-Memory-Float
 9. **Data-Freshness Fail-Safe**: GRSS bricht bei stale data auf 0.0 ab
 10. **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
-11. **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
+11. **CryptoCompare + CoinMarketCap Health**: Health-Telemetrie mit Latenz-Tracking
 
 **PHASE B — Daten-Erweiterung (Woche 2–3) ✅ COMPLETED**
 

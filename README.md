@@ -2,10 +2,11 @@
 
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.0**
 > 
-> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
-> ✅ **Dashboard:** Voll funktionsfähig mit Live-Daten und API-Integration
-> ✅ **Port-Architektur:** Vollständig korrigiert und stabilisiert
-> ✅ **Critical Fixes:** Alle 8 kritischen Probleme behoben
+> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT**
+> ✅ **Trading-Engine:** Deterministischer Composite Scorer mit TA + Liquidity + Macro
+> ✅ **Risk-Stack:** Daily Drawdown, Breakeven-Stop, Trade-Cooldown
+> ✅ **Legacy LLM:** Nur noch für Post-Trade-Debrief / Analyse, nicht für Entscheidungen
+> ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -19,14 +20,14 @@
 | **Startkapital** | 500 EUR |
 | **Execution-Börse** | **Bybit** (Futures, max 1.0× Leverage) |
 | **Daten-Börse** | **Binance** (WebSocket + REST) |
-| **LLM-Stack** | Ollama lokal: qwen2.5:14b + deepseek-r1:14b |
+| **LLM-Stack** | Legacy (v1): Ollama lokal für Post-Trade-Debrief / Reasoning |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (native Ollama) |
 | **Dashboard** | Next.js mit Live-API-Integration und Preset-System |
 | **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
 | **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
 | **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
 
-**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten.
+**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten. Keine LLM-Entscheidungskette.
 
 > ⚠️ **WICHTIG:** Alle Architekturentscheidungen sind in `WINDSURF_MANIFEST.md` dokumentiert. Dieses Dokument überschreibt alle anderen bei Widerspruch.
 
@@ -34,8 +35,8 @@
 
 - **Backend:** FastAPI mit PostgreSQL (TimescaleDB + pgvector), Redis, WebSocket
 - **Frontend:** Next.js mit TailwindCSS, Lightweight Charts, WebSocket Client
-- **LLM:** Native Windows Ollama mit qwen2.5:14b und deepseek-r1:14b
-- **Agenten:** 6 spezialisierte Python-Agenten (Ingestion, Quant, Context, Sentiment, Risk, Execution)
+- **LLM (Legacy):** Native Windows Ollama nur für Post-Trade-Debrief und historische Analyse
+- **Agenten:** 6 spezialisierte Python-Agenten plus v2 Technical Analysis Engine (Ingestion, Technical, Quant, Context, Sentiment, Risk, Execution)
 - **Container:** Docker Compose mit Service-Orchestrierung
 - **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:8000/ws/*` (korrigiert)
 - **Local Development:** Alle Services auf localhost (Docker Container-Namen entfernt)
@@ -76,20 +77,13 @@ npm run dev
 
 ## ⚙️ Wichtige Konfigurationsänderungen
 
-### Für Local Development (nicht Docker):
+### Konfiguration für verschiedene Umgebungen:
 
+#### **Lokale Entwicklung (Empfohlen):**
 **Backend Konfiguration (`backend/app/core/config.py`):**
 ```python
-# Von Docker- auf Local-Hosts geändert:
-DB_HOST: str = "localhost"    # vorher: "postgres"
-REDIS_HOST: str = "localhost"  # vorher: "redis"
-```
-
-**Frontend WebSocket URLs:**
-Alle WebSocket-Verbindungen verwenden jetzt:
-```typescript
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "")}/ws/...`;
+DB_HOST: str = "localhost"
+REDIS_HOST: str = "localhost"
 ```
 
 **Umgebungsvariablen (`.env`):**
@@ -97,6 +91,28 @@ const wsUrl = `ws://${apiUrl.replace(/^https?:\/\//, "").replace(/^http:\/\//, "
 DB_HOST=localhost
 REDIS_HOST=localhost
 NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+#### **Docker-Entwicklung:**
+**Umgebungsvariablen (`.env`):**
+```
+DB_HOST=postgres
+REDIS_HOST=redis
+NEXT_PUBLIC_API_URL=http://api-backend:8000
+```
+
+**Wichtig für Docker-Builds:** Die Umgebungsvariable `NEXT_PUBLIC_API_URL` muss während des Build-Prozesses übergeben werden, da Next.js sie statisch einbettet.
+
+**Frontend WebSocket URLs (universell):**
+Alle Komponenten verwenden die `runtimeUrls.ts` Helper:
+```typescript
+import { getBrowserWebSocketUrl, getBrowserApiUrl } from "../utils/runtimeUrls";
+
+// WebSocket URL:
+const wsUrl = getBrowserWebSocketUrl("/ws/agents");
+
+// API URL:  
+const apiUrl = getBrowserApiUrl("/api/v1/health");
 ```
 
 ### Package Installation:
@@ -133,8 +149,16 @@ ollama pull deepseek-r1:14b
 
 **Lösung:** 
 1. Backend mit `start_backend.ps1` starten
-2. Frontend mit `start_frontend.ps1` starten
+2. Frontend mit `start_frontend.ps1` starten  
 3. Browser: http://localhost:3000
+
+### Docker Build-Probleme mit Umgebungsvariablen
+**Symptom:** Frontend verliert nach Neubuild die Backend-Verbindung
+
+**Lösung:**
+- Umgebungsvariable `NEXT_PUBLIC_API_URL` muss als Build-Argument übergeben werden
+- Docker-Compose und Dockerfile wurden für persistente Builds konfiguriert
+- Nach Änderungen: `docker-compose up -d --build bruno-frontend`
 
 ### Datenbankverbindungsprobleme
 **Symptom:** `Connection refused` oder `getaddrinfo failed`
@@ -246,7 +270,7 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 | **Ingestion** | Binance WebSocket Daten | Binance | ✅ V2 Online |
 | **Quant** | Technische Analyse (OFI, CVD) | Binance | ✅ V2 Online |
 | **Context** | GRSS-Berechnung, Makro-Daten | FRED/Deribit | ✅ V2 Online |
-| **Sentiment** | LLM-basierte News-Analyse | RSS/CryptoPanic | ✅ V2 Online |
+| **Sentiment** | LLM-basierte News-Analyse | RSS/CryptoCompare/CoinMarketCap | ✅ V2 Online |
 | **Risk** | Risiko-Bewertung & RAM-Veto | — | ✅ V2 Online |
 | **Execution** | **Bybit Futures** Order-Ausführung | Bybit | ✅ V2 Online |
 
@@ -273,10 +297,10 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 - **TailwindCSS** - Utility CSS
 - **Lightweight Charts** - Trading Charts
 
-### LLM Integration
-- **Ollama** - Native Windows LLM Server
-- **qwen2.5:14b** - Primary Model
-- **deepseek-r1:14b** - Reasoning Model
+### LLM Integration (Legacy v1)
+- **Ollama** - Native Windows LLM Server, nur für Post-Trade-Debrief
+- **qwen2.5:14b** - Legacy Reasoning Model
+- **deepseek-r1:14b** - Legacy Debrief Model
 
 ---
 
@@ -285,7 +309,7 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 | Metrik | Ziel | Aktuell |
 |--------|------|---------|
 | End-to-End Latenz | < 2 Sekunden | ✅ ~1.5s |
-| LLM-Inferenz | < 500ms (14B-Modelle) | ✅ ~300ms |
+| LLM-Debrief (Legacy) | < 500ms (14B-Modelle) | ✅ ~300ms |
 | Daten-Aktualität | < 100ms (WebSocket) | ✅ ~50ms |
 | Agenten-Durchsatz | > 1000 Nachrichten/Sekunde | ✅ ~1200/s |
 
@@ -312,7 +336,7 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 **Aktuell: Phase E — Dashboard Integration & Port-Korrektur (COMPLETED)**
 - [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
 - [x] Phase B ✅ COMPLETED — Daten-Erweiterung & Hardening
-- [x] Phase C ✅ COMPLETED — LLM-Kaskade (3 Layer) & Bruno Pulse
+- [x] Phase C ✅ COMPLETED — Legacy LLM-Kaskade (3 Layer, nur für Post-Trade-Debrief) & Bruno Pulse
 - [x] Phase D ✅ COMPLETED — Position Tracker + Stop-Loss im Worker verdrahtet
 - [x] Phase E ✅ COMPLETED — Frontend Cockpit (Bruno Pulse Dashboard Integration)
 - [x] Phase E ✅ COMPLETED — Port-Architektur & WebSocket-Optimierung
@@ -320,13 +344,12 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 - [ ] Phase G — Backtest (6 Monate, PF > 1.5)
 - [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
 
-**Neuste Implementierungen (31. März 2026):**
-- ✅ **Vollständige Port-Korrektur:** Alle localhost:8001 URLs auf /api/v1 korrigiert
-- ✅ **WebSocket-Optimierung:** Alle WebSockets über localhost:3000/ws/*
-- ✅ **Environment-Konfiguration:** DB_HOST=postgres, REDIS_HOST=redis
-- ✅ **Container-Neustart:** Vollständiger Neustart mit sauberen Volumes
-- ✅ **WebSocket-Fehlerbehebung:** "Cannot call send once close message" behoben
-- ✅ **Frontend-URL-Korrekturen:** 10+ Dateien mit Port-Problemen korrigiert
+**Neuste Implementierungen (April 2026):**
+- ✅ **Deterministische Entscheidungslogik:** Composite Scorer ersetzt LLM-Cascade in der Trade-Entscheidung
+- ✅ **Technical Analysis Engine:** EMA, RSI, VWAP, ATR, MTF, Wick, S/R
+- ✅ **Liquidity Intelligence:** Cluster-Magneten, OI-Delta, 3× Sweep-Konfirmation
+- ✅ **Risk Stack:** Daily Drawdown, Trade-Cooldown, Breakeven-Stop
+- ✅ **Decision Feed:** Deterministische Score-Ausgabe für Dashboard und Execution
 
 ---
 

@@ -354,192 +354,19 @@ export default function HomePage() {
                   style={{ width: `${contextData?.GRSS_Score ?? 0}%` }}
                 />
               </div>
-            </div>
-
-            {/* Market Stress Meter Section (Phase 6) */}
-            <div className="mb-6">
-              <div className="flex justify-between items-end mb-1.5">
-                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Market Stress Meter</span>
-                <span className={`text-xs font-mono font-bold ${
-                  !contextData ? "text-slate-600" :
-                  contextData.Stress_Score > 70 ? "text-red-400" :
-                  contextData.Stress_Score > 40 ? "text-amber-400" : "text-emerald-400"
-                }`}>
-                  {contextData?.Stress_Score ? (
-                    contextData.Stress_Score > 80 ? "EXTREME" :
-                    contextData.Stress_Score > 60 ? "HIGH" :
-                    contextData.Stress_Score > 30 ? "MEDIUM" : "LOW"
-                  ) : "—"}
-                </span>
-              </div>
-              <div className="h-2 w-full bg-[#1a1a2e] rounded-full overflow-hidden flex gap-1 p-0.5">
-                  {[...Array(10)].map((_, i) => {
-                    const isActive = contextData?.Stress_Score >= (i + 1) * 10;
-                    const color = i < 4 ? "bg-emerald-500" : i < 7 ? "bg-amber-500" : "bg-red-500";
-                    return (
-                      <div key={i} className={`h-full flex-1 rounded-sm transition-all duration-500 ${isActive ? color : "bg-slate-800/30"}`} />
-                    );
-                  })}
               </div>
             </div>
-            
-            <div className="space-y-3 pt-2">
-              <BiasBar label="F-BERT (Macro)" value={contextData?.Bias_Breakdown?.Macro} />
-              <BiasBar label="C-BERT (Crypto)" value={contextData?.Bias_Breakdown?.Crypto} />
-              
-              <div className="pt-2 grid grid-cols-2 gap-3">
-                <div className="bg-[#06060f] p-2.5 rounded-xl border border-[#1a1a2e]">
-                  <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">DXY 24h</p>
-                  <p className={`text-xs font-mono font-bold ${contextData?.DXY_Change_24h > 0 ? "text-red-400" : "text-emerald-400"}`}>
-                    {contextData?.DXY_Change_24h > 0 ? "+" : ""}{contextData?.DXY_Change_24h ?? "0.0"}%
-                  </p>
-                  {contextData?.Bias_Breakdown?.DXY_Decoupling && (
-                    <span className="text-[8px] text-indigo-400 font-bold animate-pulse mt-1 block">DECOUPLING!</span>
-                  )}
-                </div>
-                <div className="bg-[#06060f] p-2.5 rounded-xl border border-[#1a1a2e]">
-                  <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">ETF Flow (3d)</p>
-                  <p className={`text-xs font-mono font-bold ${contextData?.ETF_Flows_3d_M > 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    {contextData?.ETF_Flows_3d_M > 0 ? "+" : ""}{contextData?.ETF_Flows_3d_M ?? "0"}M
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {contextData?.Veto_Active && (
-              <div className="mt-4 p-2.5 bg-red-500/5 border border-red-500/10 rounded-xl">
-                 <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2 text-red-400 text-[10px] font-bold">
-                        <ShieldAlert className="w-3 h-3" /> HARD VETO ACTIVE
-                    </div>
-                    {contextData?.Macro_Status === "BEARISH" && (
-                        <span className="text-[8px] bg-red-500/20 text-red-500 px-1.5 py-0.5 rounded font-bold">NASDAQ {"<"} SMA200</span>
-                    )}
-                 </div>
-                 <p className="text-xs text-slate-500 font-mono leading-snug">{contextData.Reason}</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Micro-Structure Card */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
-          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
-            <Zap className="w-4 h-4 text-yellow-400" />
-            OB Micro-Structure
-          </h2>
-          <div className="space-y-4">
-             <div className="grid grid-cols-2 gap-4">
-                <div className="bg-[#06060f] p-3 rounded-xl border border-[#1a1a2e]">
-                   <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">OFI (Imbalance)</p>
-                   <p className={`text-lg font-mono font-bold ${microData?.OFI > 0 ? "text-emerald-400" : microData?.OFI < 0 ? "text-red-400" : "text-slate-400"}`}>
-                      {microData?.OFI > 0 ? "+" : ""}{microData?.OFI ?? "—"}
-                   </p>
-                </div>
-                <div className="bg-[#06060f] p-3 rounded-xl border border-[#1a1a2e]">
-                   <p className="text-[9px] text-slate-600 font-bold uppercase mb-1">VAMP vs Price</p>
-                   <p className="text-sm font-mono text-slate-300">
-                      {microData?.VAMP ? `$${microData.VAMP.toLocaleString()}` : "—"}
-                   </p>
-                </div>
-             </div>
-
-             <div className="pt-2">
-                <div className="flex justify-between items-center mb-1.5">
-                   <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-500 font-bold uppercase">CVD Trend</span>
-                      {contextData?.Veto_Active && contextData?.Reason?.includes("CVD") && (
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-pulse" />
-                      )}
-                   </div>
-                   <span className={`text-xs font-mono font-bold ${microData?.CVD >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                      {microData?.CVD > 0 ? "+" : ""}{microData?.CVD?.toFixed(2) ?? "—"}
-                   </span>
-                </div>
-                <div className="h-1.5 w-full bg-[#1a1a2e] rounded-full overflow-hidden">
-                   <div 
-                      className={`h-full transition-all duration-500 ${microData?.CVD >= 0 ? "bg-emerald-500" : "bg-red-500"}`}
-                      style={{ width: `${Math.min(100, Math.abs((microData?.CVD ?? 0) / 100) * 100)}%` }}
-                   />
-                </div>
-             </div>
-
-             <IndicatorRow 
-                label="Funding APR" 
-                value={microData?.Funding_APR ? `${microData.Funding_APR}%` : "—"} 
-                badge={microData?.Funding_APR > 15 ? "Overheated" : "Stable"}
-                badgeColor={microData?.Funding_APR > 15 ? "text-red-400 bg-red-400/10 border-red-400/20" : "text-slate-500 bg-slate-800 border-slate-700"}
-             />
-          </div>
-        </div>
-
-        {/* KPI Summary */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
-          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
-            <Zap className="w-4 h-4 text-yellow-400" />
-            Trading KPIs
-          </h2>
-          <div className="space-y-4">
-            <KPIRow icon={<Activity className="w-4 h-4 text-emerald-400" />} label="Signale heute" value="0" />
-            <KPIRow icon={<ShieldAlert className="w-4 h-4 text-red-400" />} label="Risk Vetos" value="0" />
-            <KPIRow icon={<Zap className="w-4 h-4 text-yellow-400" />} label="Trades ausgeführt" value="0" />
-            <KPIRow icon={<Clock className="w-4 h-4 text-indigo-400" />} label="Worker Uptime" value={agents[0]?.uptime_seconds ? formatUptime(agents[0].uptime_seconds) : "—"} />
           </div>
         </div>
       </div>
-
-      {/* Live Activity Feed — full transparency */}
-      <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#1a1a2e]">
-          <h2 className="text-sm font-bold text-white flex items-center gap-2">
-            <Eye className="w-4 h-4 text-indigo-400" />
-            Live-Aktivitäten
-            <span className="text-[9px] text-slate-600 font-mono ml-2">Echtzeit-Feed</span>
-          </h2>
-          <Link href="/logs" className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider flex items-center gap-1 transition-colors">
-            Vollständige Logs <ArrowRight className="w-3 h-3" />
-          </Link>
-        </div>
-        <div className="max-h-[280px] overflow-y-auto custom-scrollbar">
-          {recentLogs.length === 0 ? (
-            <div className="p-8 text-center text-slate-600 text-sm">
-              Verbinde zum Log-Stream…
-            </div>
-          ) : (
-            <div className="divide-y divide-[#1a1a2e]/50">
-              {recentLogs.map((log: LogEntry, i: number) => {
-                const levelColor = log.level === "ERROR" || log.level === "CRITICAL"
-                  ? "text-red-400"
-                  : log.level === "WARNING"
-                    ? "text-amber-400"
-                    : "text-blue-400/60";
-
-                const agentName = log.source?.replace("agent.", "").replace("system.", "");
-
-                return (
-                  <div key={i} className="flex items-start gap-3 px-6 py-2.5 hover:bg-white/[0.01] transition-colors text-[12px]">
-                    <span className="shrink-0 text-slate-700 font-mono w-16 pt-0.5">
-                      {new Date(log.timestamp).toLocaleTimeString("de-DE", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                    </span>
-                    <span className={`shrink-0 w-4 pt-0.5 ${levelColor}`}>
-                      {log.level === "ERROR" || log.level === "CRITICAL" ? "✕" : log.level === "WARNING" ? "⚠" : "●"}
-                    </span>
-                    <span className="shrink-0 text-indigo-400/40 font-bold text-[10px] uppercase tracking-wider w-24 truncate pt-0.5">
-                      {agentName}
-                    </span>
-                    <span className="flex-1 text-slate-400">{log.message}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
   );
 }
 
-/* ─── Sub-Components ─── */
+/* legacy broken tail disabled
+
+// ─── Sub-Components ───
+
+/*
 
 function MiniStat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
@@ -651,5 +478,7 @@ function formatUptime(sec: number): string {
   if (sec < 3600) return `${Math.floor(sec / 60)}m`;
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
 }
+
+*/
 
 

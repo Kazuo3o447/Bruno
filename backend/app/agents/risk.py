@@ -21,6 +21,13 @@ class RiskAgent(PollingAgent):
         self.last_price = 0.0
         self.last_cvd = 0.0
         self._grss_threshold: float = 40.0
+        
+        # v2 Daily Limits
+        self.daily_loss_count = 0
+        self.daily_loss_amount = 0.0
+        self.daily_reset_time = 0.0
+        self.max_daily_loss_pct = 0.03  # 3%
+        self.max_daily_loss_trades = 3
 
     def get_interval(self) -> float:
         """1-Minuten-Intervall — ausreichend für Medium-Frequency."""
@@ -38,6 +45,9 @@ class RiskAgent(PollingAgent):
         )
         self.last_price = 0.0
         self.last_cvd = 0.0
+        
+        # Daily Reset initialisieren
+        self._daily_reset_time = self._get_next_daily_reset()
 
     def _load_config_value(self, key: str, default: float) -> float:
         """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
@@ -51,6 +61,39 @@ class RiskAgent(PollingAgent):
                 return float(json.load(f).get(key, default))
         except Exception:
             return default
+
+    def _get_next_daily_reset(self) -> float:
+        """Berechnet den nächsten täglichen Reset-Zeitpunkt (UTC 00:00)."""
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        return tomorrow.timestamp()
+
+    def _check_daily_limits(self) -> Dict[str, bool]:
+        """
+        Prüft tägliche Limits: Drawdown und Trade-Anzahl.
+        """
+        import time
+        current_time = time.time()
+        
+        # Daily Reset durchführen
+        if current_time >= self._daily_reset_time:
+            self.daily_loss_count = 0
+            self.daily_loss_amount = 0.0
+            self._daily_reset_time = self._get_next_daily_reset()
+            self.logger.info("Daily limits reset")
+        
+        limits = {
+            "drawdown_ok": True,
+            "trade_count_ok": True
+        }
+        
+        # Daily Drawdown Check
+        if self.daily_loss_count >= self.max_daily_loss_trades:
+            limits["trade_count_ok"] = False
+            self.logger.warning(f"Daily loss trade limit exceeded: {self.daily_loss_count}")
+        
+        return limits
 
     def _get_effective_grss_threshold(self) -> float:
         """
@@ -101,154 +144,127 @@ class RiskAgent(PollingAgent):
             "micro": await self.deps.redis.get_cache("bruno:quant:micro") or {}
         }
 
+    async def _check_daily_drawdown(self) -> dict:
+        """
+        Circuit Breaker: Stoppt Trading für 24h wenn:
+        - Tagesverlust > 3% des Kapitals, ODER
+        - 3 Fehltrades in Folge
+        
+        Liest: bruno:portfolio:state (geschrieben vom ExecutionAgent)
+        Setzt: bruno:risk:daily_block (Redis, 24h TTL)
+        
+        Profitrader-Begründung: Algorithmen geraten in Marktphasen die
+        nicht zu ihrer Logik passen. Der Drawdown-Limit schützt vor
+        unkontrollierten Verlustspiralen ("Bot-Tilt").
+        """
+        # Prüfe ob Block schon aktiv
+        block = await self.deps.redis.get_cache("bruno:risk:daily_block")
+        if block and block.get("active"):
+            return {"blocked": True, "reason": f"DAILY BLOCK: {block.get('reason', 'Drawdown limit')}"}
+        
+        # Portfolio-State laden
+        portfolio = await self.deps.redis.get_cache("bruno:portfolio:state") or {}
+        initial = float(portfolio.get("initial_capital_eur", 1000))
+        current = float(portfolio.get("capital_eur", initial))
+        daily_pnl = float(portfolio.get("daily_pnl_eur", 0))
+        
+        # Verlust-Trades heute zählen
+        # trade_pnl_history_eur ist eine Liste der letzten P&L-Werte
+        pnl_history = portfolio.get("trade_pnl_history_eur", [])
+        
+        # Bedingung 1: > 3% Tagesverlust
+        max_daily_loss = float(self._load_config_value("DAILY_MAX_LOSS_PCT", 3.0))
+        daily_loss_pct = abs(daily_pnl / initial * 100) if daily_pnl < 0 else 0
+        
+        if daily_loss_pct >= max_daily_loss:
+            block_data = {
+                "active": True,
+                "reason": f"Tagesverlust {daily_loss_pct:.1f}% >= {max_daily_loss}%",
+                "triggered_at": datetime.now(timezone.utc).isoformat(),
+            }
+            await self.deps.redis.set_cache("bruno:risk:daily_block", block_data, ttl=86400)
+            self.logger.critical(f"DAILY DRAWDOWN BLOCK: {block_data['reason']}")
+            return {"blocked": True, "reason": f"DAILY BLOCK: {block_data['reason']}"}
+        
+        # Bedingung 2: 3 Fehltrades in Folge
+        max_consecutive = int(self._load_config_value("MAX_CONSECUTIVE_LOSSES", 3))
+        if len(pnl_history) >= max_consecutive:
+            recent = pnl_history[-max_consecutive:]
+            if all(p < 0 for p in recent):
+                block_data = {
+                    "active": True,
+                    "reason": f"{max_consecutive} Verluste in Folge",
+                    "triggered_at": datetime.now(timezone.utc).isoformat(),
+                }
+                await self.deps.redis.set_cache("bruno:risk:daily_block", block_data, ttl=86400)
+                self.logger.critical(f"CONSECUTIVE LOSS BLOCK: {block_data['reason']}")
+                return {"blocked": True, "reason": f"DAILY BLOCK: {block_data['reason']}"}
+        
+        return {"blocked": False, "reason": ""}
+
     async def process(self) -> None:
         try:
-            # Config hot-reload: GRSS Threshold kann im laufenden Betrieb geändert werden
-            self._grss_threshold = self._get_effective_grss_threshold()
-            
-            # 1. Signale sammeln
             signals = await self._fetch_all_signals()
             context = signals["context"]
             micro = signals["micro"]
-
-            # Defaults, damit der Agent bei Startup oder Teilausfällen nicht crasht
-            grss = 0.0
-            vix = 0.0
-            yields = 0.0
-            dvol = 55.0
-            pcr = 0.6
-            macro_status = "BULLISH"
-            price = 0.0
-            walls: List[Dict] = []
-            vol_multiplier = 1.0
             
-            # Veto-Initialisierung
             veto = False
-            reason = "Monitoring..."
-            leverage = 1.0 
-            reason_notes: List[str] = []
+            reason = "All clear."
             
+            # ── 1. Data Gap ────────────────────────────────────
             if not context or not micro:
-                veto, reason, leverage = True, "DATA GAP: Missing input signals.", 0.0
-            else:
-                # Default values
-                reason_notes = []
-                
-                # 2. News Silence Watchdog (Harter Checkout 3600s)
-                last_update_str = context.get("timestamp")  # ContextAgent schreibt "timestamp"
-                if last_update_str:
-                    last_update = datetime.fromisoformat(last_update_str)
-                    age = (datetime.now(timezone.utc) - last_update).total_seconds()
+                veto, reason = True, "DATA GAP: Missing input signals."
+            
+            # ── 2. News Silence (ContextAgent tot) ─────────────
+            if not veto:
+                ts = context.get("timestamp")
+                if ts:
+                    age = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
                     if age > 3600:
-                        veto, reason, leverage = True, "VETO: News Silence > 3600s. Bot in Standby.", 0.0
-
-                # 3. Market Metrics & GRSS
-                grss = context.get("GRSS_Score", 0.0)
-                vix = context.get("VIX", 0.0)
-                yields = context.get("Yields_10Y", 4.3)
-                dvol = context.get("DVOL", 55.0)
-                
-                # --- VETO LOGIK (New Paradigm: Opportunity-Driven) ---
-                veto_reason = None
-                if grss < self._grss_threshold:
-                    veto_reason = f"VETO: Low GRSS ({grss:.1f} < {self._grss_threshold:.0f}). Standby."
-                elif vix > 45:
-                    veto_reason = f"VETO: Extreme Panic (VIX: {vix})."
-                elif yields > 5.0:
-                    veto_reason = f"VETO: Yields Extreme (10Y: {yields}%)."
-                
-                if veto_reason:
-                    veto, reason, leverage = True, veto_reason, 0.0
-                    # Bei Veto trotzdem vol_multiplier berechnen für den Report
-                    if vix < 15: vol_multiplier = 1.0
-                    elif vix < 25: vol_multiplier = 0.8
-                    elif vix < 35: vol_multiplier = 0.6
-                    elif vix < 45: vol_multiplier = 0.3
-                    else: vol_multiplier = 0.0
-                else:
-                    # --- VOLATILITY-ADAPTIVE SIZING (The "Multiplier") ---
-                    if vix < 15: vol_multiplier = 1.0
-                    elif vix < 25: vol_multiplier = 0.8
-                    elif vix < 35: vol_multiplier = 0.6
-                    elif vix < 45: vol_multiplier = 0.3
-                    else: vol_multiplier = 0.0
-                    
-                    leverage = leverage * vol_multiplier
-                    if vol_multiplier < 1.0:
-                        reason_notes.append(f"Vola-Sizing: {vol_multiplier:.1f}x (VIX {vix:.1f})")
-
-                # 4. Nasdaq SMA200 (Informational only in v2, no Veto)
-                macro_status = context.get("Macro_Status", "BULLISH")
-                
-                # 5. Todeszonen-Filter (<0.5% Distanz zu Liq-Wall)
-                price = micro.get("price", 0.0)
-                walls = micro.get("Liquidation_Walls", [])
-                liq_veto = await self._check_liquidation_zones(price, walls)
-                if liq_veto:
-                    veto, reason, leverage = True, liq_veto, 0.0
-
-                # 6. CVD Divergence Check
-                cvd = micro.get("CVD", 0.0)
-                if self.last_price > 0:
-                    price_dir = 1 if price > self.last_price else -1 if price < self.last_price else 0
-                    cvd_dir = 1 if cvd > self.last_cvd else -1 if cvd < self.last_cvd else 0
-                    if price_dir == 1 and cvd_dir == -1:
-                        leverage *= 0.7  # Etwas sanftere Abwertung
-                
-                self.last_price, self.last_cvd = price, cvd
-
-            # 7. Finale Entscheidung (Nasdaq BEARISH blockiert NICHT mehr)
-            long_veto = veto 
-            short_veto = veto
+                        veto, reason = True, "VETO: Context stale > 1h."
             
-            final_reason = reason if veto else "All clear."
-            if reason_notes:
-                final_reason = f"{final_reason} | {'; '.join(reason_notes)}"
-
-            final_decision = {
+            # ── 3. VIX > 45 (systemischer Crash) ──────────────
+            if not veto:
+                vix = float(context.get("VIX", 20))
+                if vix > 45:
+                    veto, reason = True, f"VETO: VIX {vix:.1f} > 45."
+            
+            # ── 4. System Pause (Telegram Kill-Switch) ─────────
+            if not veto:
+                pause = await self.deps.redis.get_cache("bruno:system:paused")
+                if pause and pause.get("paused"):
+                    veto, reason = True, "VETO: System manuell pausiert."
+            
+            # ── 5. Death Zone (< 0.5% zu Mega-Wall) ───────────
+            if not veto:
+                price = float(micro.get("price", 0))
+                liq = await self.deps.redis.get_cache("bruno:liq:intelligence") or {}
+                for c in liq.get("clusters", []):
+                    if c.get("total_usdt", 0) > 500000 and abs(c.get("distance_pct", 99)) < 0.5:
+                        veto, reason = True, f"VETO: Death Zone {c['zone_price']}"
+                        break
+            
+            # ── 6. Daily Drawdown Limit (NEU — Profitrader #6) ─
+            if not veto:
+                dd = await self._check_daily_drawdown()
+                if dd["blocked"]:
+                    veto, reason = True, dd["reason"]
+            
+            # ── Publish ────────────────────────────────────────
+            decision = {
                 "Veto_Active": veto,
-                "Long_Veto_Active": long_veto,
-                "Short_Veto_Active": short_veto,
-                "Reason": final_reason,
-                "Max_Leverage": round(leverage, 2),
-                "Volatility_Size_Multiplier": round(vol_multiplier, 2),
-                "DVOL_At_Decision": round(dvol, 1),
-                "Learning_Mode_Active": self.deps.config.DRY_RUN and bool(self._load_config_value("LEARNING_MODE_ENABLED", 0)),
-                "Effective_GRSS_Threshold": round(self._grss_threshold, 2),
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "Long_Veto_Active": veto,
+                "Short_Veto_Active": veto,
+                "Reason": reason,
+                "Max_Leverage": 0.0 if veto else 1.0,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
-            
-            # Veto-State-Change detektieren und loggen
-            prev_veto_raw = await self.deps.redis.redis.get("bruno:veto:previous")
-            prev_veto = json.loads(prev_veto_raw).get("Veto_Active", None) if prev_veto_raw else None
-
-            if prev_veto != veto:  # Nur bei Zustandswechsel
-                veto_event = {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "veto_active": veto,
-                    "reason": final_reason,
-                    "grss": final_decision.get("GRSS_Score") if not veto else None,
-                    "vix": final_decision.get("VIX"),
-                    "change": "VETO_ON" if veto else "VETO_OFF",
-                }
-                await self.deps.redis.redis.lpush(
-                    "bruno:veto:history", json.dumps(veto_event)
-                )
-                await self.deps.redis.redis.ltrim("bruno:veto:history", 0, 49)
-
-            await self.deps.redis.redis.set(
-                "bruno:veto:previous", json.dumps({"Veto_Active": veto})
-            )
-
-            # DIRECT REDIS CALLS FOR ZERO LATENCY
-            # Wir nutzen das interne redis-Objekt für maximale Performance
-            decision_json = json.dumps(final_decision)
+            decision_json = json.dumps(decision)
             await self.deps.redis.redis.set("bruno:veto:state", decision_json)
             await self.deps.redis.redis.publish("bruno:pubsub:veto", decision_json)
-
+            
             if veto:
-                self.logger.warning(f"VETO AKTIVIERT: {reason}")
-
+                self.logger.warning(f"VETO: {reason}")
+        
         except Exception as e:
             self.logger.error(f"RiskAgent Fehler: {e}")
-

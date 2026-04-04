@@ -41,6 +41,10 @@ class ExecutionAgentV3(StreamingAgent):
         )
 
         self._portfolio_initialized = False
+        
+        # v2 Breakeven Stop
+        self._breakeven_enabled = True
+        self._breakeven_trigger_pct = float(self._load_config_value("BREAKEVEN_TRIGGER_PCT", 0.005))
 
     def _load_config_value(self, key: str, default: float) -> float:
         """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
@@ -185,10 +189,10 @@ class ExecutionAgentV3(StreamingAgent):
             )
             return
 
-        # Daily Loss Limit Check
-        daily_limit_hit = await self.deps.redis.get_cache("bruno:portfolio:daily_limit_hit")
-        if daily_limit_hit and daily_limit_hit.get("hit"):
-            self.logger.warning("ABBRUCH: Daily Loss Limit bereits heute erreicht.")
+        # Daily Drawdown Limit Check (NEU: liest bruno:risk:daily_block von RiskAgent)
+        daily_block = await self.deps.redis.get_cache("bruno:risk:daily_block")
+        if daily_block and daily_block.get("active"):
+            self.logger.warning(f"ABBRUCH: Daily Drawdown Block aktiv - {daily_block.get('reason', 'Unbekannt')}")
             return
 
         # ── ATR aktualisieren (stündlich) ──────────────────────
@@ -567,6 +571,41 @@ class ExecutionAgentV3(StreamingAgent):
                     sl_price = pos["stop_loss_price"]
                     tp_price = pos["take_profit_price"]
                     side = pos["side"]
+                    current_pnl_pct = pos.get("current_pnl_pct", 0)
+                    
+                    # Breakeven-Stop: Wenn Trade > 0.5% im Plus, SL auf Entry + 0.1% ziehen
+                    if pos and self._breakeven_enabled:
+                        entry_price = float(pos.get("entry_price", 0))
+                        side = pos.get("side", "buy")
+                        
+                        if entry_price > 0 and current_price > 0:
+                            if side == "buy":
+                                pnl_pct = (current_price - entry_price) / entry_price
+                            else:
+                                pnl_pct = (entry_price - current_price) / entry_price
+                            
+                            if pnl_pct >= self._breakeven_trigger_pct:
+                                # SL auf Entry + 0.1% setzen (garantiert kein Verlust)
+                                if side == "buy":
+                                    new_sl = entry_price * 1.001
+                                    current_sl = float(pos.get("stop_loss_price", 0))
+                                    if current_sl < new_sl:
+                                        pos["stop_loss_price"] = new_sl
+                                        await self.position_tracker.update_position("BTCUSDT", pos)
+                                        self.logger.info(
+                                            f"BREAKEVEN-STOP: SL für BTCUSDT auf {new_sl:.2f} gezogen "
+                                            f"(Entry: {entry_price:.2f}, Profit: {pnl_pct:.2%})"
+                                        )
+                                else:  # sell/short
+                                    new_sl = entry_price * 0.999
+                                    current_sl = float(pos.get("stop_loss_price", float('inf')))
+                                    if current_sl > new_sl:
+                                        pos["stop_loss_price"] = new_sl
+                                        await self.position_tracker.update_position("BTCUSDT", pos)
+                                        self.logger.info(f"BREAKEVEN-STOP: SL auf {new_sl:.2f}")
+                                
+                                # Disable breakeven after activation to prevent constant updates
+                                self._breakeven_enabled = False
 
                     self.logger.debug(
                         f"Monitor: {current_price:,.0f} | SL={sl_price:,.0f} | "
@@ -587,6 +626,10 @@ class ExecutionAgentV3(StreamingAgent):
                         elif current_price <= tp_price:
                             self.logger.info(f"TAKE-PROFIT (Short): {current_price:,.0f} <= {tp_price:,.0f}")
                             await self._close_position("take_profit", current_price)
+                    
+                else:
+                    # No open position, reset breakeven flag
+                    self._breakeven_enabled = True
 
             except Exception as e:
                 self.logger.error(f"Position-Monitor Fehler: {e}")
