@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  - job_name: 'bruno-backend'
+    static_configs:
+      - targets: ['api-backend:9090']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    
+  - job_name: 'bruno-nginx'
+    static_configs:
+      - targets: ['nginx:80']
+    metrics_path: '/nginx-health'
+    scrape_interval: 30s
+    
+  - job_name: 'bruno-postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    scrape_interval: 30s
+    
+  - job_name: 'bruno-redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s

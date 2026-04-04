@@ -1,0 +1,275 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: bruno-postgres-prod
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-bruno_prod} -d ${DB_NAME:-bruno_production}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    environment:
+      POSTGRES_USER: ${DB_USER:-bruno_prod}
+      POSTGRES_PASSWORD: ${DB_PASS:-CHANGE_ME_STRONG_PASSWORD_32_CHARS_MIN}
+      POSTGRES_DB: ${DB_NAME:-bruno_production}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    networks:
+      - bruno-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  redis:
+    image: redis/redis-stack-server:latest
+    container_name: bruno-redis-prod
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    command: redis-server --requirepass ${REDIS_PASSWORD:-CHANGE_ME_STRONG_PASSWORD_32_CHARS_MIN} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_prod_data:/data
+      - ./redis.conf:/redis-stack.conf
+    networks:
+      - bruno-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  api-backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+      target: production
+    container_name: bruno-backend-prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-bruno_prod}
+      - DB_PASS=${DB_PASS:-CHANGE_ME_STRONG_PASSWORD_32_CHARS_MIN}
+      - DB_NAME=${DB_NAME:-bruno_production}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-CHANGE_ME_STRONG_PASSWORD_32_CHARS_MIN}
+      - FRED_API_KEY=${FRED_API_KEY}
+      - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
+      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_SECRET=${BYBIT_SECRET}
+      - BYBIT_MODE=${BYBIT_MODE:-demo}
+      - LIVE_TRADING_APPROVED=${LIVE_TRADING_APPROVED:-false}
+      - GLASSNODE_API_KEY=${GLASSNODE_API_KEY}
+      - COINGLASS_API_KEY=${COINGLASS_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DRY_RUN=${DRY_RUN:-true}
+      - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      - ENABLE_HEALTH_CHECKS=${ENABLE_HEALTH_CHECKS:-true}
+    ports:
+      - "8000:8000"
+      - "${METRICS_PORT:-9090}:9090"
+      - "${HEALTH_CHECK_PORT:-8080}:8080"
+    volumes:
+      - ./backend:/app
+      - ./backups:/app/backups
+      - ./logs:/app/logs
+    networks:
+      - bruno-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  worker-backend:
+    build:
+      context: ./backend
+      dockerfile: ../docker/Dockerfile.backend
+      target: production
+    command: python -m app.worker
+    container_name: bruno-worker-prod
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api-backend:
+        condition: service_started
+    environment:
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-bruno_prod}
+      - DB_PASS=${DB_PASS:-CHANGE_ME_STRONG_PASSWORD_32_CHARS_MIN}
+      - DB_NAME=${DB_NAME:-bruno_production}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-CHANGE_ME_STRONG_PASSWORD_32_CHARS_MIN}
+      - FRED_API_KEY=${FRED_API_KEY}
+      - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
+      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - BYBIT_API_KEY=${BYBIT_API_KEY}
+      - BYBIT_SECRET=${BYBIT_SECRET}
+      - BYBIT_MODE=${BYBIT_MODE:-demo}
+      - LIVE_TRADING_APPROVED=${LIVE_TRADING_APPROVED:-false}
+      - GLASSNODE_API_KEY=${GLASSNODE_API_KEY}
+      - COINGLASS_API_KEY=${COINGLASS_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DRY_RUN=${DRY_RUN:-true}
+      - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      - ENABLE_HEALTH_CHECKS=${ENABLE_HEALTH_CHECKS:-true}
+    volumes:
+      - ./backend:/app
+      - ./logs:/app/logs
+    networks:
+      - bruno-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  bruno-frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+      target: production
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://api-backend:8000}
+        - NODE_ENV=production
+    container_name: bruno-frontend-prod
+    restart: always
+    depends_on:
+      api-backend:
+        condition: service_started
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://api-backend:8000}
+      - NODE_ENV=production
+    ports:
+      - "3000:3000"
+    networks:
+      - bruno-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:alpine
+    container_name: bruno-nginx-prod
+    restart: always
+    depends_on:
+      - api-backend
+      - bruno-frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - bruno-prod
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Monitoring (Optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: bruno-prometheus-prod
+    restart: always
+    depends_on:
+      - api-backend
+    ports:
+      - "${METRICS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - bruno-prod
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:
+  prometheus_data:
+
+networks:
+  bruno-prod:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
