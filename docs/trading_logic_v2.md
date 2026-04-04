@@ -8,7 +8,7 @@ Bruno v2 replaces the LLM-based decision chain with a deterministic, regime-adap
 2. **Liquidity Intelligence** for sweep opportunities and cluster magnetism.
 3. **Composite Scoring** for the final trade decision.
 
-The LLM is **legacy-only** and is used exclusively for post-trade debriefing and learning analysis, not for live trade decisions.
+The LLM is **legacy-only** and is used exclusively for post-trade debriefing and learning analysis with **Deepseek Reasoning API**, not for live trade decisions.
 
 ## 2. Data Flow Overview
 
@@ -629,17 +629,24 @@ Portfolio state keys include:
 
 If all four `COMPOSITE_W_*` keys are present, config override can replace the default presets. Otherwise the regime defaults apply.
 
-## 10. Legacy (v1) LLM Debrief
+## 10. Post-Trade Analysis with Deepseek API
 
-The LLM is no longer part of live trade execution.
+The LLM is no longer part of live trade execution but is used exclusively for post-trade analysis.
 
-Legacy uses:
+**Deepseek Reasoning API Integration:**
+- Post-trade narrative analysis
+- Trade reasoning archive  
+- Debrief-based learning loop
+- Performance improvement recommendations
+- Structured JSON responses for data analysis
 
-- post-trade narrative analysis
-- trade reasoning archive
-- debrief-based learning loop
+**API Configuration:**
+- Provider: Deepseek Reasoning API
+- Model: deepseek-chat
+- Purpose: Post-trade debrief and learning only
+- Fallback: Graceful degradation when API unavailable
 
-This is preserved for research, diagnostics, and future strategy evaluation only.
+This is preserved for research, diagnostics, and continuous strategy improvement.
 
 ## 11. Migration Notes
 
@@ -647,9 +654,16 @@ This is preserved for research, diagnostics, and future strategy evaluation only
 
 - `QuantAgentV3` → `QuantAgentV4`
 - LLM decision cascade → deterministic composite scoring
+- Ollama local LLMs → Deepseek Reasoning API
+- Local model management → Cloud-based intelligence
 
 ### Added
 
+- Deepseek Reasoning API integration
+- Post-trade debrief with structured JSON responses
+- Cloud-based learning system
+- Professional trade analysis capabilities
+- Robust error handling and fallback mechanisms
 - TechnicalAnalysisAgent
 - LiquidityEngine
 - CompositeScorer
@@ -661,9 +675,17 @@ This is preserved for research, diagnostics, and future strategy evaluation only
 - Redis keys from v1 remain preserved where needed
 - Trade audit logs remain compatible
 - Legacy LLM debrief tables remain available
+- Deepseek API replaces Ollama for post-trade analysis only
 
 ## 12. Summary
 
-Bruno v2 is a deterministic, regime-adaptive trading system. The primary trade decision is based on the combination of technical structure, liquidity pressure, and macro flow, with strict risk controls and legacy-only LLM debriefing.
+Bruno v2 is a deterministic, regime-adaptive trading system. The primary trade decision is based on the combination of technical structure, liquidity pressure, and macro flow, with strict risk controls and **Deepseek Reasoning API** for post-trade debriefing and learning.
+
+**Key Features:**
+- **Live Trading:** 100% deterministic without LLM interference
+- **Post-Trade Analysis:** Professional Deepseek API integration
+- **Risk Management:** 6 hard vetos with circuit breakers
+- **Learning System:** Cloud-based intelligence for continuous improvement
+- **Performance:** Sub-2s response times for trade analysis
 
 This document is the canonical reference for trading logic in v2.

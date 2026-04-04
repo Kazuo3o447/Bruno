@@ -59,15 +59,17 @@ class ConnectionManager:
     async def send_personal_message(self, websocket: WebSocket, message: dict):
         """Sendet eine Nachricht an einen spezifischen WebSocket."""
         try:
-            # Prüfe ob WebSocket noch offen ist
-            if websocket.client_state.name == "CONNECTED":
+            # Prüfe ob WebSocket noch offen ist und nicht geschlossen
+            if (websocket.client_state.name == "CONNECTED" and 
+                hasattr(websocket, 'scope') and 
+                not websocket.scope.get("type") == "websocket.disconnected"):
                 await websocket.send_json(message)
             else:
                 # Verbindung ist geschlossen, entferne sie
-                logger.warning("Versuch zu senden auf geschlossene WebSocket-Verbindung")
+                logger.debug("Versuch zu senden auf geschlossene WebSocket-Verbindung")
                 self.disconnect(websocket)
         except Exception as e:
-            logger.error(f"Fehler beim Senden an WebSocket: {e}")
+            logger.debug(f"Fehler beim Senden an WebSocket: {e}")
             self.disconnect(websocket)
 
     async def broadcast(self, connection_type: str, message: dict):
@@ -78,15 +80,17 @@ class ConnectionManager:
         disconnected = set()
         for connection in self.active_connections[connection_type]:
             try:
-                # Prüfe ob WebSocket noch offen ist
-                if connection.client_state.name == "CONNECTED":
+                # Prüfe ob WebSocket noch offen ist und nicht geschlossen
+                if (connection.client_state.name == "CONNECTED" and 
+                    hasattr(connection, 'scope') and 
+                    not connection.scope.get("type") == "websocket.disconnected"):
                     await connection.send_json(message)
                 else:
                     # Verbindung ist geschlossen, markiere für Entfernung
-                    logger.warning("Versuch zu broadcast auf geschlossene WebSocket-Verbindung")
+                    logger.debug("Versuch zu broadcast auf geschlossene WebSocket-Verbindung")
                     disconnected.add(connection)
             except Exception as e:
-                logger.error(f"Broadcast Fehler: {e}")
+                logger.debug(f"Broadcast Fehler: {e}")
                 disconnected.add(connection)
         
         # Tote Verbindungen entfernen

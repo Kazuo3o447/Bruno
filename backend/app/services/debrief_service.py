@@ -1,15 +1,16 @@
 """
 Post-Trade Debrief Service (Phase F)
 
-Analysiert abgeschlossene Trades mit Ollama LLM (deepseek-r1:14b).
+Analysiert abgeschlossene Trades mit Deepseek Reasoning API.
 Speichert Ergebnisse in trade_debriefs Tabelle.
 """
 import asyncio
 import json
-import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
-import httpx
+from sqlalchemy import text
+from app.core.deepseek_client import get_deepseek_client
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -21,15 +22,15 @@ class DebriefService:
     """
     Post-Trade Debrief Service
     
-    - Nutzt Ollama LLM für Trade-Analyse
+    - Nutzt Deepseek Reasoning API für Trade-Analyse
     - Speichert strukturierte Debriefs
-    - Fehlertolerant bei LLM-Ausfällen
+    - Fehlertolerant bei API-Ausfällen
     """
     
     def __init__(self):
         self.config = Settings()
-        self.ollama_host = self.config.OLLAMA_HOST
-        self.model = "deepseek-r1:14b"
+        self.deepseek_client = get_deepseek_client()
+        self.model = "deepseek-chat"
         
     async def analyze_trade(self, trade_id: str, position_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -46,8 +47,12 @@ class DebriefService:
             # LLM Prompt erstellen
             prompt = self._create_debrief_prompt(position_data)
             
-            # LLM Aufruf
-            llm_response = await self._call_ollama(prompt)
+            # Deepseek Aufruf
+            llm_response = await self.deepseek_client.generate_json(
+                prompt=prompt,
+                model=self.model,
+                temperature=0.3
+            )
             if not llm_response:
                 return None
                 
@@ -112,37 +117,6 @@ Fokus auf:
 Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
 """
         return prompt
-    
-    async def _call_ollama(self, prompt: str) -> Optional[str]:
-        """
-        Ruft Ollama LLM auf
-        """
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.ollama_host}/api/generate",
-                    json={
-                        "model": self.model,
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {
-                            "temperature": 0.3,  # Konsistentere Antworten
-                            "top_p": 0.9,
-                            "max_tokens": 500
-                        }
-                    }
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    return result.get("response", "")
-                else:
-                    print(f"Ollama Error: {response.status_code} - {response.text}")
-                    return None
-                    
-        except Exception as e:
-            print(f"Ollama Exception: {e}")
-            return None
     
     def _parse_llm_response(self, response: str) -> Dict[str, Any]:
         """

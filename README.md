@@ -2,10 +2,10 @@
 
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.0**
 > 
-> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT**
+> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
 > ✅ **Trading-Engine:** Deterministischer Composite Scorer mit TA + Liquidity + Macro
 > ✅ **Risk-Stack:** Daily Drawdown, Breakeven-Stop, Trade-Cooldown
-> ✅ **Legacy LLM:** Nur noch für Post-Trade-Debrief / Analyse, nicht für Entscheidungen
+> ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse
 > ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
@@ -20,14 +20,14 @@
 | **Startkapital** | 500 EUR |
 | **Execution-Börse** | **Bybit** (Futures, max 1.0× Leverage) |
 | **Daten-Börse** | **Binance** (WebSocket + REST) |
-| **LLM-Stack** | Legacy (v1): Ollama lokal für Post-Trade-Debrief / Reasoning |
-| **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (native Ollama) |
+| **LLM-Stack** | Deepseek Reasoning API (Cloud) für Post-Trade Analyse & Learning |
+| **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (Cloud API Integration) |
 | **Dashboard** | Next.js mit Live-API-Integration und Preset-System |
 | **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
 | **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
 | **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
 
-**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten. Keine LLM-Entscheidungskette.
+**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten. Keine LLM-Entscheidungskette. **Post-Trade Analyse mit professioneller Deepseek API.**
 
 > ⚠️ **WICHTIG:** Alle Architekturentscheidungen sind in `WINDSURF_MANIFEST.md` dokumentiert. Dieses Dokument überschreibt alle anderen bei Widerspruch.
 
@@ -35,7 +35,7 @@
 
 - **Backend:** FastAPI mit PostgreSQL (TimescaleDB + pgvector), Redis, WebSocket
 - **Frontend:** Next.js mit TailwindCSS, Lightweight Charts, WebSocket Client
-- **LLM (Legacy):** Native Windows Ollama nur für Post-Trade-Debrief und historische Analyse
+- **LLM (Post-Trade):** Deepseek Reasoning API für professionelle Trade-Analyse und Learning
 - **Agenten:** 7 spezialisierte Python-Agenten (Ingestion, Technical, Quant, Context, Sentiment, Risk, Execution)
 - **Container:** Docker Compose mit Service-Orchestrierung
 - **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:8000/ws/*` (korrigiert)
@@ -45,7 +45,7 @@
 
 ## 🚀 Quick Start
 
-> 🔧 **Primäre Entwicklungsumgebung:** Windows mit Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
+> 🔧 **Primäre Entwicklungsumgebung:** Windows mit Docker Desktop (WSL2) + Deepseek API Integration
 
 ### Einfaches Starten mit den neuen Skripten:
 
@@ -196,13 +196,12 @@ ollama pull deepseek-r1:14b
 
 ## 🚀 Quick Start
 
-> 🔧 **Primäre Entwicklungsumgebung:** Windows mit Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
+> 🔧 **Primäre Entwicklungsumgebung:** Windows mit Docker Desktop (WSL2) + Deepseek API Integration
 
 ### Voraussetzungen
-- **Hardware:** Windows mit Ryzen 7 7800X3D + AMD RX 7900 XT GPU (für native LLM-Inferenz)
-- Docker Desktop (WSL2)
-- Node.js 18+ (für Frontend)
-- Python 3.11+ (wird in Docker verwendet)
+- **Hardware:** Windows mit Ryzen 7 7800X3D + RX 7900 XT (für Entwicklung)
+- **Software:** Docker Desktop (WSL2), Node.js 18+, Python 3.11+
+- **API:** Deepseek API Key für Post-Trade Analyse
 
 ### Installation
 ```bash

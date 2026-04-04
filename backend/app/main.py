@@ -1,8 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, llm_cascade, positions, market, sentiment_test, liquidations, decisions, config_api, export
+from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export
 from app.core.redis_client import redis_client
-from app.core.llm_client import ollama_client
 from app.core.database import init_db, close_db
 from app.core.log_manager import log_manager
 from app.core.scheduler import scheduler
@@ -37,7 +36,6 @@ app.include_router(sentiment_test.router, prefix="/api/v1", tags=["systemtest"])
 app.include_router(agents_status.router, prefix="/api/v1", tags=["agents_status"])
 app.include_router(trades.router, prefix="/api/v1/trades", tags=["trades"])
 app.include_router(monitoring.router, prefix="/api/v1", tags=["monitoring"])
-app.include_router(llm_cascade.router, prefix="/api/v1", tags=["llm-cascade"])
 app.include_router(positions.router, prefix="/api/v1", tags=["positions"])
 app.include_router(market.router, prefix="/api/v1/market", tags=["market"])
 app.include_router(liquidations.router, prefix="/api/v1/liquidations", tags=["liquidations"])
@@ -61,9 +59,6 @@ async def startup_event():
         await scheduler.initialize()
         logger.info("Scheduler initialisiert")
         
-        ollama_healthy = await ollama_client.health_check()
-        logger.info(f"Ollama Status: {'OK' if ollama_healthy else 'FEHLER (Fallback in Agents)'}")
-        
         logger.info("Bruno API Services gestartet")
         
     except Exception as e:
@@ -74,9 +69,6 @@ async def startup_event():
 async def shutdown_event():
     """Räumt alle Resources beim Herunterfahren."""
     try:
-        await ollama_client.close()
-        logger.info("Ollama Client geschlossen")
-        
         await redis_client.disconnect()
         logger.info("Redis Verbindung geschlossen")
         

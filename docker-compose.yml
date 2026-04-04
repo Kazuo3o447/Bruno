@@ -63,8 +63,8 @@ services:
       - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
       - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-2f93b3854d8b4d1f8a42e2fc00d55da3}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DRY_RUN=${DRY_RUN:-true}
       - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
     ports:
@@ -99,8 +99,8 @@ services:
       - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
       - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-2f93b3854d8b4d1f8a42e2fc00d55da3}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DRY_RUN=${DRY_RUN:-true}
       - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
     volumes:

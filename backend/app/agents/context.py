@@ -73,7 +73,7 @@ class ContextAgent(StreamingAgent):
         from app.services.retail_sentiment import RetailSentimentService
         from app.services.sentiment_analyzer import analyzer as nlp_analyzer
 
-        self.latency_monitor = LatencyMonitor(redis_client=deps.redis, ollama_host=deps.config.OLLAMA_HOST)
+        self.latency_monitor = LatencyMonitor(redis_client=deps.redis)
         self.coinglass = CoinGlassClient(api_key=deps.config.COINGLASS_API_KEY, redis_client=deps.redis)
         self.retail_sentiment_service = RetailSentimentService(redis_client=deps.redis, sentiment_analyzer=nlp_analyzer, config=deps.config)
 

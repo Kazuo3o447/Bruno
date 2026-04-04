@@ -23,7 +23,7 @@
 - **Risk: Daily Drawdown Limit** — 3% Tagesverlust oder 3 Fehltrades → 24h Pause
 - **Breakeven-Stop** — SL auf Entry wenn Trade > 0.5% im Plus
 - **60s Zykluszeit** — kein LLM-Overhead mehr
-- **Post-Trade LLM Debrief** — Reasoning nach jedem Trade → DB für Lernloop
+- **Post-Trade Deepseek Analysis** — Professionelle Reasoning API nach jedem Trade → DB für Lernloop
 - **Dashboard v2.1** — 4 Sections: Trading & Market, Decision Analysis, Pipeline Status, System Health
 - **Logic Page (`/logic`)** — 6-Gate Pipeline, GRSS Composition, Composite Radar, Decision Timeline
 
@@ -85,9 +85,9 @@ Das ist keine Präferenz. Das ist eine architektonische Entscheidung, die nicht 
 - Signal-Intervall: 5–15 Minuten (NICHT 5 Sekunden)
 - Trade-Haltezeit: 30 Minuten bis 4 Stunden
 - Ziel-Trades: 2–8 pro Tag
-- Latenz-Sensitivität: niedrig — die Trade-Entscheidung ist deterministisch; LLMs sind nur noch für Legacy-/Debrief-Analysen relevant
+- Latenz-Sensitivität: niedrig — die Trade-Entscheidung ist deterministisch; Deepseek API ist nur für Post-Trade-Analysen relevant
 
-**Warum:** Das System läuft auf Windows-Hybrid-Architektur (Ryzen 7 7800X3D + RX 7900 XT) ohne redundante Netzwerkleitung. HFT ist auf dieser Infrastruktur strukturell unmöglich und gefährlich (offene Positionen bei Verbindungsabbruch). Die Trade-Entscheidungskette ist jetzt deterministisch; LLMs bleiben nur für Legacy-/Post-Trade-Debrief-Analysen erhalten.
+**Warum:** Das System läuft auf Windows-Hybrid-Architektur (Ryzen 7 7800X3D + RX 7900 XT) ohne redundante Netzwerkleitung. HFT ist auf dieser Infrastruktur strukturell unmöglich und gefährlich (offene Positionen bei Verbindungsabbruch). Die Trade-Entscheidungskette ist jetzt deterministisch; Deepseek API bleibt nur für Post-Trade-Analysen erhalten.
 
 ---
 
@@ -100,6 +100,8 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ❌ NIEMALS: Gate-Logik statt gewichtetem Scoring
 ❌ NIEMALS: Entry ohne MTF-Alignment-Prüfung
 ❌ NIEMALS: Sweep-Entry ohne 3-fache Konfirmation (Spike+Wick+OI-Drop)
+❌ NIEMALS: Live-Trading ohne Daily Drawdown Protection
+❌ IMMER: Paper Trading Only bis explizit freigegeben
 ❌ NIEMALS: Composite Gewichte ohne Dokumentation ändern
 ❌ NIEMALS: TA-Berechnungen mit pandas/numpy
 ❌ NIEMALS: Trade ohne Breakeven-Stop-Mechanismus

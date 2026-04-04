@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.log_manager import log_manager
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.database import SessionLocal
-from app.core.llm_client import ollama_client
+from app.core.redis_client import redis_client
 import logging
 
 router = APIRouter(prefix="/systemtest/sentiment", tags=["systemtest"])
@@ -17,8 +17,8 @@ async def get_deps():
         redis=redis_client,
         config=settings,
         db_session_factory=SessionLocal,
-        ollama=ollama_client,
-        log_manager=log_manager
+        log_manager=log_manager,
+        logger=logging.getLogger("sentiment_test")
     )
 
 @router.get("/news_health")

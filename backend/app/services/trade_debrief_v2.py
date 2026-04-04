@@ -5,7 +5,8 @@ import time
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from sqlalchemy import text
-from app.core.llm_provider import OllamaProvider
+from app.core.deepseek_client import get_deepseek_client
+from app.core.database import AsyncSessionLocal
 
 class TradeDebriefServiceV2:
     """
@@ -18,10 +19,10 @@ class TradeDebriefServiceV2:
     def __init__(self, redis=None, db_session_factory=None):
         self.logger = logging.getLogger("trade_debrief_v2")
         self.redis = redis
-        self.db_session_factory = db_session_factory
+        self.db_session_factory = db_session_factory or AsyncSessionLocal
         
-        # LLM Provider für Debrief-Analyse
-        self.llm_provider = OllamaProvider()
+        # Deepseek Reasoning Client für Debrief-Analyse
+        self.deepseek_client = get_deepseek_client()
         
         # Debrief-Konfiguration
         self.debrief_prompt_template = """
@@ -100,10 +101,10 @@ class TradeDebriefServiceV2:
             # 2. LLM Debrief Prompt vorbereiten
             prompt = self._prepare_debrief_prompt(position_data, context_data)
             
-            # 3. LLM Analyse durchführen
-            llm_response = await self._llm_provider.generate_json(
+            # 3. Deepseek Analyse durchführen
+            llm_response = await self.deepseek_client.generate_json(
                 prompt=prompt,
-                model="deepseek-r1:14b",  # Reasoning Model für Analyse
+                model="deepseek-chat",  # Chat Model für Analyse
                 temperature=0.3
             )
             

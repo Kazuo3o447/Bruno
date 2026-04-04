@@ -4,7 +4,6 @@ import logging
 
 if TYPE_CHECKING:
     from app.core.redis_client import RedisClient
-    from app.core.llm_client import OllamaClient
     from app.core.config import Settings
     from app.core.log_manager import LogManager
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -19,6 +18,5 @@ class AgentDependencies:
     redis: "RedisClient"
     config: "Settings"
     db_session_factory: "async_sessionmaker"
-    ollama: "OllamaClient"
     log_manager: "LogManager"
     logger: logging.Logger = logging.getLogger("worker")

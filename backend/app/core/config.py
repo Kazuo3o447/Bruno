@@ -1,6 +1,7 @@
 from typing import Optional
 from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
+from pydantic import Field, ConfigDict
 
 
 from dotenv import load_dotenv
@@ -18,13 +19,9 @@ class Settings(BaseSettings):
     REDIS_HOST: str = "redis"
     REDIS_PORT: int = 6379
     
-    # Ollama (natively on Windows host by default)
-    OLLAMA_HOST: str = "http://host.docker.internal:11434"
-    
-    # LLM Provider (Phase C)
-    LLM_PROVIDER: str = "ollama"  # ollama | cloud
-    DEEPSEEK_API_KEY: Optional[str] = None
-    GROQ_API_KEY: Optional[str] = None
+    # Deepseek Reasoning API (Post-Trade Analyse & Learning)
+    DEEPSEEK_API_KEY: str = Field(default="", description="Deepseek API Key for Post-Trade Analysis")
+    DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com", description="Deepseek API Base URL")
     
     # API
     API_V1_STR: str = "/api/v1"
@@ -80,7 +77,7 @@ class Settings(BaseSettings):
     MAX_LEVERAGE: float = 1.0        # Kein Kredit. Niemals über 1.0.
     SIMULATED_CAPITAL_EUR: float = 500.0  # Startkapital für DRY_RUN Portfolio
     
-    model_config = SettingsConfigDict(
+    model_config = ConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore"

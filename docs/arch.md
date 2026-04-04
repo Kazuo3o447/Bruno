@@ -14,7 +14,7 @@
 
 | Umgebung | Hardware | Zweck |
 |----------|----------|-------|
-| **Primär** | Windows + Ryzen 7 7800X3D + RX 7900 XT | Entwicklung, LLM-Inferenz, Trading |
+| **Primär** | Windows + Ryzen 7 7800X3D + RX 7900 XT | Entwicklung, Cloud API Integration, Trading |
 
 ### Docker Services (WSL2)
 
@@ -72,20 +72,29 @@
 
 ## Die LLM-Brücke
 
-### Native Windows-Ollama (Dev)
-- **Ollama läuft NATIV auf dem Windows-Host** (Ryzen 7 7800X3D + RX 7900 XT)
-- Direkter Zugriff auf **AMD RX 7900 XT GPU**
-- Keine Docker-Passthrough-Komplexität
-- Keine WSL2-Kompilierungsprobleme
+### Deepseek Reasoning API (Cloud)
+- **Deepseek API läuft als Cloud-Service** (https://api.deepseek.com)
+- **Keine lokalen Modelle mehr** - Speicher- und Ressourcen-optimiert
+- **Professionelle Reasoning Engine** für Post-Trade Analyse
+- **Stabile HTTPS-Verbindung** mit Retry-Logic und Fallback
 
-**Modelle:**
-- **qwen2.5:14b** - Primary (Klassifizierung, Gate-Checks)
-- **deepseek-r1:14b** - Reasoning (Strategische Analyse)
+**API Konfiguration:**
+- **Model:** deepseek-chat (Chat & Reasoning)
+- **Purpose:** Post-Trade Debrief und Learning Only
+- **Response Format:** Strukturiertes JSON
+- **Performance:** Sub-2s Response Times
+- **Error Handling:** Graceful Fallback bei API-Ausfällen
 
 ### Docker-Kommunikation
-Container greifen auf Ollama zu via:
+Container greifen auf Deepseek API zu via:
 ```
-http://host.docker.internal:11434
+https://api.deepseek.com/v1/chat/completions
+```
+
+**Environment Variables:**
+```bash
+DEEPSEEK_API_KEY=sk-2f93b3854d8b4d1f8a42e2fc00d55da3
+DEEPSEEK_BASE_URL=https://api.deepseek.com
 ```
 
 ---
@@ -142,7 +151,7 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 | **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls | QuantAgentV4 |
 | **LiquidityEngine** | OI-Delta, Sweep Detection, Entry Confirmation | QuantAgentV4 |
 | **CompositeScorer** | Dynamic Weighting, Regime Detection | QuantAgentV4 |
-| **TradeDebriefV2** | Post-Trade Debrief / Legacy LLM-Analyse | ExecutionAgentV3 |
+| **TradeDebriefV2** | Post-Trade Debrief mit Deepseek Reasoning API | ExecutionAgentV3 |
 
 ---
 
@@ -170,7 +179,8 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 - **CompositeScorer**: Dynamic Weighting, Regime-adaptive Scoring
 - **RiskAgentV2**: Daily Limits (3%), Trade Cooldowns (5min)
 - **ExecutionAgentV3**: Breakeven Stops, Enhanced Position Management
-- **Legacy (v1):** LLM Cascade bleibt nur für Post-Trade-Debriefs / historische Referenzen erhalten
+- **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse
+- **Learning System:** Cloud-basierte Intelligenz für kontinuierliche Verbesserung
 
 ---
 
