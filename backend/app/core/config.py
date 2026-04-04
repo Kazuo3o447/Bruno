@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None
     
+    # Legacy Ollama (deprecated - not used in v2.1)
+    OLLAMA_HOST: Optional[str] = None
+    
     # Trading Mode
     DRY_RUN: bool = True
     

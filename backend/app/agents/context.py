@@ -940,3 +940,12 @@ class ContextAgent(StreamingAgent):
 
         except Exception as e:
             self.logger.error(f"ContextAgent process() Fehler: {e}", exc_info=True)
+
+    async def _fetch_rss(self, url: str) -> bool:
+        """Fetch RSS feed for systemtest compatibility."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url)
+                return response.status_code == 200
+        except Exception:
+            return False

@@ -245,7 +245,6 @@ async def test_news_feeds() -> TestResult:
 async def test_sentiment_feeds() -> TestResult:
     """Testet die Erreichbarkeit der Makro- und Krypto-News-Feeds."""
     from app.agents.context import ContextAgent
-    from app.core.llm_client import ollama_client
     from app.core.database import SessionLocal
     
     start_time = datetime.now(timezone.utc)
@@ -254,7 +253,6 @@ async def test_sentiment_feeds() -> TestResult:
             redis=redis_client,
             config=settings,
             db_session_factory=SessionLocal,
-            ollama=ollama_client,
             log_manager=log_manager
         )
         agent = ContextAgent(deps)
@@ -275,8 +273,8 @@ async def test_sentiment_feeds() -> TestResult:
             response_time_ms=response_time,
             message=message,
             details={
-                "macro_sample": len(macro_test),
-                "crypto_sample": len(crypto_test),
+                "macro_sample": macro_test,
+                "crypto_sample": crypto_test,
                 "macro_url": agent.macro_feeds[0],
                 "crypto_url": agent.crypto_feeds[0]
             },
