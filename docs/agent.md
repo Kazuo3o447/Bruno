@@ -79,7 +79,7 @@ Ziel erreicht: Den Bot ehrlich machen. Keine Zufallsdaten mehr.
 - [x] CVD State in Redis persistiert
 - [x] Data-Freshness Fail-Safe: GRSS bricht bei stale data auf 0.0 ab
 - [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag implementiert
-- [x] CryptoPanic Health: Health-Telemetrie integriert
+- [x] CoinMarketCap Health: Health-Telemetrie integriert
 
 **Wichtigste Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. ✅ ERLEDIGT
 

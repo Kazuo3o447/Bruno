@@ -88,7 +88,7 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 |-------|-------|--------|-------|
 | **Ingestion** | Binance WebSocket (5 Streams) | Redis Streams | OHLCV, OFI, Liquidations, Funding |
 | **Context** | Makro-Daten (FRED, Deribit, RSS) | Redis `bruno:context:grss` | **GRSS Score** (0–100) |
-| **Sentiment** | RSS Feeds + CryptoPanic | Redis `bruno:sentiment` | LLM-basierte News-Analyse |
+| **Sentiment** | RSS Feeds + CryptoCompare + CoinMarketCap | Redis `bruno:sentiment` | LLM-basierte News-Analyse |
 | **Quant** | Redis + Orderbook | Redis `bruno:signals` | OFI, CVD, technische Signale |
 | **Risk** | Alle Signals (RAM-Check) | Redis `bruno:veto` | **0ms Veto** (GRSS < 40 = Block) |
 | **Execution** | Risk + Signals | **Bybit API** | **Limit/PostOnly Orders** + PositionTracker |
@@ -173,7 +173,7 @@ ADD COLUMN layer3_output JSONB;
 - [x] GRSS-Funktion: echte Daten (Manifest Abschnitt 5)
 - [x] Data-Freshness Fail-Safe: GRSS bricht bei stale data auf 0.0 ab
 - [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag implementiert
-- [x] CryptoPanic Health: Health-Telemetrie integriert
+- [x] CryptoCompare + CoinMarketCap Health: Health-Telemetrie integriert
 
 ### Phase B — Daten-Erweiterung (Woche 2–3) — AKTIV
 - [ ] CoinGlass API Integration ($29/Monat)

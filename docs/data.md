@@ -10,7 +10,8 @@
 - **VIX**: ✅ CBOE CSV (31.05) - Offizielle Quelle, keine Rate Limits
 - **FRED Yields**: ✅ Alle Treasury Rates (2Y, 5Y, 10Y, 30Y)
 - **NDX**: ✅ Alpha Vantage Fallback
-- **CryptoPanic**: ✅ v2 API (20 posts)
+- **CryptoCompare**: ✅ News-Aggregator, Preise, Historie, Top-Listen, Social & Blockchain
+- **CoinMarketCap**: ✅ Bitcoin-fokussierte Marktmetriken, Listings und Global Metrics
 - **Reddit**: ✅ OAuth + Anonym
 - **Liquidation Clusters**: ✅ Intern (8ms)
 
@@ -67,7 +68,8 @@ Neben den Rohdaten der Börse brauchen wir den menschlichen Faktor:
 | Quelle | Intervall | Daten |
 |--------|-----------|-------|
 | `alternative.me` | Täglich | **Fear & Greed Index** (0-100). Erlaubt dem Quant, Strategien an extreme Panik oder Gier anzupassen. (Kein API-Key nötig). |
-| `CryptoPanic API` | 5 Minuten | Breaking News Aggregator. (Free-Tier: 5 Requests/Minute, reicht völlig aus). |
+| `CryptoCompare API` | 5 Minuten | News Aggregator + Market Bundle. (Free-Plan: News, Preise, Historie, Top-Listen, Social, Blockchain). |
+| `CoinMarketCap API` | 5 Minuten | BTC Quotes, Listings, Global Metrics. |
 
 ### 2.3 Spezialisierte News Feeds & BERT Modelle (Phase 5)
 Um den "menschlichen Faktor" noch tiefer zu analysieren, integrieren wir spezialisierte News-Feeds und NLP-Modelle.

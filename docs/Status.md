@@ -63,7 +63,7 @@
 - [x] **CVD State**: In Redis persistiert
 - [x] **Data-Freshness Fail-Safe**: GRSS bricht auf 0.0 ab bei stale data
 - [x] **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
-- [x] **CryptoPanic Health**: Health-Telemetrie integriert
+- [x] CoinMarketCap Health: Health-Telemetrie integriert
 
 ### Phase B ✅ COMPLETED (2026-03-29)
 - [x] CoinGlass graceful degradation ohne API-Key
@@ -170,7 +170,7 @@
   - HuggingFace: Token-Integration für schnellere Model-Downloads
 - **API Keys Implementiert**: Alle kritischen API-Keys sind aktiv
   - ✅ FRED_API_KEY: US Treasury Yields working
-  - ✅ CRYPTOPANIC_API_KEY: v2 API working (20 posts)
+  - ✅ COINMARKETCAP_API_KEY: Bitcoin-News- und Market-Bundle working
   - ✅ ALPHA_VANTAGE_API_KEY: NDX Fallback working
 
 ### ✅ Kürzlich Gelöst (2026-03-31)
@@ -294,7 +294,7 @@
 - [x] CVD State: In Redis persistiert
 - [x] Data-Freshness Fail-Safe: GRSS bricht bei stale data auf 0.0 ab
 - [x] Live-Trading Guard: `LIVE_TRADING_APPROVED` Flag
-- [x] CryptoPanic Health-Telemetrie
+- [x] CoinMarketCap Health-Telemetrie
 
 ### Phase 0-1: Foundation & Architecture ✅
 - API und Worker in separate Container
@@ -311,7 +311,7 @@
 ### Phase 3: Agent Pipeline v2 ✅
 - 5 Agenten vollständig implementiert (Quant, Sentiment, Risk, Execution + Ingestion)
 - Multi-Timeframe Analyse (1m, 5m, 1h)
-- Echte Sentiment-Quellen (CryptoPanic API + RSS)
+- Echte Sentiment-Quellen (CoinMarketCap API + RSS)
 - Risk Management mit Position Sizing, Stop-Loss, Take-Profit
 - Trade-Decision Transparency Model (vollständige Entscheidungskette)
 

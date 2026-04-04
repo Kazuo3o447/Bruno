@@ -39,7 +39,7 @@
 - [x] **CVD State**: in Redis persistiert
 - [x] **Data-Freshness Fail-Safe**: GRSS bricht bei stale data auf 0.0 ab
 - [x] **Live-Trading Guard**: `LIVE_TRADING_APPROVED` Flag implementiert
-- [x] **CryptoPanic Health**: Health-Telemetrie mit Latenz-Tracking
+- [x] **CoinMarketCap Health**: Health-Telemetrie mit Latenz-Tracking
 
 **Eiserne Regel:** GRSS muss 100% echte Daten verwenden. Keine Mocks. Keine `random.uniform()`. ✅ ERLEDIGT
 
@@ -51,7 +51,7 @@
 |-------|-----|--------------|--------|
 | **Ingestion** | Streaming | Binance WS (5 Streams) | Redis Streams (OHLCV, OFI, Liqs, Funding) |
 | **Context** | Polling | FRED, Deribit, RSS, Makro | Redis `bruno:context:grss` (GRSS Score 0–100) |
-| **Sentiment** | Polling | 8× RSS, CryptoPanic, LLM | Redis `bruno:sentiment` |
+| **Sentiment** | Polling | 8× RSS, CoinMarketCap, LLM | Redis `bruno:sentiment` |
 | **Quant** | Polling | Redis, Orderbook | Redis `bruno:signals` (OFI, CVD) |
 | **Risk** | Streaming | Alle Redis Channels | RAM-Veto (GRSS < 40 = Block) |
 | **Execution** | Streaming | Risk + Signals | **Bybit API** (Limit/PostOnly Orders) |
@@ -1137,7 +1137,7 @@ class SentimentSignalV2(SignalEnvelope):
     direction: SignalDirection
     confidence: float = Field(ge=0.0, le=1.0)
     score: float = Field(ge=-1.0, le=1.0)
-    sources: List[str]  # ["CryptoPanic", "RSS:coindesk"]
+    sources: List[str]  # ["CoinMarketCap", "RSS:coindesk"]
     reasoning: str
     article_count: int
 
