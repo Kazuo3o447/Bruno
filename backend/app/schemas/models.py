@@ -119,7 +119,7 @@ class NewsEmbedding(Base):
     
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    source = Column(String(50), nullable=False)  # cryptopanic, reddit, twitter, etc.
+    source = Column(String(50), nullable=False)  # coinmarketcap, reddit, twitter, rss, etc.
     source_url = Column(Text)
     headline = Column(Text, nullable=False)
     content = Column(Text)

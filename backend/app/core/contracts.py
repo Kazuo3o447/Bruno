@@ -32,7 +32,7 @@ class SentimentSignalV2(SignalEnvelope):
     direction: SignalDirection
     confidence: float = Field(ge=0.0, le=1.0)
     score: float = Field(ge=-1.0, le=1.0)
-    sources: List[str]  # e.g., ["CryptoPanic", "RSS:coindesk"]
+    sources: List[str]  # e.g., ["CoinMarketCap", "RSS:coindesk"]
     reasoning: str
     article_count: int
 

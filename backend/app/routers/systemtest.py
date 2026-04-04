@@ -18,6 +18,7 @@ from app.agents.deps import AgentDependencies
 from app.core.log_manager import log_manager
 from app.core.config import settings
 from app.core.scheduler import scheduler
+from app.core.coinmarketcap_client import get_coinmarketcap_client
 import json
 
 router = APIRouter(prefix="/systemtest", tags=["systemtest"])
@@ -168,53 +169,71 @@ async def test_redis_connection() -> TestResult:
         )
 
 async def test_news_feeds() -> TestResult:
-    """Testet News Feed APIs"""
+    """Testet die CoinMarketCap-News- und Bitcoin-Bundle-APIs."""
     start_time = datetime.now(timezone.utc)
     try:
-        # Teste CryptoPanic API mit echtem Key
-        token = settings.CRYPTOPANIC_API_KEY
-        if not token:
+        api_key = settings.COINMARKETCAP_API_KEY
+        if not api_key:
             return TestResult(
-                name="CryptoPanic News",
+                name="CoinMarketCap News",
                 category="News Feed",
                 status="warning",
                 response_time_ms=0,
                 message="Kein API Key konfiguriert",
-                details={"error": "CRYPTOPANIC_API_KEY is missing"},
+                details={"error": "COINMARKETCAP_API_KEY is missing"},
                 timestamp=datetime.now(timezone.utc).isoformat()
             )
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                "https://cryptopanic.com/api/developer/v2/posts/",
-                params={"auth_token": token, "public": "true"}
+        coinmarketcap = get_coinmarketcap_client(api_key)
+        btc_bundle, global_metrics = await asyncio.gather(
+            coinmarketcap.get_btc_bundle(convert="USD"),
+            coinmarketcap.get_global_metrics(),
+        )
+
+        response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+        quote = btc_bundle.get("quote") if btc_bundle else None
+        content_items = btc_bundle.get("content_items", []) if btc_bundle else []
+        market_pairs = btc_bundle.get("market_pairs", []) if btc_bundle else []
+
+        if quote and btc_bundle.get("bitcoin_filter"):
+            return TestResult(
+                name="CoinMarketCap News",
+                category="News Feed",
+                status="success",
+                response_time_ms=response_time,
+                message="CoinMarketCap Bitcoin-Bundle, Content und Global Metrics erreichbar",
+                details={
+                    "symbol": btc_bundle.get("symbol"),
+                    "bitcoin_filter": btc_bundle.get("bitcoin_filter"),
+                    "quote_keys": sorted(list(quote.keys()))[:10] if isinstance(quote, dict) else [],
+                    "content_items": len(content_items),
+                    "market_pairs": len(market_pairs),
+                    "global_metric_keys": sorted(list(global_metrics.keys()))[:10] if isinstance(global_metrics, dict) else [],
+                    "source": "CoinMarketCap",
+                },
+                timestamp=datetime.now(timezone.utc).isoformat()
             )
-            response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-            
-            if response.status_code == 200:
-                return TestResult(
-                    name="CryptoPanic News",
-                    category="News Feed",
-                    status="success",
-                    response_time_ms=response_time,
-                    message="News Feed erreichbar & authentifiziert",
-                    details={"status_code": response.status_code, "source": "CryptoPanic"},
-                    timestamp=datetime.now(timezone.utc).isoformat()
-                )
-            else:
-                return TestResult(
-                    name="CryptoPanic News",
-                    category="News Feed",
-                    status="error",
-                    response_time_ms=response_time,
-                    message=f"News Feed Fehler: Status {response.status_code}",
-                    details={"status_code": response.status_code, "body": response.text[:100]},
-                    timestamp=datetime.now(timezone.utc).isoformat()
-                )
+
+        return TestResult(
+            name="CoinMarketCap News",
+            category="News Feed",
+            status="warning",
+            response_time_ms=response_time,
+            message="CoinMarketCap lieferte nur Teilmengen der Free-Plan-Daten",
+            details={
+                "symbol": btc_bundle.get("symbol") if btc_bundle else None,
+                "bitcoin_filter": btc_bundle.get("bitcoin_filter") if btc_bundle else None,
+                "content_items": len(content_items),
+                "market_pairs": len(market_pairs),
+                "global_metrics": bool(global_metrics),
+                "source": "CoinMarketCap",
+            },
+            timestamp=datetime.now(timezone.utc).isoformat()
+        )
     except Exception as e:
         response_time = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
         return TestResult(
-            name="CryptoPanic News",
+            name="CoinMarketCap News",
             category="News Feed",
             status="error",
             response_time_ms=response_time,

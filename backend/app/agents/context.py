@@ -98,7 +98,17 @@ class ContextAgent(StreamingAgent):
         try:
             from datetime import datetime, timezone
             health = await self.deps.redis.get_cache("bruno:health:sources") or {}
-            sources_to_check = ["Binance_REST", "Deribit_Public", "yFinance_Macro", "Binance_OI_Trend", "ETF_Flows_Farside"]
+            sources_to_check = [
+                "Binance_REST",
+                "Deribit_Public",
+                "yFinance_Macro",
+                "Binance_OI_Trend",
+                "ETF_Flows_Farside",
+                "CryptoCompare_News",
+                "CryptoCompare_Market",
+                "CoinMarketCap_BTC",
+                "CoinMarketCap_Global",
+            ]
             fresh_count = sum(
                 1 for s in sources_to_check
                 if self._is_fresh_health_status(health.get(s, {}).get("status"))
@@ -779,7 +789,17 @@ class ContextAgent(StreamingAgent):
             btc_t = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
             price = float(btc_t.get("last_price", 0))
             
-            sources = ["Binance_REST", "Deribit_Public", "yFinance_Macro", "Binance_OI_Trend", "ETF_Flows_Farside"]
+            sources = [
+                "Binance_REST",
+                "Deribit_Public",
+                "yFinance_Macro",
+                "Binance_OI_Trend",
+                "ETF_Flows_Farside",
+                "CryptoCompare_News",
+                "CryptoCompare_Market",
+                "CoinMarketCap_BTC",
+                "CoinMarketCap_Global",
+            ]
             health = await self.deps.redis.get_cache("bruno:health:sources") or {}
             fresh_count = sum(
                 1
@@ -793,6 +813,8 @@ class ContextAgent(StreamingAgent):
 
             funding_data = await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}
             sentiment_data = await self.deps.redis.get_cache("bruno:sentiment:aggregate") or {}
+            cryptocompare_bundle = await self.deps.redis.get_cache("bruno:cryptocompare:bundle") or {}
+            coinmarketcap_bundle = await self.deps.redis.get_cache("bruno:coinmarketcap:bundle") or {}
             retail_data = await self.deps.redis.get_cache("bruno:retail:sentiment") or {}
             ingestion_data = await self.deps.redis.get_cache("bruno:ingestion:last_message") or {}
 
@@ -889,6 +911,26 @@ class ContextAgent(StreamingAgent):
                 "OI_Trend": self.oi_trend,
                 "ETF_Flows": self.etf_flows,
                 "Max_Pain": self.max_pain,
+                "CryptoCompare": {
+                    "timestamp": cryptocompare_bundle.get("timestamp"),
+                    "symbols": cryptocompare_bundle.get("symbols", []),
+                    "tsym": cryptocompare_bundle.get("tsym", "USD"),
+                    "price_snapshot": cryptocompare_bundle.get("price_snapshot", {}),
+                    "top_coins": cryptocompare_bundle.get("top_coins", []),
+                    "top_exchanges": cryptocompare_bundle.get("top_exchanges", []),
+                    "historical_summary": cryptocompare_bundle.get("historical_summary", {}),
+                    "social_stats_raw": cryptocompare_bundle.get("social_stats_raw", {}),
+                    "blockchain_stats_raw": cryptocompare_bundle.get("blockchain_stats_raw", {}),
+                },
+                "CoinMarketCap": {
+                    "timestamp": coinmarketcap_bundle.get("timestamp"),
+                    "symbol": coinmarketcap_bundle.get("symbol", "BTC"),
+                    "convert": coinmarketcap_bundle.get("convert", "USD"),
+                    "quote": coinmarketcap_bundle.get("quote", {}),
+                    "listings_latest": coinmarketcap_bundle.get("listings_latest", {}),
+                    "btc_info": coinmarketcap_bundle.get("btc_info", {}),
+                    "global_metrics": coinmarketcap_bundle.get("global_metrics", {}),
+                },
                 "Veto_Active": self._grss_ema < 40,
                 "timestamp": current_ts.isoformat()
             }

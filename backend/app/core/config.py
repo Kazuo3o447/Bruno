@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     # External APIs
     BINANCE_API_KEY: Optional[str] = None
     BINANCE_SECRET: Optional[str] = None
-    CRYPTOPANIC_API_KEY: Optional[str] = None
+    CRYPTOCOMPARE_API_KEY: Optional[str] = None
+    COINMARKETCAP_API_KEY: Optional[str] = None
     FRED_API_KEY: Optional[str] = None
 
     # Macro Data Fallback

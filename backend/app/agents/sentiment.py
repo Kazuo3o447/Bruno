@@ -1,14 +1,16 @@
 import asyncio
 import logging
 import time
-import httpx
 import feedparser
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
 from app.services.sentiment_analyzer import SentimentAnalyzer
 from app.core.log_manager import LogManager, LogCategory, LogLevel
+from app.core.cryptocompare_client import get_cryptocompare_client
+from app.core.coinmarketcap_client import get_coinmarketcap_client
 
 class SentimentAgent(PollingAgent):
     """
@@ -66,55 +68,98 @@ class SentimentAgent(PollingAgent):
 
     async def process(self) -> None:
         """
-        Sammelt echte News via CryptoPanic API und RSS Feeds.
+        Sammelt echte News via CryptoCompare, CoinMarketCap und RSS Feeds.
         Analysiert Sentiment mit FinBERT/CryptoBERT Pipeline.
         Publiziert aggregierten Score an Redis für ContextAgent.
 
         KEIN Dummy-Code. Kein random. Echte Daten.
         """
         try:
-            headlines = []   # Liste von (source, headline) Tuples
+            headlines: List[Dict[str, Any]] = []
+            cc_news_items: List[Dict[str, Any]] = []
+            cc_market_bundle: Dict[str, Any] = {}
+            cmc_market_bundle: Dict[str, Any] = {}
+            cc_api_key = self.deps.config.CRYPTOCOMPARE_API_KEY
+            cmc_api_key = self.deps.config.COINMARKETCAP_API_KEY
 
-            # ── 1. CryptoPanic API (primäre Quelle) ──────────────
-            self.state.sub_state = "fetching news (cryptopanic)"
-            api_key = self.deps.config.CRYPTOPANIC_API_KEY
-            if api_key:
+            # ── 1. CryptoCompare + CoinMarketCap (parallel, Bitcoin-zentriert) ──────────────
+            if cc_api_key or cmc_api_key:
+                fetch_tasks = []
+                if cc_api_key:
+                    self.state.sub_state = "fetching news (cryptocompare)"
+                    cryptocompare = get_cryptocompare_client(cc_api_key)
+                    fetch_tasks.append(("cryptocompare", cryptocompare.get_news(limit=50, categories=["BTC", "Bitcoin", "Regulation", "Exchange"]), cryptocompare.get_market_bundle(symbols=["BTC", "ETH"], tsym="USD")))
+                if cmc_api_key:
+                    self.state.sub_state = "fetching market (coinmarketcap)"
+                    coinmarketcap = get_coinmarketcap_client(cmc_api_key)
+                    fetch_tasks.append(("coinmarketcap", coinmarketcap.get_btc_bundle(convert="USD")))
+
                 try:
-                    cp_start = time.perf_counter()
-                    async with httpx.AsyncClient(timeout=8.0) as client:
-                        resp = await client.get(
-                            "https://cryptopanic.com/api/developer/v2/posts/",
-                            params={
-                                "auth_token": api_key,
-                                "public": "true"
-                            }
+                    if cc_api_key:
+                        cc_start = time.perf_counter()
+                        cc_news_items, cc_market_bundle = await asyncio.gather(
+                            fetch_tasks[0][1],
+                            fetch_tasks[0][2],
                         )
-                        if resp.status_code == 200:
-                            cp_latency = (time.perf_counter() - cp_start) * 1000
-                            await self._report_health("CryptoPanic", "online", cp_latency)
-                            data = resp.json()
-                            for post in data.get("results", [])[:15]:
-                                title = post.get("title", "").strip()
+                        cc_latency = (time.perf_counter() - cc_start) * 1000
+                        if cc_news_items:
+                            await self._report_health("CryptoCompare_News", "online", cc_latency)
+                            for item in cc_news_items[:30]:
+                                title = item.get("title", "").strip()
                                 if title:
-                                    headlines.append(("cryptopanic", title))
-                            self.logger.debug(
-                                f"CryptoPanic: {len(headlines)} Headlines"
-                            )
+                                    headlines.append({
+                                        "source": "cryptocompare",
+                                        "title": title,
+                                        "categories": item.get("categories", []) or [],
+                                        "language": item.get("language", "EN"),
+                                    })
+                            await self._report_health("CryptoCompare_Market", "online", cc_latency)
                         else:
-                            cp_latency = (time.perf_counter() - cp_start) * 1000
-                            await self._report_health("CryptoPanic", "degraded", cp_latency)
-                            self.logger.warning(
-                                f"CryptoPanic HTTP {resp.status_code}"
-                            )
+                            await self._report_health("CryptoCompare_News", "degraded", cc_latency)
+                            await self._report_health("CryptoCompare_Market", "degraded", cc_latency)
+                    else:
+                        await self._report_health("CryptoCompare_News", "offline", 0.0)
+                        await self._report_health("CryptoCompare_Market", "offline", 0.0)
+
+                    if cmc_api_key:
+                        cmc_start = time.perf_counter()
+                        cmc_market_bundle = await fetch_tasks[-1][1]
+                        cmc_latency = (time.perf_counter() - cmc_start) * 1000
+                        if cmc_market_bundle:
+                            await self._report_health("CoinMarketCap_BTC", "online", cmc_latency)
+                            await self._report_health("CoinMarketCap_Global", "online", cmc_latency)
+                        else:
+                            await self._report_health("CoinMarketCap_BTC", "degraded", cmc_latency)
+                            await self._report_health("CoinMarketCap_Global", "degraded", cmc_latency)
+                    else:
+                        await self._report_health("CoinMarketCap_BTC", "offline", 0.0)
+                        await self._report_health("CoinMarketCap_Global", "offline", 0.0)
+
+                    if cc_market_bundle:
+                        cc_market_bundle["timestamp"] = datetime.now(timezone.utc).isoformat()
+                        await self.deps.redis.set_cache("bruno:cryptocompare:bundle", cc_market_bundle, ttl=1800)
+
+                    if cmc_market_bundle:
+                        cmc_market_bundle["timestamp"] = datetime.now(timezone.utc).isoformat()
+                        await self.deps.redis.set_cache("bruno:coinmarketcap:bundle", cmc_market_bundle, ttl=1800)
+
+                    if not cc_news_items and not cmc_market_bundle:
+                        self.logger.warning("Weder CryptoCompare noch CoinMarketCap lieferten verwertbare Daten")
+
                 except Exception as e:
-                    cp_latency = (time.perf_counter() - cp_start) * 1000 if 'cp_start' in locals() else 0.0
-                    await self._report_health("CryptoPanic", "offline", cp_latency)
-                    self.logger.warning(f"CryptoPanic Fehler: {e}")
+                    if cc_api_key:
+                        await self._report_health("CryptoCompare_News", "offline", 0.0)
+                        await self._report_health("CryptoCompare_Market", "offline", 0.0)
+                    if cmc_api_key:
+                        await self._report_health("CoinMarketCap_BTC", "offline", 0.0)
+                        await self._report_health("CoinMarketCap_Global", "offline", 0.0)
+                    self.logger.warning(f"Dual-Source Fehler: {e}")
             else:
-                await self._report_health("CryptoPanic", "offline", 0.0)
-                self.logger.warning(
-                    "CRYPTOPANIC_API_KEY nicht gesetzt — nur RSS Fallback"
-                )
+                await self._report_health("CryptoCompare_News", "offline", 0.0)
+                await self._report_health("CryptoCompare_Market", "offline", 0.0)
+                await self._report_health("CoinMarketCap_BTC", "offline", 0.0)
+                await self._report_health("CoinMarketCap_Global", "offline", 0.0)
+                self.logger.warning("CRYPTOCOMPARE_API_KEY und COINMARKETCAP_API_KEY nicht gesetzt — nur RSS Fallback")
 
             # ── 2. RSS Feeds (Fallback + Ergänzung) ──────────────
             self.state.sub_state = "fetching news (rss)"
@@ -129,7 +174,12 @@ class SentimentAgent(PollingAgent):
                     for entry in feed.entries[:5]:
                         title = entry.get("title", "").strip()
                         if title:
-                            headlines.append((source, title))
+                            headlines.append({
+                                "source": source,
+                                "title": title,
+                                "categories": ["RSS"],
+                                "language": entry.get("language", "EN"),
+                            })
                 except Exception as e:
                     self.logger.debug(f"RSS {source} Fehler: {e}")
 
@@ -145,8 +195,11 @@ class SentimentAgent(PollingAgent):
                         "average_score": 0.0,
                         "average_confidence": 0.0,
                         "samples_analyzed": 0,
+                        "headlines_collected": 0,
+                        "sources": [],
+                        "categories": [],
                         "interpretation": "neutral",
-                        "source": "no_data"
+                        "source": "cryptocompare+coinmarketcap+rss"
                     },
                     ttl=900
                 )
@@ -155,11 +208,14 @@ class SentimentAgent(PollingAgent):
             # ── 4. NLP-Analyse ────────────────────────────────────
             sentiment_scores = []
             total_headlines = len(headlines[:20])
-            for i, (source, headline) in enumerate(headlines[:20]):   # Max 20 analysieren
+            for i, item in enumerate(headlines[:20]):   # Max 20 analysieren
+                source = item["source"]
+                headline = item["title"]
+                categories = [c.lower() for c in (item.get("categories") or [])]
                 self.state.sub_state = f"analyzing news ({i+1}/{total_headlines})"
-                # CryptoPanic und Makro-Quellen → FinBERT
+                # Makro-/Regulierungsquellen → FinBERT
                 # Krypto-spezifische Quellen → CryptoBERT
-                mode = "macro" if source == "coindesk" else "crypto"
+                mode = "macro" if source == "coindesk" or any(cat in {"regulation", "exchange"} for cat in categories) else "crypto"
                 try:
                     result = await self.analyzer.analyze_with_filter(
                         headline, mode=mode
@@ -181,6 +237,9 @@ class SentimentAgent(PollingAgent):
                 s["confidence"] for s in sentiment_scores
             ) / len(sentiment_scores)
 
+            top_sources = Counter(item["source"] for item in headlines).most_common(5)
+            top_categories = Counter(cat for item in headlines for cat in (item.get("categories") or [])).most_common(10)
+
             interpretation = (
                 "bullish" if avg_score > 0.20
                 else "bearish" if avg_score < -0.20
@@ -193,8 +252,18 @@ class SentimentAgent(PollingAgent):
                 "average_confidence": round(avg_confidence, 3),
                 "samples_analyzed": len(sentiment_scores),
                 "headlines_collected": len(headlines),
+                "sources": [source for source, _ in top_sources],
+                "categories": [category for category, _ in top_categories],
+                "news_summary": {
+                    "cryptocompare_articles": len(cc_news_items),
+                    "coinmarketcap_articles": 0,
+                    "bitcoin_filter": True,
+                    "sources": ["CryptoCompare", "CoinMarketCap", "RSS"],
+                },
+                "cryptocompare_bundle": cc_market_bundle,
+                "coinmarketcap_bundle": cmc_market_bundle,
                 "interpretation": interpretation,
-                "source": "cryptopanic+rss"
+                "source": "cryptocompare+coinmarketcap+rss"
             }
 
             await self.deps.redis.set_cache(

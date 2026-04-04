@@ -89,8 +89,9 @@ async def get_grss_full(redis=Depends(get_redis_client)):
             "macro": {
                 "ndx_status": grss_data.get("Macro_Status"),
                 "vix": grss_data.get("VIX"),
+                "dxy": grss_data.get("DXY"),
+                "dxy_change_24h_pct": grss_data.get("DXY_Change_24h_Pct"),
                 "yields_10y": grss_data.get("Yields_10Y"),
-                "dxy_change_pct": grss_data.get("DXY_Change_Pct"),
                 "m2_yoy_pct": grss_data.get("M2_YoY_Pct"),
             },
             "derivatives": {
@@ -99,6 +100,7 @@ async def get_grss_full(redis=Depends(get_redis_client)):
                 "put_call_ratio": grss_data.get("Put_Call_Ratio"),
                 "dvol": grss_data.get("DVOL"),
                 "oi_delta_pct": grss_data.get("OI_Delta_Pct"),
+                "oi_trend": grss_data.get("OI_Trend"),
                 "perp_basis_pct": grss_data.get("Perp_Basis_Pct"),
                 "long_short_ratio": grss_data.get("Long_Short_Ratio"),
             },
@@ -108,6 +110,15 @@ async def get_grss_full(redis=Depends(get_redis_client)):
                 "stablecoin_delta_bn": grss_data.get("Stablecoin_Delta_Bn"),
                 "retail_score": grss_data.get("Retail_Score"),
                 "retail_fomo_warning": grss_data.get("Retail_FOMO_Warning"),
+            },
+            "onchain": {
+                "glassnode_sopr": grss_data.get("Glassnode_SOPR"),
+                "glassnode_netflow_btc": grss_data.get("Glassnode_NetFlow_BTC"),
+                "etf_flows": grss_data.get("ETF_Flows"),
+            },
+            "microstructure": {
+                "ofi_buy_pressure": grss_data.get("OFI_Buy_Pressure"),
+                "active_patterns": grss_data.get("Active_Patterns", []),
             },
             "data_quality": {
                 "fresh_source_count": grss_data.get("Fresh_Source_Count"),

@@ -27,12 +27,17 @@ async def get_live_telemetry():
         grss_data = await redis_client.get_cache("bruno:context:grss") or {}
         quant_data = await redis_client.get_cache("bruno:quant:micro") or {}
         health_data = await redis_client.get_cache("bruno:health:sources") or {}
-        source_names = [
+        sources = [
             "Binance_REST",
             "Deribit_Public",
             "yFinance_Macro",
             "Binance_OI_Trend",
             "ETF_Flows_Farside",
+            "CryptoCompare_News",
+            "CryptoCompare_Market",
+            "CoinMarketCap_Content",
+            "CoinMarketCap_BTC",
+            "CoinMarketCap_Global",
         ]
         normalized_sources = {
             name: health_data.get(name, {
@@ -40,7 +45,7 @@ async def get_live_telemetry():
                 "latency_ms": 0.0,
                 "last_update": "",
             })
-            for name in source_names
+            for name in sources
         }
         # Existing sources that are already present stay untouched.
         for key, value in health_data.items():
@@ -107,6 +112,8 @@ async def get_live_telemetry():
                 "llm_news_sentiment": grss_data.get("LLM_News_Sentiment"),
                 "news_silence_seconds": grss_data.get("News_Silence_Seconds"),
             },
+            "cryptocompare": grss_data.get("CryptoCompare", {}),
+            "coinmarketcap": grss_data.get("CoinMarketCap", {}),
             "data_sources": normalized_sources,
             "agents": agent_heartbeats,
             "last_decision": last_event,
