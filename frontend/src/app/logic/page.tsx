@@ -108,7 +108,20 @@ export default function LogicPage() {
 
       if (decRes.status === "fulfilled") setDecisions(decRes.value);
       if (pipeRes.status === "fulfilled") setPipeline(pipeRes.value);
-      if (agentRes.status === "fulfilled") setAgents(agentRes.value);
+      if (agentRes.status === "fulfilled") {
+        const agentList = agentRes.value?.agents ?? [];
+        const agentRecord: Record<string, AgentStatus> = {};
+        for (const agent of agentList) {
+          agentRecord[agent.id] = {
+            status: agent.status,
+            age_seconds: agent.uptime_seconds,
+            healthy: agent.health === "healthy",
+            processed: agent.processed_count,
+            errors: agent.error_count,
+          };
+        }
+        setAgents(agentRecord);
+      }
       if (grssRes.status === "fulfilled") setGrssBreakdown(grssRes.value?.grss_breakdown ?? null);
     } catch (e) {
       console.error("Failed to fetch logic data:", e);

@@ -100,8 +100,11 @@ class PositionMonitor:
         """Holt den aktuellen Preis aus Redis."""
         try:
             ticker_data = await self.redis.get_cache(f"market:ticker:{symbol}")
-            if ticker_data and "price" in ticker_data:
-                return float(ticker_data["price"])
+            if ticker_data:
+                if "last_price" in ticker_data:
+                    return float(ticker_data["last_price"])
+                if "price" in ticker_data:
+                    return float(ticker_data["price"])
                 
             # Fallback: Orderbuch Mid-Price
             orderbook = await self.redis.get_cache(f"market:orderbook:{symbol}")
@@ -125,21 +128,51 @@ class PositionMonitor:
             
         side = position["side"]
         stop_loss = position["stop_loss_price"]
-        take_profit = position["take_profit_price"]
+        take_profit_1 = float(position.get("take_profit_1_price", position.get("take_profit_price", 0.0)))
+        take_profit_2 = float(position.get("take_profit_2_price", position.get("take_profit_price", 0.0)))
+        breakeven_trigger = float(position.get("breakeven_trigger_pct", 0.0))
         
         exit_reason = None
-        
+
+        # TP1 / Scale-out vor dem finalen Exit prüfen
+        if not position.get("tp1_hit"):
+            entry_price = float(position.get("entry_price", 0.0))
+            if entry_price > 0:
+                if side == "long":
+                    pnl_pct = (current_price - entry_price) / entry_price
+                    tp1_hit = current_price >= take_profit_1
+                else:
+                    pnl_pct = (entry_price - current_price) / entry_price
+                    tp1_hit = current_price <= take_profit_1
+
+                if tp1_hit and pnl_pct >= breakeven_trigger:
+                    scaled = await self.position_tracker.scale_out_position(
+                        symbol=symbol,
+                        exit_price=current_price,
+                        reason="take_profit_1",
+                        fraction=float(position.get("tp1_size_pct", 0.5)),
+                        move_stop_to_breakeven=True,
+                        exit_trade_id=f"tp1_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                    )
+                    if not scaled:
+                        return
+                    position = scaled
+                    side = position["side"]
+                    stop_loss = position["stop_loss_price"]
+                    take_profit_2 = float(position.get("take_profit_2_price", take_profit_2))
+                    take_profit_1 = float(position.get("take_profit_1_price", take_profit_1))
+
         if side == "long":
             # Long Position
             if current_price <= stop_loss:
                 exit_reason = "stop_loss"
-            elif current_price >= take_profit:
+            elif current_price >= take_profit_2:
                 exit_reason = "take_profit"
         else:
             # Short Position
             if current_price >= stop_loss:
                 exit_reason = "stop_loss"
-            elif current_price <= take_profit:
+            elif current_price <= take_profit_2:
                 exit_reason = "take_profit"
                 
         if exit_reason:

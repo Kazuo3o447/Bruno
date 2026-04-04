@@ -1,20 +1,29 @@
 # KI- & Agenten-Architektur
 
-> **Referenz: WINDSURF_MANIFEST.md v2.0 — Dieses Dokument ist implementierungsorientiert**
+> **Referenz: WINDSURF_MANIFEST.md v2.2 — Dieses Dokument ist implementierungsorientiert**
 >
 > **Manifest hat Vorrang.** Bei Widerspruch zwischen diesem Dokument und dem Manifest gilt das Manifest.
 >
-> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (native Ollama)
+> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
+> ✅ **LLM-Infrastruktur:** Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
 ---
 
-## Aktueller Fokus (Manifest v2.0)
+## Aktueller Fokus (Manifest v2.2)
 
-> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Native Ollama auf RX 7900 XT
+> 🔧 **Wir bauen auf Windows:** Docker Desktop (WSL2) + Deepseek Reasoning API
+> 🚀 **Status:** Phase v2.2 COMPLETED — Deterministic Trading & Ollama Entfernung
 
-### Phase C ✅ COMPLETED (2026-03-30)
+### Phase v2.2 ✅ COMPLETED (2026-04-06)
+- [x] Ollama komplett aus dem Live-System entfernt
+- [x] Deterministic Composite Scoring implementiert
+- [x] Deepseek Reasoning API für Post-Trade Analyse
+- [x] 6-Gate Trade Pipeline ohne LLM-Abhängigkeiten
+- [x] Frontend auf 7 Seiten erweitert
+
+### Phase C ✅ COMPLETED (2026-03-30) — LEGACY
 - [x] LLM Cascade (3 Layer) implementiert & verifiziert
 - [x] **Bruno Pulse**: Echtzeit-Transparency (Sub-States & LLM Pulse)
 - [x] **Background Heartbeat Loop**: Unabhängige Vitalzeichen-Übermittlung (15s)
@@ -45,16 +54,17 @@
 
 ---
 
-## Schnell-Referenz: Die 6 Agenten (Manifest v2.0)
+## Schnell-Referenz: Die 7 Agenten (Manifest v2.2)
 
 | Agent | Typ | Datenquellen | Output |
 |-------|-----|--------------|--------|
 | **Ingestion** | Streaming | Binance WS (5 Streams) | Redis Streams (OHLCV, OFI, Liqs, Funding) |
-| **Context** | Polling | FRED, Deribit, RSS, Makro | Redis `bruno:context:grss` (GRSS Score 0–100) |
-| **Sentiment** | Polling | 8× RSS, CoinMarketCap, LLM | Redis `bruno:sentiment` |
-| **Quant** | Polling | Redis, Orderbook | Redis `bruno:signals` (OFI, CVD) |
+| **Market** | Polling | Redis + Binance REST | Redis `bruno:ta:snapshot`, `bruno:sentiment` |
+| **Quant** | Polling | Redis, Orderbook | Redis `bruno:quant:micro`, `bruno:decisions:feed` |
 | **Risk** | Streaming | Alle Redis Channels | RAM-Veto (GRSS < 40 = Block) |
-| **Execution** | Streaming | Risk + Signals | **Bybit API** (Limit/PostOnly Orders) |
+| **Decision** | Streaming | Quant + Risk | Redis `bruno:decisions:final` |
+| **Execution** | Streaming | Decision + Risk | **Bybit API** (Limit/PostOnly Orders) |
+| **Learning** | Post-Trade | Trade History | Deepseek Analysen, Lern-Logs |
 
 **Börsen-Architektur:**
 - **Binance** = Daten (WebSocket + REST, kostenlos)
@@ -88,35 +98,41 @@
 
 ---
 
-## 1. Lokale LLM-Infrastruktur
+## 1. LLM-Infrastruktur (LEGACY v1 - Entfernt in v2.2)
 
-### Primärmodell: Qwen 2.5 (14B)
+> 📦 **ARCHIV:** Dieser Abschnitt beschreibt die entfernte Ollama-Infrastruktur
+> 
+> Aktuell wird nur **Deepseek Reasoning API** für Post-Trade Analyse verwendet.
+
+### Primärmodell: Qwen 2.5 (14B) — NICHT MEHR VERWENDET
 
 | Attribut | Spezifikation |
 |----------|---------------|
 | **Modell** | `qwen2.5:14b` |
-| **Einsatzzweck** | Schnelles Sentiment-Reasoning |
+| **Status** | 🗑️ Entfernt in v2.2 |
+| **Einsatzzweck** | War: Schnelles Sentiment-Reasoning |
 | **Stärken** | Code-Verständnis, logisches Schließen, geringe Latenz |
 | **Kontext** | 128K Token |
 
-### Analysemodell: DeepSeek-R1 (14B)
+### Analysemodell: DeepSeek-R1 (14B) — NUR NOCH CLOUD
 
 | Attribut | Spezifikation |
 |----------|---------------|
 | **Modell** | `deepseek-r1:14b` |
-| **Einsatzzweck** | Tiefe Chain-of-Thought-Analysen |
+| **Status** | 🔄 Cloud-Version via Deepseek Reasoning API |
+| **Einsatzzweck** | Post-Trade Analyse (LearningAgent) |
 | **Stärken** | Komplexes Reasoning, strategische Planung, Marktanalyse |
 | **Besonderheit** | Denkprozess explizit sichtbar |
 
-### Warum lokal?
-- **Hardware:** Ryzen 7 7800X3D + AMD RX 7900 XT GPU, nativ auf Windows
-- **Latenz:** Unter 500ms für Standard-Inferenz
+### Warum lokal? — NICHT MEHR RELEVANT
+- **Hardware:** Ryzen 7 7800X3D + AMD RX 7900 XT GPU, war nativ auf Windows
+- **Latenz:** War unter 500ms für Standard-Inferenz
 - **Kosten:** Keine API-Gebühren, volle Datenkontrolle
-- **Zugang aus Docker:** `http://host.docker.internal:11434`
+- **Zugang aus Docker:** War `http://host.docker.internal:11434`
 
-### LLM Client (bestehend)
+### LLM Client (LEGACY)
 
-Der `OllamaClient` in `backend/app/core/llm_client.py` bleibt unverändert:
+Der `OllamaClient` in `backend/app/core/llm_client.py` ist **nicht mehr in Verwendung**:
 
 | Methode | Zweck |
 |---------|-------|

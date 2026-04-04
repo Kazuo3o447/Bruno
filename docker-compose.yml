@@ -126,7 +126,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /app/node_modules
+      - node_modules:/app/node_modules
       # Kein Mapping von ./frontend:/app, da sonst Build-Ordner überschrieben wird
     logging:
       driver: "json-file"
@@ -137,3 +137,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  node_modules:

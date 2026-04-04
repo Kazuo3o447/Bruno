@@ -84,6 +84,38 @@ class SystemtestScheduler:
         if config_data:
             return SchedulerConfig.parse_raw(config_data)
         return SchedulerConfig()
+
+    async def _scan_price_extremes(self, symbol: str, start_time: datetime, end_time: datetime) -> Dict[str, float]:
+        """Scant Candle-Historie für Hoch/Tief zwischen Entry und Evaluation."""
+        try:
+            from app.core.database import AsyncSessionLocal
+            from sqlalchemy import text
+
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    text("""
+                        SELECT MAX(high) AS high_price, MIN(low) AS low_price
+                        FROM market_candles
+                        WHERE symbol = :symbol
+                          AND time >= :start_time
+                          AND time <= :end_time
+                    """),
+                    {
+                        "symbol": symbol,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                    },
+                )
+                row = result.fetchone()
+                if row and (row[0] is not None or row[1] is not None):
+                    return {
+                        "high": float(row[0] if row[0] is not None else 0.0),
+                        "low": float(row[1] if row[1] is not None else 0.0),
+                    }
+        except Exception as e:
+            logger.debug(f"Phantom MAE/MFE Scan Fallback für {symbol}: {e}")
+
+        return {"high": 0.0, "low": 0.0}
     
     async def start(self) -> Dict[str, Any]:
         """
@@ -263,19 +295,37 @@ class SystemtestScheduler:
                         continue
 
                     ticker = await redis_client.get_cache("market:ticker:BTCUSDT") or {}
-                    current_price = float(ticker.get("last_price", 0))
+                    current_price = float(ticker.get("last_price", ticker.get("price", 0)))
                     entry_price = float(phantom.get("entry_price", 0))
 
                     if current_price <= 0 or entry_price <= 0:
                         should_keep = True
                         continue
 
-                    phantom_long_pct = (current_price - entry_price) / entry_price
-                    phantom_short_pct = (entry_price - current_price) / entry_price
+                    entry_time = datetime.fromisoformat(phantom.get("ts"))
+                    scan_end = min(now, evaluate_at)
+                    extremes = await self._scan_price_extremes("BTCUSDT", entry_time, scan_end)
+                    high_price = extremes.get("high", 0.0) or current_price
+                    low_price = extremes.get("low", 0.0) or current_price
+
+                    if phantom.get("direction") == "short":
+                        phantom_long_pct = (entry_price - current_price) / entry_price
+                        phantom_short_pct = (current_price - entry_price) / entry_price
+                        mae_pct = (entry_price - high_price) / entry_price
+                        mfe_pct = (entry_price - low_price) / entry_price
+                    else:
+                        phantom_long_pct = (current_price - entry_price) / entry_price
+                        phantom_short_pct = (entry_price - current_price) / entry_price
+                        mae_pct = (low_price - entry_price) / entry_price
+                        mfe_pct = (high_price - entry_price) / entry_price
 
                     phantom["exit_price"] = current_price
                     phantom["phantom_long_pct"] = round(phantom_long_pct, 4)
                     phantom["phantom_short_pct"] = round(phantom_short_pct, 4)
+                    phantom["mae_pct"] = round(mae_pct, 4)
+                    phantom["mfe_pct"] = round(mfe_pct, 4)
+                    phantom["high_price_during_hold"] = round(high_price, 4)
+                    phantom["low_price_during_hold"] = round(low_price, 4)
                     phantom["status"] = "evaluated"
                     phantom["evaluated_at"] = now.isoformat()
 

@@ -50,6 +50,8 @@ class IngestionAgentV2(StreamingAgent):
         asyncio.create_task(self._poll_fg_index())
         asyncio.create_task(self._cleanup_old_data())
         asyncio.create_task(self._daily_summary_sender())
+        # WebSocket Stream für Live-Daten
+        asyncio.create_task(self.run_stream())
 
     async def _poll_fg_index(self):
         """Pollen des Fear & Greed Index 1x am Tag"""
@@ -208,6 +210,10 @@ class IngestionAgentV2(StreamingAgent):
             redis_liq = dict(liq_data)
             redis_liq["time"] = redis_liq["time"].isoformat()
             await self.deps.redis.publish_stream(f"market:liquidations:{o['s']}", redis_liq)
+            await self.deps.redis.publish_message(
+                f"market:liquidations:{o['s']}:events",
+                json.dumps(redis_liq)
+            )
             self.logger.info(f"LIQUIDATION: {o['S']} {liq_data['total_usdt']:.2f} USDT")
             
         elif "@markPrice" in stream:

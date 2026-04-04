@@ -1,14 +1,14 @@
-# Bruno v2 Trading Logic
+# Bruno v2.2 Trading Logic
 
 ## 1. Purpose
 
-Bruno v2 replaces the LLM-based decision chain with a deterministic, regime-adaptive trading stack. The system is designed for medium-frequency Bitcoin trading and uses three primary decision layers:
+Bruno v2.2 replaces the LLM-based decision chain with a deterministic, regime-adaptive trading stack. The system is designed for medium-frequency Bitcoin trading and uses three primary decision layers:
 
 1. **Technical Analysis** for trend, structure, and timing.
 2. **Liquidity Intelligence** for sweep opportunities and cluster magnetism.
 3. **Composite Scoring** for the final trade decision.
 
-The LLM is **legacy-only** and is used exclusively for post-trade debriefing and learning analysis with **Deepseek Reasoning API**, not for live trade decisions.
+The LLM is **legacy-only** and has been removed from live trading. Only the **Deepseek Reasoning API** is used exclusively for post-trade debriefing and learning analysis by the LearningAgent, not for live trade decisions.
 
 ## 2. Data Flow Overview
 
@@ -363,6 +363,22 @@ Sweep direction:
 - `SELL` liquidations correspond to **longs liquidated**
 - `BUY` liquidations correspond to **shorts liquidated**
 
+### 4.6 Event-Driven Liquidation Trigger
+
+Liquidation spikes are now published by the IngestionAgent via Redis Pub/Sub and can trigger an immediate rescoring path in `QuantAgentV4` without waiting for the 60s polling cycle.
+
+Event channel:
+
+```text
+market:liquidations:{symbol}:events
+```
+
+Trigger rules:
+
+- force-order payload must exceed the configured liquidation spike threshold
+- the liquidation event is forwarded into `LiquidityEngine.analyze(...)`
+- the resulting sweep confirmation can bypass the normal cooldown for immediate evaluation
+
 Post-sweep entry:
 
 - `long` sweep + bullish wick + OI drop → `post_sweep_entry = long`
@@ -508,24 +524,35 @@ Final sizing is clamped to `<= 2.0%`.
 Default values:
 
 - `stop_loss_pct = 0.010`
-- `take_profit_pct = 0.020`
+- `take_profit_1_pct = 0.012`
+- `take_profit_2_pct = 0.020`
+- `tp1_size_pct = 0.50`
+- `tp2_size_pct = 0.50`
+
+Breakeven trigger:
+
+- `breakeven_trigger_pct = 0.005`
 
 ATR-based clamping:
 
 - if `abs_score > 80`:
   - `sl_mult = 1.5`
-  - `tp_mult = 3.0`
+  - `tp1_mult = 1.5`
+  - `tp2_mult = 3.0`
 - if `abs_score > 60`:
   - `sl_mult = 1.2`
-  - `tp_mult = 2.5`
+  - `tp1_mult = 1.2`
+  - `tp2_mult = 2.5`
 - otherwise:
   - `sl_mult = 0.8`
-  - `tp_mult = 1.5`
+  - `tp1_mult = 1.0`
+  - `tp2_mult = 1.5`
 
 Clamp boundaries:
 
 - `SL` in `[0.5%, 2.5%]`
-- `TP` in `[1.0%, 5.0%]`
+- `TP1` in `[0.8%, 2.5%]`
+- `TP2` in `[1.0%, 5.0%]`
 
 ## 6. Risk Management
 
@@ -566,12 +593,12 @@ then the RiskAgent vetoes the trade.
 
 ### 6.4 Breakeven Stop
 
-If a trade is more than `0.5%` in profit, the stop-loss is moved to:
+If a trade is more than `0.5%` in profit, the first take-profit is hit and the stop-loss is moved to:
 
 - long: `entry_price * 1.001`
 - short: `entry_price * 0.999`
 
-This locks in a small positive expected value and prevents turning winners into losers.
+This locks in a small positive expected value and prevents turning winners into losers. After TP1, the remaining size continues toward TP2 or the adjusted stop.
 
 ### 6.5 Trade Cooldown
 
@@ -588,9 +615,22 @@ No new signal is published before this cooldown has expired.
 ExecutionAgentV3 performs:
 
 - SL / TP monitoring
+- TP1 scale-out
 - breakeven adjustment
+- TP2 final exit
 - position closing
 - portfolio updates in DRY_RUN
+
+PositionTracker stores the live state for:
+
+- `initial_quantity`
+- `take_profit_1_price`
+- `take_profit_2_price`
+- `tp1_size_pct`
+- `tp2_size_pct`
+- `breakeven_trigger_pct`
+- `realized_pnl_eur` / `realized_pnl_pct`
+- `tp1_hit` / `breakeven_active`
 
 Portfolio state keys include:
 
@@ -629,12 +669,18 @@ Portfolio state keys include:
 - `bruno:veto:state`
 - `bruno:risk:daily_block`
 - `bruno:portfolio:state`
+- `market:liquidations:{symbol}:events`
 
 ### Legacy / Post-Trade Learning
 
 - `trade_debriefs` table
 - `bruno:learning:metrics`
 - `bruno:learning:layer_*`
+
+### Phantom Trade Learning
+
+- `bruno:phantom_trades:pending`
+- `market_candles` scan for MAE/MFE evaluation
 
 ## 9. Configuration Keys
 
@@ -649,7 +695,11 @@ Portfolio state keys include:
   "TRADE_COOLDOWN_SECONDS": 300,
   "DAILY_MAX_LOSS_PCT": 3.0,
   "MAX_CONSECUTIVE_LOSSES": 3,
-  "BREAKEVEN_TRIGGER_PCT": 0.005
+  "BREAKEVEN_TRIGGER_PCT": 0.005,
+  "TAKE_PROFIT_1_PCT": 0.012,
+  "TAKE_PROFIT_2_PCT": 0.020,
+  "TP1_SIZE_PCT": 0.50,
+  "TP2_SIZE_PCT": 0.50
 }
 ```
 
@@ -665,6 +715,7 @@ The LLM is no longer part of live trade execution but is used exclusively for po
 - Debrief-based learning loop
 - Performance improvement recommendations
 - Structured JSON responses for data analysis
+- Phantom-trade evaluation with MAE/MFE context
 
 **API Configuration:**
 - Provider: Deepseek Reasoning API

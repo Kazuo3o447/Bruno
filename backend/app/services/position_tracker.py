@@ -74,6 +74,11 @@ class PositionTracker:
         stop_loss_price: float,
         take_profit_price: float,
         entry_trade_id: str,
+        take_profit_1_price: float = 0.0,
+        take_profit_2_price: float = 0.0,
+        tp1_size_pct: float = 0.50,
+        tp2_size_pct: float = 0.50,
+        breakeven_trigger_pct: float = 0.0,
         # Phase-C Felder — optional, werden nach LLM-Cascade befüllt
         grss_at_entry: float = 0.0,
         layer1_output: Optional[dict] = None,
@@ -102,9 +107,15 @@ class PositionTracker:
             "entry_price": entry_price,
             "entry_time": now,
             "entry_trade_id": entry_trade_id,
+            "initial_quantity": quantity,
             "quantity": quantity,
             "stop_loss_price": stop_loss_price,
-            "take_profit_price": take_profit_price,
+            "take_profit_price": take_profit_2_price or take_profit_price,
+            "take_profit_1_price": take_profit_1_price or take_profit_price,
+            "take_profit_2_price": take_profit_2_price or take_profit_price,
+            "tp1_size_pct": tp1_size_pct,
+            "tp2_size_pct": tp2_size_pct,
+            "breakeven_trigger_pct": breakeven_trigger_pct,
             # LLM Context (Phase C)
             "grss_at_entry": grss_at_entry,
             "layer1_output": layer1_output or {},
@@ -115,6 +126,10 @@ class PositionTracker:
             "mae_pct": 0.0,   # Max Adverse Excursion (negativ = schlecht)
             "mfe_pct": 0.0,   # Max Favorable Excursion (positiv = gut)
             "current_pnl_pct": 0.0,
+            "realized_pnl_pct": 0.0,
+            "realized_pnl_eur": 0.0,
+            "tp1_hit": False,
+            "breakeven_active": False,
             # Status
             "status": "open",
             "created_at": now,
@@ -124,7 +139,7 @@ class PositionTracker:
 
         logger.info(
             f"Position ERÖFFNET: {side.upper()} {quantity:.4f} {symbol} "
-            f"@ {entry_price:,.0f} | SL={stop_loss_price:,.0f} | TP={take_profit_price:,.0f} "
+            f"@ {entry_price:,.0f} | SL={stop_loss_price:,.0f} | TP1={position['take_profit_1_price']:,.0f} | TP2={position['take_profit_2_price']:,.0f} "
             f"| GRSS={grss_at_entry:.1f} | ID={position_id[:8]}"
         )
 
@@ -132,6 +147,115 @@ class PositionTracker:
         await self._persist_open_to_db(position)
 
         return position_id
+
+    async def update_position(self, symbol: str, updates: dict) -> Optional[dict]:
+        """Aktualisiert die offene Position in Redis und spiegelt Kernfelder in der DB wider."""
+        pos = await self.get_open_position(symbol)
+        if not pos:
+            return None
+
+        pos.update(updates)
+        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
+
+        try:
+            from sqlalchemy import text
+            async with self.db_session_factory() as session:
+                await session.execute(
+                    text("""
+                        UPDATE positions SET
+                            quantity = :quantity,
+                            stop_loss_price = :stop_loss_price,
+                            take_profit_price = :take_profit_price
+                        WHERE id = :id
+                    """),
+                    {
+                        "id": pos["id"],
+                        "quantity": pos.get("quantity", 0.0),
+                        "stop_loss_price": pos.get("stop_loss_price", 0.0),
+                        "take_profit_price": pos.get("take_profit_2_price", pos.get("take_profit_price", 0.0)),
+                    }
+                )
+                await session.commit()
+        except Exception as e:
+            logger.error(f"PositionTracker DB-Update Fehler: {e}")
+
+        return pos
+
+    async def scale_out_position(
+        self,
+        symbol: str,
+        exit_price: float,
+        reason: str,
+        fraction: float = 0.50,
+        move_stop_to_breakeven: bool = True,
+        exit_trade_id: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Schließt einen Teil der Position und zieht optional den Stop auf Breakeven."""
+        pos = await self.get_open_position(symbol)
+        if not pos:
+            return None
+
+        if pos.get("tp1_hit"):
+            return pos
+
+        side = pos["side"]
+        entry_price = float(pos["entry_price"])
+        initial_quantity = float(pos.get("initial_quantity", pos.get("quantity", 0.0)))
+        remaining_quantity = float(pos.get("quantity", initial_quantity))
+        qty_to_close = min(remaining_quantity, max(0.0, initial_quantity * fraction))
+        if qty_to_close <= 0:
+            return pos
+
+        if side == "long":
+            pnl_pct = (exit_price - entry_price) / entry_price
+        else:
+            pnl_pct = (entry_price - exit_price) / entry_price
+
+        fee_estimate = (qty_to_close * exit_price) * 0.0004
+        realized_pnl_eur = pnl_pct * entry_price * qty_to_close - fee_estimate
+
+        pos["quantity"] = round(max(0.0, remaining_quantity - qty_to_close), 8)
+        pos["realized_pnl_eur"] = round(float(pos.get("realized_pnl_eur", 0.0)) + realized_pnl_eur, 4)
+        pos["realized_pnl_pct"] = round(float(pos.get("realized_pnl_pct", 0.0)) + (pnl_pct * (qty_to_close / initial_quantity if initial_quantity > 0 else 0.0)), 6)
+        pos["tp1_hit"] = True
+        pos["tp1_exit_price"] = exit_price
+        pos["tp1_exit_trade_id"] = exit_trade_id or ""
+        pos["breakeven_active"] = bool(move_stop_to_breakeven)
+        pos["tp1_hit_reason"] = reason
+
+        if move_stop_to_breakeven:
+            pos["stop_loss_price"] = entry_price
+
+        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
+
+        try:
+            from sqlalchemy import text
+            async with self.db_session_factory() as session:
+                await session.execute(
+                    text("""
+                        UPDATE positions SET
+                            quantity = :quantity,
+                            stop_loss_price = :stop_loss_price,
+                            take_profit_price = :take_profit_price
+                        WHERE id = :id
+                    """),
+                    {
+                        "id": pos["id"],
+                        "quantity": pos["quantity"],
+                        "stop_loss_price": pos["stop_loss_price"],
+                        "take_profit_price": pos.get("take_profit_2_price", pos.get("take_profit_price", 0.0)),
+                    }
+                )
+                await session.commit()
+        except Exception as e:
+            logger.error(f"PositionTracker DB-ScaleOut Fehler: {e}")
+
+        logger.info(
+            f"Position SCALE-OUT: {symbol} | reason={reason} | exit={exit_price:,.0f} | "
+            f"qty_closed={qty_to_close:.4f} | remaining={pos['quantity']:.4f} | breakeven={move_stop_to_breakeven}"
+        )
+
+        return pos
 
     async def close_position(
         self,
@@ -156,7 +280,8 @@ class PositionTracker:
 
         side = pos["side"]
         entry_price = pos["entry_price"]
-        quantity = pos["quantity"]
+        quantity = float(pos.get("quantity", pos.get("initial_quantity", 0.0)))
+        realized_pnl_eur = float(pos.get("realized_pnl_eur", 0.0))
 
         # P&L Berechnung
         if side == "long":
@@ -166,6 +291,9 @@ class PositionTracker:
 
         pnl_eur = pnl_pct * entry_price * quantity
         fee_estimate = (quantity * exit_price) * 0.0004   # 0.04% Taker
+        total_pnl_eur = realized_pnl_eur + pnl_eur - fee_estimate
+        total_quantity = float(pos.get("initial_quantity", quantity))
+        total_pnl_pct = (total_pnl_eur / (entry_price * total_quantity)) if entry_price > 0 and total_quantity > 0 else pnl_pct
 
         # Position finalisieren
         pos.update({
@@ -174,8 +302,8 @@ class PositionTracker:
             "exit_time": now.isoformat(),
             "exit_reason": reason,
             "exit_trade_id": exit_trade_id or "",
-            "pnl_pct": round(pnl_pct, 6),
-            "pnl_eur": round(pnl_eur - fee_estimate, 4),
+            "pnl_pct": round(total_pnl_pct, 6),
+            "pnl_eur": round(total_pnl_eur, 4),
             "hold_duration_minutes": hold_minutes,
         })
 
@@ -186,11 +314,11 @@ class PositionTracker:
         # Wir lassen den Key 60s stehen damit das Dashboard ihn noch lesen kann
         await self.redis.redis.expire(REDIS_KEY.format(symbol=symbol), 60)
 
-        log_emoji = "✅" if pnl_pct > 0 else "❌"
+        log_emoji = "✅" if total_pnl_pct > 0 else "❌"
         logger.info(
             f"Position GESCHLOSSEN {log_emoji}: {reason.upper()} | {side.upper()} "
             f"{symbol} @ {exit_price:,.0f} | "
-            f"P&L={pnl_pct:+.2%} ({pnl_eur:.2f} EUR) | "
+            f"P&L={total_pnl_pct:+.2%} ({total_pnl_eur:.2f} EUR) | "
             f"Haltezeit={hold_minutes}min | MAE={pos['mae_pct']:.2%} | MFE={pos['mfe_pct']:.2%}"
         )
 

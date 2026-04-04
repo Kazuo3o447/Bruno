@@ -1,5 +1,5 @@
 # WINDSURF_MANIFEST.md
-# Bruno Trading Platform — Master Agent Briefing v2.0
+# Bruno Trading Platform — Master Agent Briefing v2.2
 
 > **PFLICHTLEKTÜRE. Jeder Agent. Jede Session. Jeder Neustart.**
 > Dieses Dokument ist die einzige Quelle der Wahrheit.
@@ -838,6 +838,18 @@ Ziel erreicht: Mehr Paper-Trades/Tag + deutlich mehr Trainingsdaten, ohne Produk
 
 ---
 
+### ✅ PHASE v2.2 - Trade-Cascade Runtime Upgrade (2026-04-04)
+- **Event-Driven Liquidation Trigger**: Force-Order-Spikes triggern sofortiges Quant-Rescoring via Redis Pub/Sub
+- **Sweep Detection erweitert**: Liquidation-Events fließen direkt in die LiquidityEngine ein
+- **TP1/TP2 Scaling-Out**: ExecutionAgentV3 und PositionTracker unterstützen Teilverkauf + Final Exit
+- **Breakeven-Logik**: Nach TP1 wird der Stop auf Entry/Breakeven gezogen
+- **MAE/MFE Tracking**: Positions- und Phantom-Trade-Auswertung berücksichtigen Extremwerte während der Haltedauer
+- **Deepseek Debrief**: Post-Trade Analyse bleibt Deepseek-only, inklusive Phantom-/Hold-Auswertung
+- **Position Monitor**: Hintergrundüberwachung für SL/TP2 und offene Positionen ist Teil des Runtime-Flows
+- **Dokumentation aktualisiert**: Phase D, trading_logic_v2.md, arch.md, README.md
+
+---
+
 ## 8. ARCHITEKTUR-ENTSCHEIDUNGEN (FINAL — NICHT DISKUTIEREN)
 
 Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
@@ -854,6 +866,9 @@ Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
 | DRY_RUN Hardware-Block | Kapitalschutz ist absolut |
 | TimescaleDB für Zeitreihendaten | Native Hypertable-Performance für OHLCV-Queries |
 | Redis als Kommunikationsbus | Sub-Millisekunde Pub/Sub zwischen Agenten |
+| Event-Driven Liquidation Rescoring | Force-Order-Spikes dürfen den normalen 60s-Zyklus überspringen |
+| TP1/TP2 Scaling-Out + Breakeven | Realistischere Exit-Logik, kein Single-Target-only Verhalten |
+| MAE/MFE für Live + Phantom | Trade-Qualität wird über Extremwerte und nicht nur Endpreis beurteilt |
 | Reasoning Trail für jeden Trade | Transparenz ist Voraussetzung für Vertrauen und Lernen |
 | Learning Mode nur in DRY_RUN | Produktions-Schwellen werden niemals durch Lernmodus kontaminiert. Trennung über trade_mode Flag in DB. |
 | Phantom Trades für HOLDs | 288 auswertbare Zyklen/Tag statt 2. Kein Kapital-Einfluss. Outcome nach 240min aus Echtpreisen berechnet. |

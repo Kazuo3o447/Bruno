@@ -474,9 +474,9 @@ docker compose up -d     # Alle Container neu starten
 ```
 
 ### Validierung
-```bash
-curl http://localhost:8000/api/v1/agents/status
-# {"total_agents": 6, "running_agents": 6, "error_agents": 0}
+```powershell
+Invoke-RestMethod -Uri 'http://localhost:8000/api/v1/agents/status'
+# @{total_agents=6; running_agents=6; error_agents=0}
 ```
 
 ---

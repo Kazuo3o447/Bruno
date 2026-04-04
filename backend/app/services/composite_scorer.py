@@ -25,6 +25,11 @@ class CompositeSignal:
     position_size_pct: float = 0.0
     stop_loss_pct: float = 0.010
     take_profit_pct: float = 0.020
+    take_profit_1_pct: float = 0.012
+    take_profit_2_pct: float = 0.025
+    tp1_size_pct: float = 0.50
+    tp2_size_pct: float = 0.50
+    breakeven_trigger_pct: float = 0.012
     signals_active: list = field(default_factory=list)
     regime: str = "unknown"
     weight_preset: str = "trending"   # NEU: welches Preset aktiv ist
@@ -43,6 +48,11 @@ class CompositeSignal:
             "conviction": self.conviction,
             "stop_loss_pct": self.stop_loss_pct,
             "take_profit_pct": self.take_profit_pct,
+            "take_profit_1_pct": self.take_profit_1_pct,
+            "take_profit_2_pct": self.take_profit_2_pct,
+            "tp1_size_pct": self.tp1_size_pct,
+            "tp2_size_pct": self.tp2_size_pct,
+            "breakeven_trigger_pct": self.breakeven_trigger_pct,
             "regime": self.regime,
             "signals": self.signals_active,
             "cascade_confidence": self.conviction,
@@ -72,6 +82,11 @@ class CompositeSignal:
             "flow_score": self.flow_score,
             "macro_score": self.macro_score,
             "weight_preset": self.weight_preset,
+            "take_profit_1_pct": self.take_profit_1_pct,
+            "take_profit_2_pct": self.take_profit_2_pct,
+            "tp1_size_pct": self.tp1_size_pct,
+            "tp2_size_pct": self.tp2_size_pct,
+            "breakeven_trigger_pct": self.breakeven_trigger_pct,
         }
 
 
@@ -113,9 +128,10 @@ class CompositeScorer:
         # 3. Regime bestimmen → Gewichte wählen (NEU: dynamisch)
         regime = self._determine_regime(ta_data, macro_data)
         result.regime = regime
-        
-        weights = self._get_weights(regime)
-        result.weight_preset = "trending" if regime in ("trending_bull", "bear") else "ranging"
+
+        trend_strength = float(ta_data.get("trend", {}).get("strength", 0.0))
+        weights = self._get_weights(regime, trend_strength)
+        result.weight_preset = self._blend_label(self._regime_blend(regime, trend_strength), regime)
         
         # 4. Gewichteter Composite Score
         # TA: -100..+100, Liq/Flow/Macro: -50..+50 (×2 normalisiert auf 100)
@@ -153,14 +169,22 @@ class CompositeScorer:
         atr = ta_data.get("atr_14", 0.0)
         session = ta_data.get("session", {})
         result.position_size_pct = self._calc_position_size(abs_score, atr, result.price, session)
-        result.stop_loss_pct, result.take_profit_pct = self._calc_sl_tp(atr, result.price, abs_score)
+        (
+            result.stop_loss_pct,
+            result.take_profit_1_pct,
+            result.take_profit_2_pct,
+            result.tp1_size_pct,
+            result.tp2_size_pct,
+            result.breakeven_trigger_pct,
+        ) = self._calc_sl_tp(atr, result.price, abs_score)
+        result.take_profit_pct = result.take_profit_2_pct
         
         # 9. Signale sammeln
         result.signals_active += self._collect_signals(ta_data, liq_data, flow_data, macro_data)
         
         return result
 
-    def _get_weights(self, regime: str) -> dict:
+    def _get_weights(self, regime: str, trend_strength: float = 0.0) -> dict:
         """
         Wählt Gewichtungs-Preset basierend auf Regime.
         Trending = TA dominiert, Ranging = Liq dominiert.
@@ -187,11 +211,35 @@ class CompositeScorer:
                 }
         except Exception:
             pass
-        
-        # Default: Regime-basierte Presets
+
+        # Default: weiche Interpolation zwischen Trending und Ranging
+        blend = self._regime_blend(regime, trend_strength)
+        return self._blend_weights(WEIGHT_PRESETS["ranging"], WEIGHT_PRESETS["trending"], blend)
+
+    def _regime_blend(self, regime: str, trend_strength: float) -> float:
+        """0.0 = ranging, 1.0 = trending; harte Regime werden weich überblendet."""
         if regime in ("trending_bull", "bear"):
-            return WEIGHT_PRESETS["trending"]
-        return WEIGHT_PRESETS["ranging"]
+            return 1.0
+        if regime == "high_vola":
+            return 0.25
+        return max(0.0, min(1.0, float(trend_strength)))
+
+    def _blend_label(self, blend: float, regime: str) -> str:
+        if blend >= 0.75:
+            return "trending"
+        if blend <= 0.25:
+            return "ranging"
+        return f"blended_{regime}_{blend:.2f}"
+
+    def _blend_weights(self, ranging: dict, trending: dict, blend: float) -> dict:
+        """Lineare Interpolation zwischen zwei Gewichtungs-Sets."""
+        blend = max(0.0, min(1.0, blend))
+        return {
+            "ta": round(ranging["ta"] + (trending["ta"] - ranging["ta"]) * blend, 4),
+            "liq": round(ranging["liq"] + (trending["liq"] - ranging["liq"]) * blend, 4),
+            "flow": round(ranging["flow"] + (trending["flow"] - ranging["flow"]) * blend, 4),
+            "macro": round(ranging["macro"] + (trending["macro"] - ranging["macro"]) * blend, 4),
+        }
 
     def _calc_position_size(self, abs_score, atr, price, session) -> float:
         """
@@ -234,20 +282,22 @@ class CompositeScorer:
         if cvd > 100: score += 10
         elif cvd < -100: score -= 10
         
-        # Funding Rate (±15) — aus Makro-Daten
-        funding = float(macro_data.get("Funding_Rate", 0.01))
-        if -0.01 <= funding <= 0.02:
-            score += 5   # Neutral = gesund
-        elif funding > 0.05:
-            score -= 15  # Überhitzt = bearisch
-        elif funding < -0.01:
-            score += 10  # Negative Funding = Shorts bezahlen = bullisch
-        
+        # Funding Rate: nicht als harter Additiv-Block, sondern als Multiplikator
+        funding = float(macro_data.get("Funding_Rate", 0.0))
+        funding_bps = funding * 10000.0
+        funding_multiplier = 1.0
+        if funding_bps > 20:
+            funding_multiplier -= min(0.30, (funding_bps - 20) / 200.0)
+        elif funding_bps < -5:
+            funding_multiplier += min(0.20, abs(funding_bps + 5) / 200.0)
+        funding_multiplier = max(0.75, min(1.20, funding_multiplier))
+
         # OFI Imbalance (±5)
         imbalance = float(flow_data.get("OFI_Mean_Imbalance", 1.0))
         if imbalance > 1.15: score += 5
         elif imbalance < 0.85: score -= 5
-        
+
+        score = score * funding_multiplier
         return round(max(-50, min(50, score)), 1)
 
     def _determine_regime(self, ta_data, macro_data) -> str:
@@ -298,31 +348,44 @@ class CompositeScorer:
 
     def _calc_sl_tp(self, atr: float, price: float, abs_score: float) -> tuple:
         """
-        ATR-basierte SL/TP Berechnung mit Hard-Clamps.
+        ATR-basierte SL/TP Berechnung mit Scaling-Out.
         
-        SL: 0.8-1.5× ATR (je nach Score)
-        TP: 1.5-3× SL (je nach Score)
+        Ergebnis:
+        - SL Prozent
+        - TP1 Prozent (konservatives Teilziel)
+        - TP2 Prozent (Hauptziel)
+        - TP1 Positionsanteil
+        - TP2 Positionsanteil
+        - Breakeven Trigger Prozent
         """
         if atr <= 0 or price <= 0:
-            return 0.010, 0.020  # Default
+            return 0.010, 0.012, 0.025, 0.50, 0.50, 0.012  # Default
         
         atr_pct = atr / price
         
         # SL Multiplikator basierend auf Score
         if abs_score > 80:
             sl_mult = 1.5
-            tp_mult = 3.0
+            tp1_mult = 1.2
+            tp2_mult = 2.5
         elif abs_score > 60:
             sl_mult = 1.2
-            tp_mult = 2.5
+            tp1_mult = 1.1
+            tp2_mult = 2.2
         else:
             sl_mult = 0.8
-            tp_mult = 1.5
+            tp1_mult = 1.0
+            tp2_mult = 1.8
         
         sl_pct = round(max(0.005, min(0.025, atr_pct * sl_mult)), 3)
-        tp_pct = round(max(0.010, min(0.050, sl_pct * tp_mult)), 3)
+        tp1_pct = round(max(0.008, min(0.030, atr_pct * tp1_mult)), 3)
+        tp2_pct = round(max(tp1_pct + 0.004, min(0.060, atr_pct * tp2_mult)), 3)
         
-        return sl_pct, tp_pct
+        tp1_size_pct = 0.50
+        tp2_size_pct = 0.50
+        breakeven_trigger_pct = tp1_pct
+
+        return sl_pct, tp1_pct, tp2_pct, tp1_size_pct, tp2_size_pct, breakeven_trigger_pct
 
     def _collect_signals(self, ta_data: dict, liq_data: dict, flow_data: dict, macro_data: dict) -> list:
         """Sammelt aktive Signale für Logging."""

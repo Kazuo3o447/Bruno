@@ -2,7 +2,7 @@
 
 > **Referenz: WINDSURF_MANIFEST.md v2.0**
 > 
-> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (native Ollama)
+> ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -25,7 +25,7 @@
 | **PostgreSQL** | TimescaleDB + pgvector | Zeitserien-Daten, Positionen, Trades |
 | **Redis** | Redis Stack | Caching, Pub/Sub, State-Management |
 | **FastAPI** | Python ASGI | Backend API, Agenten-Orchestration |
-| **Frontend** | Next.js + React | Trading Cockpit mit 4 Dashboard-Sections + Logic Page |
+| **Frontend** | Next.js + React | Trading Cockpit mit 7 Seiten (Dashboard, Trading, Logic, Monitor, Logs, Reports, Settings/Journey) |
 
 ### Frontend Pages (v2.2 - Neuaufbau)
 
@@ -33,11 +33,12 @@
 |-------|-------|----------|
 | `/` (Dashboard) | **Übersicht & Status** | 6 Status-Cards, Entscheidungs-Timeline, Pipeline Gates, Agenten-Status, Performance-Widget, Marktdaten |
 | `/trading` | **Trading Detailansicht** | 6-Gate Kaskade-Visualisierung, Quant Micro Daten, GRSS Breakdown, OFI/Metriken |
+| `/logic` | **Pipeline-Visualisierung** | 6-Gate Pipeline, Decision Timeline, Blocker-Analyse |
 | `/monitor` | **System-Überwachung** | API-Health Tests, Agent Heartbeats, Scheduler Steuerung, Datenquellen-Status |
-| `/logviewer` | **System-Logging** | Live WebSocket Logs, Filter (Level/Kategorie/Quelle), Export, Auto-Scroll |
-| `/reports` | **Analysen & Export** | Geschlossene Trades, LLM-Analysen, Lern-Logs (24h), Performance-Perioden |
-| `/settings` | **Konfiguration** | 4 Presets (Konservativ/Balanced/Opportunistisch/Test), Parameter-Editor, Deepseek-Test |
-| `/journey` | **Dokumentation** | 7 Abschnitte: Übersicht, Agenten, Kaskade, APIs, Features, Sicherheit, Tech Stack |
+| `/logs` / `/logviewer` | **System-Logging** | Live WebSocket Logs, Filter (Level/Kategorie/Quelle), Export, Auto-Scroll |
+| `/reports` | **Analysen & Export** | Geschlossene Trades, Deepseek-Analysen, Lern-Logs (24h), Performance-Perioden |
+| `/settings` / `/einstellungen` | **Konfiguration** | 4 Presets (Konservativ/Balanced/Opportunistisch/Test), Parameter-Editor, Deepseek-Test |
+| `/journey` | **Dokumentation** | 7 Abschnitte: Übersicht, Agenten, Pipeline, APIs, Features, Sicherheit, Tech Stack |
 
 ### Dashboard Abschnitte (v2.1)
 
@@ -181,26 +182,25 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 
 ---
 
-## Die 7-Agenten-Kaskade (v2)
+### 7-Agenten Kaskade (v2.2 - Deterministisch)
 
-| Agent | Version | Input | Output | Zweck |
-|-------|---------|-------|--------|-------|
-| **Ingestion** | V2 | Binance WebSocket (5 Streams) + REST API | Redis Streams + Market Data | OHLCV, OFI, Liquidations, Funding, Ticker, Orderbook |
-| **Technical** | V2 | `market_candles` + Binance depth | `bruno:ta:snapshot` | EMA, RSI, VWAP, ATR, MTF, Wick, S/R |
-| **Context** | V1 | Makro-Daten (FRED, Deribit, RSS) | Redis `bruno:context:grss` | **GRSS Score** (0–100) |
-| **Sentiment** | V1 | RSS Feeds + CryptoCompare + CoinMarketCap | Redis `bruno:sentiment` | News- und Ereignis-Sentiment |
-| **Quant** | **V4** | Redis + Orderbook + TA/Liquidity Services | Redis `bruno:quant:micro`, `bruno:liq:intelligence`, `bruno:decisions:feed` | **Composite Scoring**, MTF, Liquidity Intelligence |
-| **Risk** | V2 | Alle Signals (RAM-Check) | Redis `bruno:veto:state` | **Daily Limits**, Cooldowns, **0ms Veto** |
-| **Execution** | V3 | Risk + Signals | **Bybit API** | **Breakeven Stops**, PositionTracker |
+1. **IngestionAgent** - WebSocket Stream (Binance) → Redis Cache
+2. **MarketAgent** - Marktdaten-Aufbereitung, Indikatoren, Sentiment
+3. **QuantAgent** - Quantitative Analyse, Composite Score (deterministisch)
+4. **RiskAgent** - Risiko-Management, Position-Sizing, Limits
+5. **DecisionAgent** - 6-Gate Trade Pipeline (deterministisch)
+6. **ExecutionAgent** - Order-Management, Slippage-Kontrolle
+7. **LearningAgent** - Post-Trade Analyse mit Deepseek Reasoning API
 
 ### v2 Service Layer
 
 | Service | Zweck | Integration |
 |---------|-------|-------------|
-| **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls | QuantAgentV4 |
-| **LiquidityEngine** | OI-Delta, Sweep Detection, Entry Confirmation | QuantAgentV4 |
-| **CompositeScorer** | Dynamic Weighting, Regime Detection | QuantAgentV4 |
+| **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls | QuantAgent |
+| **LiquidityEngine** | OI-Delta, Sweep Detection, Entry Confirmation | QuantAgent |
+| **CompositeScorer** | Dynamic Weighting, Regime Detection | QuantAgent |
 | **TradeDebriefV2** | Post-Trade Debrief mit Deepseek Reasoning API | ExecutionAgentV3 |
+| **PositionTracker / PositionMonitor** | MAE/MFE, TP1-Scale-Out, Breakeven, SL/TP2 Runtime | ExecutionAgentV3 |
 
 ---
 
@@ -221,15 +221,10 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 - Profit Factor wird aus realisierter P&L-Historie berechnet und per Endpoint angezeigt
 - Funding- und Liquidations-Daten sind in GRSS und Status-Checks integriert
 
-### Phase C/D Runtime (v2) - AKTUELL
-- **QuantAgentV4** mit vollständiger Service-Integration
-- **TechnicalAnalysisAgent**: MTF-Alignment, Wick Detection, Session Awareness, Orderbuch-Walls
-- **LiquidityEngine**: OI-Delta, Sweep Detection, Entry Confirmation
-- **CompositeScorer**: Dynamic Weighting, Regime-adaptive Scoring
-- **RiskAgentV2**: Daily Limits (3%), Trade Cooldowns (5min)
-- **ExecutionAgentV3**: Breakeven Stops, Enhanced Position Management
-- **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse
-- **Learning System:** Cloud-basierte Intelligenz für kontinuierliche Verbesserung
+### Learning System (v2.2)
+- **LearningAgent** führt Post-Trade Analyse mit Deepseek Reasoning API durch
+- Keine lokalen LLMs mehr im System (Ollama entfernt in v2.1)
+- Analyse wird nur für abgeschlossene Trades verwendet, nicht für Live-Entscheidungen
 
 ---
 

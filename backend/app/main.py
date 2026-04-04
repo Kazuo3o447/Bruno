@@ -84,18 +84,14 @@ async def shutdown_event():
 async def health_check():
     """Health Check mit echtem Service-Status für alle Komponenten."""
     
-    # 1. Ollama Check
-    ollama_status = "disconnected"
-    ollama_models = []
+    # 1. Binance Check
+    binance_status = "disconnected"
     try:
-        ollama_healthy = await ollama_client.health_check()
-        if ollama_healthy:
-            ollama_status = "connected"
-            models_data = await ollama_client.list_models()
-            if models_data:
-                ollama_models = [m.get("name", "") for m in models_data.get("models", [])]
+        from app.core.binance_client import binance_client
+        if await binance_client.health_check():
+            binance_status = "connected"
     except Exception as e:
-        logger.warning(f"Ollama Health Check fehlgeschlagen: {e}")
+        logger.warning(f"Binance Health Check fehlgeschlagen: {e}")
     
     # 2. Redis Check
     redis_status = "disconnected"
@@ -117,16 +113,15 @@ async def health_check():
         logger.warning(f"DB Health Check fehlgeschlagen: {e}")
 
     overall = "healthy" if all([
-        ollama_status == "connected",
         redis_status == "connected",
-        db_status == "connected"
+        db_status == "connected",
+        binance_status == "connected",
     ]) else "degraded"
 
     return {
         "status": overall,
         "version": "0.1.0",
-        "ollama": ollama_status,
-        "ollama_models": ollama_models,
+        "binance": binance_status,
         "redis": redis_status,
         "database": db_status,
     }

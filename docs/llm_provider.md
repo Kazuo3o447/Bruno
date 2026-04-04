@@ -1,8 +1,10 @@
-# LLM Provider — Phase C
+# LLM Provider — LEGACY (v1)
 
-> **Status:** ✅ IMPLEMENTIERT — Abstrakte Provider-Architektur
+> **Status:** 📦 ARCHIVIERT — Diese Architektur wurde in v2.2 entfernt
 > 
-> **Ziel:** Lokal (Ollama) oder Cloud (DeepSeek/Groq) über Config-Flag austauschbar
+> **Aktuell:** Nur Deepseek Reasoning API für Post-Trade Analyse
+> 
+> **Historie:** Lokal (Ollama) oder Cloud (DeepSeek/Groq) über Config-Flag austauschbar
 
 ---
 

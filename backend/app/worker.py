@@ -132,7 +132,7 @@ async def main():
     orchestrator.register("sentiment", SentimentAgent(deps))
     orchestrator.register("risk", RiskAgent(deps))
     orchestrator.register("execution", ExecutionAgentV3(deps))
-    
+
     # 4. Agenten Starten
     await orchestrator.start_all()
     cmd_task = asyncio.create_task(orchestrator.listen_for_commands())

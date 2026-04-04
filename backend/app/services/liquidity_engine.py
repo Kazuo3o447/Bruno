@@ -33,7 +33,7 @@ class LiquidityEngine:
         self._oi_history: list = []   # Letzten 10 OI-Werte für Delta
         self._last_oi_fetch: float = 0.0
 
-    async def analyze(self, current_price: float) -> dict:
+    async def analyze(self, current_price: float, liquidation_event: dict | None = None) -> dict:
         """
         Vollständige Liquiditäts-Analyse mit 3-facher Sweep-Konfirmation.
         
@@ -74,7 +74,12 @@ class LiquidityEngine:
         wick = ta_snapshot.get("wick", {})
         
         # Sweep mit 3-facher Konfirmation
-        sweep = await self._detect_sweep_confirmed(current_price, oi_delta, wick)
+        sweep = await self._detect_sweep_confirmed(
+            current_price,
+            oi_delta,
+            wick,
+            liquidation_event=liquidation_event,
+        )
         
         # Combined Liq-Score
         liq_score = self._calculate_liq_score(magnetic_pull, asymmetry, sweep, ob_walls)
@@ -175,8 +180,13 @@ class LiquidityEngine:
             "oi_change_pct": round(pct_5, 3),
         }
 
-    async def _detect_sweep_confirmed(self, current_price: float, 
-                                        oi_delta: dict, wick: dict) -> dict:
+    async def _detect_sweep_confirmed(
+        self,
+        current_price: float,
+        oi_delta: dict,
+        wick: dict,
+        liquidation_event: dict | None = None,
+    ) -> dict:
         """
         Erweiterte Sweep-Detection mit 3 Bedingungen (Profitrader-Regel):
         
@@ -194,6 +204,8 @@ class LiquidityEngine:
         - Short-Liqs gesweept (BUY-Liqs) + Bearish Wick + OI Drop → Entry SHORT
         """
         # Bedingung 1: Liquidations-Spike
+        event_total = float((liquidation_event or {}).get("total_usdt", 0.0) or 0.0)
+        event_side = str((liquidation_event or {}).get("side", "")).upper()
         query = text("""
             SELECT side, SUM(total_usdt) AS total, COUNT(*) AS count
             FROM liquidations
@@ -210,15 +222,24 @@ class LiquidityEngine:
         
         sell_total = rows.get("SELL", {}).get("total", 0)  # Long-Liqs
         buy_total = rows.get("BUY", {}).get("total", 0)    # Short-Liqs
+
+        if event_total >= 500_000:
+            if event_side == "SELL":
+                sell_total = max(sell_total, event_total)
+            elif event_side == "BUY":
+                buy_total = max(buy_total, event_total)
+
         total_liq = sell_total + buy_total
         
-        liq_spike = total_liq > 500_000
+        liq_spike = total_liq > 500_000 or event_total >= 500_000
         dominant_side = None
         if total_liq > 0:
             if sell_total / total_liq > 0.70:
                 dominant_side = "long"   # Long-Positionen wurden liquidiert
             elif buy_total / total_liq > 0.70:
                 dominant_side = "short"  # Short-Positionen wurden liquidiert
+        elif event_total >= 500_000:
+            dominant_side = "long" if event_side == "SELL" else "short" if event_side == "BUY" else None
         
         # Bedingung 2: Wick-Bildung
         wick_formed = wick.get("bullish_wick", False) or wick.get("bearish_wick", False)

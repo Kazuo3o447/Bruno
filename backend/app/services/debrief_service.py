@@ -7,6 +7,7 @@ Speichert Ergebnisse in trade_debriefs Tabelle.
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 from sqlalchemy import text
@@ -173,6 +174,7 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
         try:
             async with AsyncSessionLocal() as session:
                 # Debrief Record erstellen
+                raw_payload = json.dumps(raw_response) if isinstance(raw_response, (dict, list)) else str(raw_response)
                 debrief_record = {
                     "id": str(uuid.uuid4()),
                     "trade_id": trade_id,
@@ -183,12 +185,12 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
                     "pattern": debrief["pattern"],
                     "regime_assessment": debrief["regime_assessment"],
                     "trade_mode": trade_mode,
-                    "raw_llm_response": raw_response
+                    "raw_llm_response": raw_payload
                 }
                 
                 # SQL Insert
                 await session.execute(
-                    """
+                    text("""
                     INSERT INTO trade_debriefs (
                         id, trade_id, timestamp, decision_quality, 
                         key_signal, improvement, pattern, regime_assessment,
@@ -199,7 +201,7 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
                         :trade_mode,
                         :raw_llm_response
                     )
-                    """,
+                    """),
                     debrief_record
                 )
                 
@@ -216,12 +218,12 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
         try:
             async with AsyncSessionLocal() as session:
                 result = await session.execute(
-                    """
+                    text("""
                     SELECT * FROM trade_debriefs 
                     WHERE trade_id = :trade_id 
                     ORDER BY timestamp DESC 
                     LIMIT 1
-                    """,
+                    """),
                     {"trade_id": trade_id}
                 )
                 
@@ -244,6 +246,34 @@ Sei präzise und objektiv. Keine Ausreden, keine Emotionen.
         except Exception as e:
             print(f"Error getting debrief: {e}")
             return None
+
+    def _parse_llm_response(self, response: Dict[str, Any] | str) -> Dict[str, Any]:
+        """Normalisiert Deepseek-JSON oder String-Antworten in die erwartete Struktur."""
+        if isinstance(response, dict):
+            parsed = response
+        else:
+            try:
+                if "```json" in response:
+                    json_start = response.find("```json") + 7
+                    json_end = response.find("```", json_start)
+                    json_str = response[json_start:json_end].strip()
+                elif "{" in response and "}" in response:
+                    json_start = response.find("{")
+                    json_end = response.rfind("}") + 1
+                    json_str = response[json_start:json_end]
+                else:
+                    json_str = ""
+                parsed = json.loads(json_str) if json_str else {}
+            except Exception:
+                parsed = {}
+
+        return {
+            "decision_quality": parsed.get("decision_quality", parsed.get("trade_rating", "ACCEPTABLE")),
+            "key_signal": parsed.get("key_signal", "Kein Signal erkannt"),
+            "improvement": parsed.get("improvement", "Keine Verbesserung identifiziert"),
+            "pattern": parsed.get("pattern", "Kein Muster erkannt"),
+            "regime_assessment": parsed.get("regime_assessment", "Regime unklar"),
+        }
 
 
 # Singleton Instance

@@ -1,11 +1,12 @@
 # Bruno Trading Platform — Project Status
 
-> **Referenz: WINDSURF_MANIFEST.md v2.0 — Einzige Quelle der Wahrheit**
+> **Referenz: WINDSURF_MANIFEST.md v2.2 — Einzige Quelle der Wahrheit**
 > 
-> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT** für lokale LLM-Inferenz (Ollama native)
+> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT**
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-API-Integration
 > ✅ **Port-Architektur:** Vollständig korrigiert und stabilisiert
 > ✅ **Critical Fixes:** Alle 8 kritischen Probleme behoben
+> ✅ **LLM-Infrastruktur:** Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt)
 > 
 > Dieses Dokument zeigt den technischen Ist-Stand.
 > Für Architektur, Phasen und Entscheidungen siehe Manifest.
@@ -18,33 +19,44 @@
 
 | Attribut | Wert |
 |----------|------|
-| **Manifest Version** | `v2.0` |
-| **Codename** | Fundament & Ehrlichkeit |
-| **Status** | ✅ Phase A COMPLETED — Phase B COMPLETED — Phase C COMPLETED — Phase D COMPLETED — Phase E COMPLETED — Phase F COMPLETED — Phase G.0 COMPLETED |
-| **Dashboard** | ✅ Voll funktionsfähig mit API-Integration |
+| **Manifest Version** | `v2.2` |
+| **Codename** | Deterministic Trading |
+| **Status** | ✅ Phase A-E COMPLETED — Phase F COMPLETED — Phase G.0 COMPLETED — Phase v2.1 COMPLETED — Phase v2.2 COMPLETED |
+| **Dashboard** | ✅ Voll funktionsfähig mit API-Integration (7 Seiten) |
 | **Port-Konfiguration** | ✅ Vollständig korrigiert (Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/*) |
 | **Critical Fixes** | ✅ Alle 8 Probleme behoben (API, Config, OFI, Presets) |
+| **LLM-Integration** | ✅ Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt) |
+| **Trading Engine** | ✅ Deterministic Composite Scoring (6-Gate Pipeline) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
-| **Letztes Update** | 3. April 2026 (Learning Mode, Phantom Trades, trade_mode-Tagging, abgeschlossen) |
+| **Letztes Update** | April 2026 (v2.2 - Deterministic Trading & Ollama Entfernung) |
 
 ---
 
-## 🎯 Aktueller Fokus: Phase F — Critical Fixes & Config-Hot-Reload (COMPLETED)
+## 🎯 Aktueller Stand: Phase v2.2 — Deterministic Trading (COMPLETED)
 
-> 🚀 **System-Status:** Voll funktionsfähig mit allen kritischen Fixes implementiert
-> 📊 **Dashboard-Status:** Alle API-Endpunkte erreichbar, Live-Daten funktionieren
+> 🚀 **System-Status:** Voll funktionsfähig mit deterministischer Trading-Engine
+> 📊 **Dashboard-Status:** Alle 7 Seiten implementiert und API-Integration stabil
 > 🔧 **Container-Status:** Vollständig neu aufgebaut mit sauberen Volumes und stabiler Konfiguration
-> ⚙️ **Config-System:** Hot-Reload implementiert, Presets verfügbar
+> ⚙️ **Config-System:** Hot-Reload implementiert, 4 Presets verfügbar
+> 🤖 **LLM-Status:** Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt)
 
-**Ziel:** Vollständiges Cockpit mit Live-Daten, Agenten-Status und Trading-Chart. Das Dashboard ist jetzt vollständig implementiert und funktionsfähig.
+**Ziel:** Deterministische Trading-Engine ohne LLM-Abhängigkeiten für Live-Entscheidungen. Phase v2.2 ist abgeschlossen.
 
-### Aktueller Zusatz-Fokus: Phase G.0 — Learning Mode (DRY_RUN only) ✅ COMPLETED
+### Phase v2.2 — Deterministic Trading & Ollama Entfernung ✅ COMPLETED
+
+**Implementiert:**
+- Ollama komplett aus dem Live-System entfernt
+- Deterministic Composite Scoring für Trade-Entscheidungen
+- Deepseek Reasoning API nur für Post-Trade Analyse
+- 6-Gate Trade Pipeline ohne LLM-Abhängigkeiten
+- Frontend auf 7 Seiten erweitert (/logic, /logs, /reports)
+
+### Phase G.0 — Learning Mode (DRY_RUN only) ✅ COMPLETED
 
 **Ziel:** Mehr Paper-Trades und deutlich mehr auswertbare HOLD-Daten, ohne die Produktionslogik zu kontaminieren.
 
 **Implementiert:**
 - DRY_RUN-aware GRSS-Threshold: 40 → 25 im Learning Mode
-- DRY_RUN-aware LLM Confidence-Schwellen: 0.60/0.65 → 0.50/0.55 im Learning Mode
 - `trade_mode`-Markierung in `trade_audit_logs` und `trade_debriefs`
 - Phantom Trades für HOLD-Zyklen mit 240 Minuten Outcome-Tracking
 - Scheduler-Auswertung der Phantom Trades alle 30 Minuten
@@ -109,14 +121,14 @@
 ## System-Status (Ist-Stand)
 
 ### ✅ Funktioniert
-- **Bruno Pulse: Real-time Transparenz (Sub-States & LLM Pulse)**
-- **Background Heartbeat Architecture** (robuster gegen LLM-Blockaden)
-- **Dashboard mit Live-API-Integration** (voll funktionsfähig)
+- **Bruno Pulse: Real-time Transparenz (Sub-States & Agent Pulse)**
+- **Background Heartbeat Architecture** (robust gegen System-Blockaden)
+- **Dashboard mit Live-API-Integration** (7 Seiten voll funktionsfähig)
 - **Docker Compose Stack** (Postgres, Redis, FastAPI, Next.js)
-- **6 Agenten registriert und startfähig**
+- **7 Agenten registriert und startfähig**
 - **IngestionAgent: Binance WebSocket (5 Streams)**
-- **LLM-Infrastruktur** (Ollama, qwen2.5:14b, deepseek-r1:14b)
-- **Phase A-E Complete**: 100% echte Daten + LLM-Kaskade + Dashboard
+- **Deepseek Reasoning API** für Post-Trade Analyse
+- **Phase A-E + v2.2 Complete**: 100% echte Daten + deterministische Engine + Dashboard
 - **API-Endpunkte** alle aktiv (telemetry, market, decisions, positions, performance)
 - **Trading Chart** mit robustem lightweight-charts
 - **Container-Netzwerk** mit korrektem Routing
@@ -128,11 +140,10 @@
 ### ✅ Kürzlich Gelöst (2026-04-03 - Learning Mode)
 - **Learning Mode vorbereitet:** config.json um Learning-Mode-Keys erweitert
 - **RiskAgent:** effektive GRSS-Schwelle ist jetzt DRY_RUN-aware
-- **LLM Cascade:** Confidence-Schwellen lesen jetzt Learning-Mode-Konfiguration
 - **ExecutionAgentV3:** `trade_mode` wird im Audit-Log mitgeschrieben
 - **QuantAgent:** HOLD-Zyklen erzeugen Phantom Trades für Debrief-Training
 - **Scheduler:** Phantom-Trade-Auswertung wird im 30-Minuten-Loop angestoßen
-- **Dokumentation:** Manifest, `docs/ki.md` und `docs/data.md` sind aktualisiert
+- **Dokumentation:** Manifest und Dokumente sind auf v2.2 aktualisiert
 
 ### ✅ Kürzlich Gelöst (2026-04-02 - Critical Fixes)
 - **Doppeltes Prefix behoben:** export, config, decisions Router Endpunkte jetzt erreichbar

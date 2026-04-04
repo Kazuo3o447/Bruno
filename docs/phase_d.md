@@ -55,7 +55,9 @@ Redis Live-State (0ms Check)
     ↓
 PositionMonitor (Background, 30s Intervall)
     ↓
-MAE/MFE Updates + SL/TP Prüfung
+MAE/MFE Updates + TP1/TP2 / Breakeven / SL-Prüfung
+    ↓
+TP1-Scale-Out → Breakeven-Stop → TP2 oder SL
     ↓
 Automatischer Exit → PositionTracker.close_position()
     ↓
@@ -82,6 +84,11 @@ position_id = await position_tracker.open_position(
     stop_loss_price=59000.0,
     take_profit_price=62000.0,
     entry_trade_id="trade_123",
+    take_profit_1_price=61000.0,
+    take_profit_2_price=62000.0,
+    tp1_size_pct=0.50,
+    tp2_size_pct=0.50,
+    breakeven_trigger_pct=0.005,
     # Phase C Fields (optional)
     grss_at_entry=55.0,
     layer1_output={"regime": "trending_bull"},
@@ -109,9 +116,15 @@ position = await position_tracker.close_position(
     "entry_price": 60000.0,
     "entry_time": "2026-03-29T18:00:00Z",
     "entry_trade_id": "trade_123",
+    "initial_quantity": 0.001,
     "quantity": 0.001,
     "stop_loss_price": 59000.0,
     "take_profit_price": 62000.0,
+    "take_profit_1_price": 61000.0,
+    "take_profit_2_price": 62000.0,
+    "tp1_size_pct": 0.50,
+    "tp2_size_pct": 0.50,
+    "breakeven_trigger_pct": 0.005,
     # Phase C LLM Context
     "grss_at_entry": 55.0,
     "layer1_output": {"regime": "trending_bull", "confidence": 0.8},
@@ -122,6 +135,10 @@ position = await position_tracker.close_position(
     "mae_pct": -0.015,      # -1.5% Max Adverse Excursion
     "mfe_pct": 0.025,       # +2.5% Max Favorable Excursion
     "current_pnl_pct": 0.016, # +1.6% Current P&L
+    "realized_pnl_pct": 0.008,
+    "realized_pnl_eur": 1.25,
+    "tp1_hit": true,
+    "breakeven_active": true,
     # Status
     "status": "open",
     "created_at": "2026-03-29T18:00:00Z"
@@ -158,7 +175,7 @@ async def _check_symbol(self, symbol: str):
     # 3. MAE/MFE aktualisieren
     await self.position_tracker.update_excursions(symbol, current_price)
     
-    # 4. SL/TP prüfen
+    # 4. TP1-Scale-Out / Breakeven / SL/TP2 prüfen
     await self._check_stop_loss_take_profit(symbol, current_price)
 ```
 
@@ -170,16 +187,35 @@ async def _check_stop_loss_take_profit(self, symbol: str, current_price: float):
     
     side = position["side"]
     sl = position["stop_loss_price"]
-    tp = position["take_profit_price"]
+    tp1 = position.get("take_profit_1_price", position["take_profit_price"])
+    tp2 = position.get("take_profit_2_price", position["take_profit_price"])
     
     exit_reason = None
+
+    if not position.get("tp1_hit"):
+        if side == "long" and current_price >= tp1:
+            await self.position_tracker.scale_out_position(
+                symbol=symbol,
+                exit_price=current_price,
+                reason="take_profit_1",
+                fraction=position.get("tp1_size_pct", 0.5),
+                move_stop_to_breakeven=True,
+            )
+        elif side == "short" and current_price <= tp1:
+            await self.position_tracker.scale_out_position(
+                symbol=symbol,
+                exit_price=current_price,
+                reason="take_profit_1",
+                fraction=position.get("tp1_size_pct", 0.5),
+                move_stop_to_breakeven=True,
+            )
     
     if side == "long":
         if current_price <= sl: exit_reason = "stop_loss"
-        elif current_price >= tp: exit_reason = "take_profit"
+        elif current_price >= tp2: exit_reason = "take_profit"
     else:  # short
         if current_price >= sl: exit_reason = "stop_loss"
-        elif current_price <= tp: exit_reason = "take_profit"
+        elif current_price <= tp2: exit_reason = "take_profit"
     
     if exit_reason:
         await self.position_tracker.close_position(

@@ -1,16 +1,18 @@
-# Phase C — LLM-Kaskade (3 Layer)
+# Phase C — LLM-Kaskade (3 Layer) - LEGACY v1
   
-> **Status:** ✅ COMPLETED — Vollständig implementiert & verifiziert
+> **Status:** 📦 ARCHIVIERT — Wurde in v2.2 durch deterministische Engine ersetzt
 > 
-> **Zeitraum:** Woche 3–5
+> **Zeitraum:** Woche 3–5 (Historie)
 > 
-> **Ziel:** Intelligente Handels-Entscheidungen durch 3-stufige LLM-Kaskade
+> **Historisches Ziel:** Intelligente Handels-Entscheidungen durch 3-stufige LLM-Kaskade
 
 ---
 
-## Übersicht
+## Übersicht (Historisch)
 
-Phase C implementiert die **intelligente Entscheidungsschicht** des Bruno Trading Bots. Anstatt simpler OFI-Signale nutzt der Bot eine 3-Layer LLM-Kaskade für fundierte Handels-Entscheidungen.
+Phase C implementierte die **intelligente Entscheidungsschicht** des Bruno Trading Bots in v1. Anstatt simpler OFI-Signale nutzte der Bot eine 3-Layer LLM-Kaskade für fundierte Handels-Entscheidungen.
+
+**Aktueller Stand (v2.2):** Diese LLM-Kaskade wurde entfernt und durch eine deterministische Composite Scoring Engine ersetzt. Nur Deepseek Reasoning API wird noch für Post-Trade Analysen verwendet.
 
 ### Die 3 Layer
 

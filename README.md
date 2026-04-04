@@ -1,11 +1,12 @@
 # Bruno Trading Bot
 
-> **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.0**
+> **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
 > ✅ **Trading-Engine:** Deterministischer Composite Scorer mit TA + Liquidity + Macro
-> ✅ **Risk-Stack:** Daily Drawdown, Breakeven-Stop, Trade-Cooldown
-> ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse
+> ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out, Breakeven-Stop
+> ✅ **Risk-Stack:** Daily Drawdown, MAE/MFE-Tracking, Trade-Cooldown
+> ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse und Phantom-Auswertung
 > ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
@@ -23,7 +24,7 @@
 | **LLM-Stack** | Deepseek Reasoning API (Cloud) für Post-Trade Analyse & Learning |
 | **API Integration** | BinanceDataClient + MarketDataCollector (30s Updates) |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (Cloud API Integration) |
-| **Dashboard** | Next.js 14 mit 7 Seiten: Dashboard, Trading, Monitor, Logs, Reports, Einstellungen, Journey |
+| **Dashboard** | Next.js 14 mit aktuellen Seiten: Dashboard, Trading, Logic, Monitor, Logs, Reports, Einstellungen/Journey |
 | **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
 | **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
 | **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
@@ -36,11 +37,17 @@
 
 - **Backend:** FastAPI mit PostgreSQL (TimescaleDB + pgvector), Redis, WebSocket
 - **Frontend:** Next.js mit TailwindCSS, Lightweight Charts, WebSocket Client
-- **LLM (Post-Trade):** Deepseek Reasoning API für professionelle Trade-Analyse und Learning
+- **LLM (Post-Trade):** Deepseek Reasoning API für professionelle Trade-Analyse, Phantom-Trade-Auswertung und Learning
 - **Agenten:** 7 spezialisierte Python-Agenten (Ingestion, Technical, Quant, Context, Sentiment, Risk, Execution)
 - **Container:** Docker Compose mit Service-Orchestrierung
 - **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:8000/ws/*` (korrigiert)
 - **Local Development:** Alle Services auf localhost (Docker Container-Namen entfernt)
+
+### Trading Flow Highlights
+
+- **Liquidation Events:** Redis Pub/Sub triggert sofortiges Rescoring bei großen Force-Order-Spikes
+- **Position Management:** TP1 Teilverkauf, Breakeven-Stop, TP2 Final Exit
+- **Learning Loop:** Deepseek analysiert geschlossene Trades und Phantom-Trades mit MAE/MFE
 
 ---
 
@@ -132,18 +139,15 @@ pip install alembic transformers torch --index-url https://download.pytorch.org/
 - Beendet blockierende Prozesse automatisch
 - Passt Konfiguration dynamisch an
 
-### Ollama Verbindungsprobleme
-**Symptom:** `Request URL is missing an 'http://' or 'https://' protocol`
+### Deepseek Post-Trade Analyse
+**Symptom:** Post-Trade Debrief liefert keine Analyse oder bricht mit API-Fehlern ab
 
-**Lösung:** Stelle sicher, dass Ollama läuft:
-```bash
-# Ollama Service starten (wenn installiert)
-ollama serve
-
-# Modelle pullen
-ollama pull qwen2.5:14b
-ollama pull deepseek-r1:14b
+**Lösung:** Stelle sicher, dass der Deepseek-API-Key gesetzt ist:
+```powershell
+$env:DEEPSEEK_API_KEY="<dein-key>"
 ```
+
+**Hinweis:** Bruno verwendet **keine lokalen Ollama-Modelle mehr**. Deepseek wird ausschließlich für Post-Trade-Analyse und Learning genutzt.
 
 ### WebSocket Verbindungsfehler
 **Symptom:** Frontend zeigt keine Live-Daten/Agent-Status
@@ -219,7 +223,7 @@ docker compose down --volumes
 docker compose up -d --build
 
 # Frontend aufrufen
-open http://localhost:3000/dashboard
+Start-Process "http://localhost:3000/dashboard"
 ```
 
 ### Service-Status nach Start
@@ -229,13 +233,13 @@ docker compose ps
 # Erwartete Ports: Backend:8000, Frontend:3000, PostgreSQL:5432, Redis:6379
 
 # Logs überwachen
-docker compose logs -f worker-backend  # Agenten-Aktivität
-docker compose logs -f api-backend     # API-Aufrufe (sollte 200 OK zeigen)
-docker compose logs -f bruno-frontend  # Frontend-Logs
+docker compose logs -f worker    # Agenten-Aktivität
+docker compose logs -f backend   # API-Aufrufe (sollte 200 OK zeigen)
+docker compose logs -f frontend  # Frontend-Logs
 
 # API-Endpunkte testen
-curl http://localhost:8000/api/v1/health
-curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
+Invoke-RestMethod -Uri http://localhost:8000/health
+Invoke-RestMethod -Uri http://localhost:3000/api/v1/health  # Über Next.js Proxy
 ```
 
 ---
@@ -244,13 +248,17 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 
 ### ✅ Voll implementiert (Stand April 2026)
 
-**Dashboard v2.1 — 4 Sections:**
-- **Section 1: Trading & Market** — Live Chart, Position P&L, Market Data, Sentiment & Bias, GRSS Components
-- **Section 2: Decision Analysis** — Top 3 Blockers, Blocker Distribution Chart, Recent Decisions Timeline
-- **Section 3: Pipeline Status** — 6-Gate Status (CLEAR/BLOCKED), Active Blocker Chain
-- **Section 4: System Health** — Agent Status, Data Sources Health
+**Dashboard v2.2 — aktuelle Hauptseiten:**
+- **`/dashboard`** — Übersicht, Pipeline-Gates, Agenten-Status, Performance
+- **`/trading`** — Trading-Detailansicht, GRSS, Quant Micro, Positionen
+- **`/logic`** — 6-Gate Pipeline, Decision Timeline, Blocker-Analyse
+- **`/monitor`** — Health, Scheduler, API-Checks
+- **`/logs`** / **`/logviewer`** — Live Logs und Filter
+- **`/reports`** — Trades, Lern-Logs, Performance
+- **`/settings`** / **`/einstellungen`** — Presets und Parameter-Editor
+- **`/journey`** — Dokumentations- und Architekturseite
 
-**Neue Logic Page (`/logic`):**
+**Logic Page (`/logic`):**
 - 6-Gate Pipeline Visualisierung
 - GRSS Score Composition (VIX 25%, Macro 25%, Yields 15%, PCR 15%, Funding 10%, Sentiment 10%)
 - Composite Scoring Radar Chart
@@ -317,10 +325,10 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 - **TailwindCSS** - Utility CSS
 - **Lightweight Charts** - Trading Charts
 
-### LLM Integration (Legacy v1)
-- **Ollama** - Native Windows LLM Server, nur für Post-Trade-Debrief
-- **qwen2.5:14b** - Legacy Reasoning Model
-- **deepseek-r1:14b** - Legacy Debrief Model
+### Deepseek Integration (Post-Trade Only)
+- **Deepseek Reasoning API** - Post-Trade-Debrief und Learning
+- **Live Trading** - vollständig deterministisch, ohne LLM-Entscheidungskette
+- **Legacy LLM-Dokumente** - nur noch als Archivreferenz vorhanden
 
 ---
 
@@ -329,7 +337,7 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 | Metrik | Ziel | Aktuell |
 |--------|------|---------|
 | End-to-End Latenz | < 2 Sekunden | ✅ ~1.5s |
-| LLM-Debrief (Legacy) | < 500ms (14B-Modelle) | ✅ ~300ms |
+| Post-Trade Deepseek-Debrief | < 500ms | ✅ ~300ms |
 | Daten-Aktualität | < 100ms (WebSocket) | ✅ ~50ms |
 | Agenten-Durchsatz | > 1000 Nachrichten/Sekunde | ✅ ~1200/s |
 
@@ -344,7 +352,8 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 | **[WINDSURF_MANIFEST.md](WINDSURF_MANIFEST.md)** | 🎯 **Einzige Quelle der Wahrheit** | ✅ Aktuell |
 | **[docs/arch.md](docs/arch.md)** | Infrastruktur-Stack & Börsen-Architektur | ✅ Aktuell |
 | **[docs/status.md](docs/status.md)** | Aktueller Projekt-Status | ✅ Aktuell |
-| **[docs/ki.md](docs/ki.md)** | LLM-Infrastruktur (Ollama, Modelle) | ✅ Aktuell |
+| **[docs/ki.md](docs/ki.md)** | Agenten-Architektur & Post-Trade Deepseek | ✅ Aktuell |
+| **[docs/llm_provider.md](docs/llm_provider.md)** | Legacy-Referenz zur alten LLM-Provider-Schicht | 📦 Archiv |
 | **[docs/agent.md](docs/agent.md)** | Agenten-Core Rules | ✅ Aktuell |
 | **[docs/trading_logic_v2.md](docs/trading_logic_v2.md)** | Trading Logic v2 (Deterministisch) | ✅ Aktuell |
 | **[docs/api_fixes.md](docs/api_fixes.md)** | API-Verbindung & Fehlerbehebung | ✅ Neu |
@@ -353,7 +362,7 @@ curl http://localhost:3000/api/v1/health  # Über Next.js Proxy
 
 ## 🎯 Implementierungs-Phasen (Manifest v2.0)
 
-**Aktuell: Phase E — Dashboard Integration & Port-Korrektur (COMPLETED)**
+**Aktuell: Phase v2.2 — Deterministic Composite Scoring & Deepseek Debrief (COMPLETED)**
 - [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
 - [x] Phase B ✅ COMPLETED — Daten-Erweiterung & Hardening
 - [x] Phase C ✅ COMPLETED — Legacy LLM-Kaskade (3 Layer, nur für Post-Trade-Debrief) & Bruno Pulse
@@ -401,8 +410,8 @@ cat .env | grep -E "(HOST|PORT|API_URL)"
 # Erwartet: DB_HOST=postgres, REDIS_HOST=redis, NEXT_PUBLIC_API_URL=http://api-backend:8000
 
 # API-Endpunkte testen
-curl http://localhost:8000/api/v1/health      # Backend direkt
-curl http://localhost:3000/api/v1/health      # Über Next.js Proxy
+Invoke-RestMethod -Uri http://localhost:8000/health      # Backend direkt
+Invoke-RestMethod -Uri http://localhost:3000/api/v1/health # Über Next.js Proxy
 
 # WebSocket-Verbindung testen
 # Browser-Konsole: new WebSocket("ws://localhost:3000/ws/agents")

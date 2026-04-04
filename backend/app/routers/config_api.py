@@ -24,6 +24,26 @@ CONFIG_SCHEMA = {
     "Max_Leverage": {"min": 0.1, "max": 1.0, "type": "float", "label": "Max. Leverage"},
     "Stop_Loss_Pct": {"min": 0.003, "max": 0.03, "type": "float", "label": "Stop-Loss %"},
     "Liq_Distance": {"min": 0.002, "max": 0.02, "type": "float", "label": "Min. Liq-Wall Abstand"},
+    "LEARNING_MODE_ENABLED": {"type": "bool", "label": "Learning Mode"},
+    "LEARNING_GRSS_Threshold": {"min": 0, "max": 100, "type": "int", "label": "Learning GRSS Threshold"},
+    "LEARNING_Layer1_Confidence": {"min": 0.0, "max": 1.0, "type": "float", "label": "Learning Layer 1 Confidence"},
+    "LEARNING_Layer2_Confidence": {"min": 0.0, "max": 1.0, "type": "float", "label": "Learning Layer 2 Confidence"},
+    "LEARNING_Layer1_Confidence_PROD": {"min": 0.0, "max": 1.0, "type": "float", "label": "Prod Layer 1 Confidence"},
+    "LEARNING_Layer2_Confidence_PROD": {"min": 0.0, "max": 1.0, "type": "float", "label": "Prod Layer 2 Confidence"},
+    "PHANTOM_HOLD_DURATION_MINUTES": {"min": 0, "max": 1440, "type": "int", "label": "Phantom Hold Duration (Minuten)"},
+    "_comment_v2": {"type": "str", "label": "Kommentar"},
+    "COMPOSITE_THRESHOLD_LEARNING": {"min": 0, "max": 100, "type": "int", "label": "Composite Threshold Learning"},
+    "COMPOSITE_THRESHOLD_PROD": {"min": 0, "max": 100, "type": "int", "label": "Composite Threshold Prod"},
+    "COMPOSITE_W_TA": {"min": 0.0, "max": 1.0, "type": "float", "label": "Composite Weight TA"},
+    "COMPOSITE_W_LIQ": {"min": 0.0, "max": 1.0, "type": "float", "label": "Composite Weight LIQ"},
+    "COMPOSITE_W_FLOW": {"min": 0.0, "max": 1.0, "type": "float", "label": "Composite Weight FLOW"},
+    "COMPOSITE_W_MACRO": {"min": 0.0, "max": 1.0, "type": "float", "label": "Composite Weight MACRO"},
+    "COMPOSITE_SIGNAL_THRESHOLD": {"min": 0, "max": 100, "type": "int", "label": "Composite Signal Threshold"},
+    "TRADE_COOLDOWN_SECONDS": {"min": 0, "max": 86400, "type": "int", "label": "Trade Cooldown (Sekunden)"},
+    "DAILY_MAX_LOSS_PCT": {"min": 0.0, "max": 100.0, "type": "float", "label": "Daily Max Loss %"},
+    "MAX_CONSECUTIVE_LOSSES": {"min": 0, "max": 100, "type": "int", "label": "Max Consecutive Losses"},
+    "BREAKEVEN_TRIGGER_PCT": {"min": 0.0, "max": 1.0, "type": "float", "label": "Breakeven Trigger %"},
+    "ENABLE_LLM_CASCADE_V4": {"type": "bool", "label": "Enable LLM Cascade V4"},
 }
 
 
@@ -56,18 +76,44 @@ async def update_config(payload: ConfigUpdate):
         with open(CONFIG_PATH, "r") as f:
             current = json.load(f)
 
+        allowed_keys = set(current.keys()) | set(CONFIG_SCHEMA.keys())
+
         # Validierung
         errors = []
         for key, value in updates.items():
-            if key not in CONFIG_SCHEMA:
+            if key not in allowed_keys:
                 errors.append(f"Unbekannter Parameter: {key}")
                 continue
-            schema = CONFIG_SCHEMA[key]
-            if value < schema["min"] or value > schema["max"]:
-                errors.append(
-                    f"{key}: {value} außerhalb erlaubtem Bereich "
-                    f"[{schema['min']}, {schema['max']}]"
-                )
+
+            schema = CONFIG_SCHEMA.get(key)
+            if not schema:
+                continue
+
+            expected_type = schema.get("type")
+            if expected_type == "int":
+                if not isinstance(value, int) or isinstance(value, bool):
+                    errors.append(f"{key}: erwarteter Typ int")
+                    continue
+            elif expected_type == "float":
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    errors.append(f"{key}: erwarteter Typ float")
+                    continue
+                value = float(value)
+            elif expected_type == "bool":
+                if not isinstance(value, bool):
+                    errors.append(f"{key}: erwarteter Typ bool")
+                    continue
+            elif expected_type == "str":
+                if not isinstance(value, str):
+                    errors.append(f"{key}: erwarteter Typ str")
+                    continue
+
+            if "min" in schema and "max" in schema:
+                if value < schema["min"] or value > schema["max"]:
+                    errors.append(
+                        f"{key}: {value} außerhalb erlaubtem Bereich "
+                        f"[{schema['min']}, {schema['max']}]"
+                    )
         if errors:
             raise HTTPException(status_code=422, detail=errors)
 

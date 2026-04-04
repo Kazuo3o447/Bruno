@@ -4,6 +4,7 @@ from app.core.exchange_manager import PublicExchangeClient
 from app.services.liquidity_engine import LiquidityEngine
 from app.services.composite_scorer import CompositeScorer
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -23,6 +24,9 @@ class QuantAgentV4(PollingAgent):
         self.exm = PublicExchangeClient(redis=deps.redis)
         self._last_price: float = 0.0
         self._last_signal_time: float = 0.0  # NEU: Cooldown-Tracking
+        self._score_lock = asyncio.Lock()
+        self._liquidation_listener_task: Optional[asyncio.Task] = None
+        self._liquidation_spike_threshold_usdt: float = 500_000.0
         
         self.liq_engine = LiquidityEngine(deps.db_session_factory, deps.redis)
         self.scorer = CompositeScorer(redis_client=deps.redis)
@@ -51,93 +55,166 @@ class QuantAgentV4(PollingAgent):
             ttl=86400
         )
 
+        self.logger.info(
+            f"Liquidation-Event-Listener bereit für market:liquidations:{self.symbol}:events"
+        )
+
     async def process(self) -> None:
-        try:
-            # 0. Health Check für Liquidation_Cluster_SQL
-            await self._check_liquidation_cluster_sql()
-            
-            # 1. Orderbook + VAMP + CVD (aus quant_v3 kopiert)
-            ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
-            if not ob or not ob.get("bids") or not ob.get("asks"): 
-                return
-            
-            best_bid_p = ob["bids"][0][0]
-            best_ask_p = ob["asks"][0][0]
-            best_bid_v = ob["bids"][0][1]
-            best_ask_v = ob["asks"][0][1]
-            self._last_price = best_bid_p
-            vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
-            
-            # CVD
-            try:
-                trades = await self.exm.binance.fetch_trades(self.symbol, limit=20)
-                delta = sum(t["amount"] if t["side"] == "buy" else -t["amount"] for t in trades)
-                self.cvd_cumulative += delta
-                await self.deps.redis.set_cache("bruno:cvd:BTCUSDT", 
-                    {"value": self.cvd_cumulative, "timestamp": datetime.now(timezone.utc).isoformat()}, ttl=86400)
-            except Exception: 
-                pass
-            
-            # OFI Rolling (kopiere _fetch_ofi_rolling() 1:1 aus quant_v3.py)
-            ofi_data = await self._fetch_ofi_rolling()
-            
-            # Micro-Payload
-            await self.deps.redis.set_cache("bruno:quant:micro", {
-                "symbol": self.symbol, "price": best_bid_p, "VAMP": round(vamp, 2),
-                "CVD": round(self.cvd_cumulative, 2),
-                "OFI_Buy_Pressure": ofi_data["buy_pressure_ratio"],
-                "OFI_Mean_Imbalance": ofi_data["mean_imbalance"],
-                "OFI_Tick_Count": ofi_data["tick_count"],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
-            
-            # 2. Liquiditäts-Analyse
-            liq_result = await self.liq_engine.analyze(best_bid_p)
-            await self.deps.redis.set_cache("bruno:liq:intelligence", liq_result)
-            
-            # 3. Composite Score
-            signal = await self.scorer.score()
-            
-            # 4. Decision Feed
-            await self._log_decision(signal)
-            
-            # 5. Logging
-            self.logger.info(
-                f"Score={signal.composite_score:+.1f} ({signal.weight_preset}) "
-                f"dir={signal.direction} trade={signal.should_trade} "
-                f"MTF={'✓' if signal.mtf_aligned else '✗'} "
-                f"Sweep={'✓' if signal.sweep_confirmed else '✗'} "
-                f"| TA={signal.ta_score:+.1f} Liq={signal.liq_score:+.1f} "
-                f"Flow={signal.flow_score:+.1f} Macro={signal.macro_score:+.1f}"
-            )
-            
-            # 6. Trade-Cooldown (NEU: min 5 Min zwischen Signalen)
-            if signal.should_trade:
-                now = time.time()
-                cooldown = float(self._load_config_value("TRADE_COOLDOWN_SECONDS", 300))
-                if now - self._last_signal_time < cooldown:
-                    self.logger.info(
-                        f"Signal unterdrückt — Cooldown "
-                        f"({cooldown - (now - self._last_signal_time):.0f}s verbleibend)"
-                    )
-                else:
-                    signal_dict = signal.to_signal_dict(self.symbol)
-                    await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal_dict))
-                    self._last_signal_time = now
-                    self.logger.info(f"SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
-            
-            # Phantom Trade (Learning Mode)
-            if (not signal.should_trade and self.deps.config.DRY_RUN
-                and self._load_config_value("LEARNING_MODE_ENABLED", 0) > 0
-                and abs(signal.composite_score) > 30):
-                await self._record_phantom_trade(signal, best_bid_p)
-        
-        except Exception as e:
-            self.logger.error(f"QuantAgentV4 Fehler: {e}", exc_info=True)
+        await self._ensure_liquidation_listener()
+        await self._run_scoring_cycle(trigger_reason="poll")
 
     async def teardown(self) -> None:
+        if self._liquidation_listener_task:
+            self._liquidation_listener_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._liquidation_listener_task
         await self.exm.close()
         await super().teardown()
+
+    async def _listen_for_liquidation_spikes(self) -> None:
+        """Pub/Sub Listener für sofortige Reaktionen auf Force-Order-Spikes."""
+        channel = f"market:liquidations:{self.symbol}:events"
+        pubsub = await self.deps.redis.subscribe_channel(channel)
+        if not pubsub:
+            self.logger.warning(f"Liquidation-Listener nicht gestartet: {channel}")
+            return
+
+        while self.state.running:
+            try:
+                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if not msg or msg.get("type") != "message":
+                    await asyncio.sleep(0.1)
+                    continue
+
+                payload = json.loads(msg["data"])
+                total_usdt = float(payload.get("total_usdt", 0.0) or 0.0)
+                if total_usdt < self._liquidation_spike_threshold_usdt:
+                    continue
+
+                self.logger.info(
+                    f"Sofort-Trigger: Force-Order Spike {total_usdt:,.0f} USDT | "
+                    f"side={payload.get('side')}"
+                )
+                asyncio.create_task(
+                    self._run_scoring_cycle(
+                        trigger_reason="sweep_event",
+                        liquidation_event=payload,
+                    )
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.warning(f"Liquidation-Listener Fehler: {e}")
+                await asyncio.sleep(1)
+
+    async def _ensure_liquidation_listener(self) -> None:
+        """Startet den Liquidation-Listener genau einmal, sobald der Agent läuft."""
+        if self._liquidation_listener_task and not self._liquidation_listener_task.done():
+            return
+        if not self.state.running:
+            return
+
+        self._liquidation_listener_task = asyncio.create_task(self._listen_for_liquidation_spikes())
+        self.logger.info(
+            f"Liquidation-Event-Listener aktiviert für market:liquidations:{self.symbol}:events"
+        )
+
+    async def _run_scoring_cycle(
+        self,
+        trigger_reason: str = "poll",
+        liquidation_event: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            async with self._score_lock:
+                if trigger_reason != "poll":
+                    self.logger.info(f"Scoring-Run via {trigger_reason}")
+
+                # 0. Health Check für Liquidation_Cluster_SQL
+                await self._check_liquidation_cluster_sql()
+
+                # 1. Orderbook + VAMP + CVD (aus quant_v3 kopiert)
+                ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
+                if not ob or not ob.get("bids") or not ob.get("asks"):
+                    return
+
+                best_bid_p = ob["bids"][0][0]
+                best_ask_p = ob["asks"][0][0]
+                best_bid_v = ob["bids"][0][1]
+                best_ask_v = ob["asks"][0][1]
+                self._last_price = best_bid_p
+                vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
+
+                # CVD
+                try:
+                    trades = await self.exm.binance.fetch_trades(self.symbol, limit=20)
+                    delta = sum(t["amount"] if t["side"] == "buy" else -t["amount"] for t in trades)
+                    self.cvd_cumulative += delta
+                    await self.deps.redis.set_cache(
+                        "bruno:cvd:BTCUSDT",
+                        {"value": self.cvd_cumulative, "timestamp": datetime.now(timezone.utc).isoformat()},
+                        ttl=86400,
+                    )
+                except Exception:
+                    pass
+
+                # OFI Rolling (kopiere _fetch_ofi_rolling() 1:1 aus quant_v3.py)
+                ofi_data = await self._fetch_ofi_rolling()
+
+                # Micro-Payload
+                await self.deps.redis.set_cache("bruno:quant:micro", {
+                    "symbol": self.symbol,
+                    "price": best_bid_p,
+                    "VAMP": round(vamp, 2),
+                    "CVD": round(self.cvd_cumulative, 2),
+                    "OFI_Buy_Pressure": ofi_data["buy_pressure_ratio"],
+                    "OFI_Mean_Imbalance": ofi_data["mean_imbalance"],
+                    "OFI_Tick_Count": ofi_data["tick_count"],
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+
+                # 2. Liquiditäts-Analyse
+                liq_result = await self.liq_engine.analyze(best_bid_p, liquidation_event=liquidation_event)
+                await self.deps.redis.set_cache("bruno:liq:intelligence", liq_result)
+
+                # 3. Composite Score
+                signal = await self.scorer.score()
+
+                # 4. Decision Feed
+                await self._log_decision(signal)
+
+                # 5. Logging
+                self.logger.info(
+                    f"Score={signal.composite_score:+.1f} ({signal.weight_preset}) "
+                    f"dir={signal.direction} trade={signal.should_trade} "
+                    f"MTF={'✓' if signal.mtf_aligned else '✗'} "
+                    f"Sweep={'✓' if signal.sweep_confirmed else '✗'} "
+                    f"| TA={signal.ta_score:+.1f} Liq={signal.liq_score:+.1f} "
+                    f"Flow={signal.flow_score:+.1f} Macro={signal.macro_score:+.1f}"
+                )
+
+                # 6. Trade-Cooldown (event-driven sweeps dürfen sofort durchlaufen)
+                if signal.should_trade:
+                    now = time.time()
+                    cooldown = 0.0 if trigger_reason == "sweep_event" else float(self._load_config_value("TRADE_COOLDOWN_SECONDS", 300))
+                    if cooldown > 0 and now - self._last_signal_time < cooldown:
+                        self.logger.info(
+                            f"Signal unterdrückt — Cooldown "
+                            f"({cooldown - (now - self._last_signal_time):.0f}s verbleibend)"
+                        )
+                    else:
+                        signal_dict = signal.to_signal_dict(self.symbol)
+                        await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal_dict))
+                        self._last_signal_time = now
+                        self.logger.info(f"SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
+
+                # Phantom Trade (Learning Mode)
+                if (not signal.should_trade and self.deps.config.DRY_RUN
+                    and self._load_config_value("LEARNING_MODE_ENABLED", 0) > 0
+                    and abs(signal.composite_score) > 30):
+                    await self._record_phantom_trade(signal, best_bid_p)
+
+        except Exception as e:
+            self.logger.error(f"QuantAgentV4 Fehler: {e}", exc_info=True)
 
     async def _report_health(self, source: str, status: str, latency: float):
         """Meldet Status und Latenz an den globalen Redis-Hub."""
