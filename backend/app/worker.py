@@ -4,7 +4,6 @@ import sys
 import logging
 from app.core.redis_client import RedisClient
 from app.core.database import AsyncSessionLocal, init_db
-from app.core.llm_client import OllamaClient
 from app.core.log_manager import log_manager
 from app.core.config import settings
 from app.agents.deps import AgentDependencies
@@ -55,7 +54,6 @@ async def main():
 
     # 1. Infrastruktur Init
     redis = RedisClient()
-    ollama = OllamaClient()
 
     await wait_for_redis(redis)
     await wait_for_db()
@@ -106,15 +104,21 @@ async def main():
     if not telegram_started:
         logger.warning("Telegram nicht aktiv — Keys fehlen in .env")
     
-    ollama_ok = await ollama.health_check()
-    logger.info(f"Ollama Status: {'✅ Ok' if ollama_ok else '⚠️ Down (Fallback)'}")
+    # Binance API Health Check
+    from app.core.binance_client import binance_client
+    from app.core.market_data_collector import MarketDataCollector
+    binance_ok = await binance_client.health_check()
+    logger.info(f"Binance API Status: {'✅ Ok' if binance_ok else '⚠️ Down'}")
+    
+    # Market Data Collector
+    market_collector = MarketDataCollector(redis)
+    logger.info("Market Data Collector initialisiert")
 
     # 2. Dependency Injection
     deps = AgentDependencies(
         redis=redis,
         config=settings,
         db_session_factory=AsyncSessionLocal,
-        ollama=ollama,
         log_manager=log_manager,
         logger=logger
     )
@@ -132,6 +136,19 @@ async def main():
     # 4. Agenten Starten
     await orchestrator.start_all()
     cmd_task = asyncio.create_task(orchestrator.listen_for_commands())
+    
+    # Market Data Collection Task
+    async def market_data_loop():
+        while True:
+            try:
+                await market_collector.collect_all_data("BTCUSDT")
+                await asyncio.sleep(30)  # Alle 30 Sekunden aktualisieren
+            except Exception as e:
+                logger.error(f"Market data collection error: {e}")
+                await asyncio.sleep(60)  # Bei Fehler länger warten
+    
+    market_task = asyncio.create_task(market_data_loop())
+    logger.info("Market Data Collection gestartet")
 
     # 5. Shutdown Handling (signal für Windows nicht 100% kompatibel, daher try/except)
     loop = asyncio.get_event_loop()
@@ -145,7 +162,8 @@ async def main():
 
     # 6. Cleanup
     cmd_task.cancel()
-    await ollama.close()
+    market_task.cancel()
+    await market_collector.close()
     await redis.disconnect()
     
     # Telegram Bot stoppen

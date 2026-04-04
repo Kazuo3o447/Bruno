@@ -39,7 +39,7 @@ app.include_router(monitoring.router, prefix="/api/v1", tags=["monitoring"])
 app.include_router(positions.router, prefix="/api/v1", tags=["positions"])
 app.include_router(market.router, prefix="/api/v1/market", tags=["market"])
 app.include_router(liquidations.router, prefix="/api/v1/liquidations", tags=["liquidations"])
-app.include_router(decisions.router, tags=["decisions"])
+app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"])
 app.include_router(config_api.router, prefix="/api/v1", tags=["config"])
 app.include_router(export.router, prefix="/api/v1", tags=["export"])
 

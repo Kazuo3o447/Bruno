@@ -13,7 +13,7 @@ The LLM is **legacy-only** and is used exclusively for post-trade debriefing and
 ## 2. Data Flow Overview
 
 ```text
-market_candles / liquidations / market:ofi:ticks / orderbook
+Binance API (REST + WebSocket) → MarketDataCollector → Redis
     ↓
 TechnicalAnalysisAgent → bruno:ta:snapshot
     ↓
@@ -26,6 +26,32 @@ CompositeScorer → trade decision
 RiskAgent → veto state
     ↓
 ExecutionAgentV3 → order / position management
+```
+
+### 2.1 Binance API Integration (v2.1)
+
+**MarketDataCollector** holt automatisch alle 30 Sekunden:
+- **Ticker**: Aktueller Preis und 24h Statistiken
+- **Klines**: 1-Minuten Candlesticks für Technical Analysis
+- **Orderbook**: Bids/Asks mit Imbalance Ratio für OFI
+- **Funding Rate**: Futures Funding für Sentiment
+- **Open Interest**: Markttiefe und Liquidität
+- **Liquidations**: Liquidation Orders für Risk Management
+
+**Redis Storage Pattern:**
+```bash
+# Sehr frisch (5-10s TTL)
+market:ticker:BTCUSDT           # {"last_price": 67263.7}
+market:orderbook:BTCUSDT        # {"imbalance_ratio": 1.23}
+market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]
+
+# Frisch (60s TTL)
+bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
+market:liquidations:BTCUSDT    # [{"side": "SELL", "price": 67000}]
+
+# Mittel-frisch (300s TTL)
+market:funding:BTCUSDT         # {"fundingRate": 0.0001}
+market:open_interest:BTCUSDT   # {"openInterest": "123456.78"}
 ```
 
 ## 3. Technical Analysis Engine

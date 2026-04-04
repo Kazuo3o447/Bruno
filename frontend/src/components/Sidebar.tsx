@@ -4,18 +4,23 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
-  Settings,
   TrendingUp,
-  Terminal,
-  BrainCircuit
+  Activity,
+  FileText,
+  BarChart3,
+  Settings,
+  BookOpen,
+  Terminal
 } from "lucide-react";
 
 const menuItems = [
-  { href: "/",            label: "Dashboard",     icon: LayoutDashboard, description: "Bruno v2 Overview" },
-  { href: "/dashboard",   label: "Trading",       icon: TrendingUp,      description: "Charts & Positions" },
-  { href: "/logic",       label: "Logic",         icon: BrainCircuit,    description: "Pipeline & Decisions" },
-  { href: "/logs",        label: "Logs",          icon: Terminal,        description: "System Logs" },
-  { href: "/einstellungen", label: "Settings",    icon: Settings,        description: "Configuration" },
+  { href: "/", label: "Dashboard", icon: LayoutDashboard, description: "Übersicht & Status" },
+  { href: "/trading", label: "Trading", icon: TrendingUp, description: "Markt & Entscheidungen" },
+  { href: "/monitor", label: "Monitor", icon: Activity, description: "System & APIs" },
+  { href: "/logviewer", label: "Logs", icon: Terminal, description: "Alle System-Logs" },
+  { href: "/reports", label: "Reports", icon: BarChart3, description: "Analysen & Export" },
+  { href: "/settings", label: "Einstellungen", icon: Settings, description: "Konfiguration" },
+  { href: "/journey", label: "Journey", icon: BookOpen, description: "Dokumentation" },
 ];
 
 export default function Sidebar() {
@@ -40,7 +45,7 @@ export default function Sidebar() {
         <ul className="space-y-1">
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href;
+            const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
 
             return (
               <li key={item.href}>

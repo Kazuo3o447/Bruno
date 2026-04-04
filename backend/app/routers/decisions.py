@@ -9,7 +9,7 @@ from app.core.redis_client import get_redis_client, redis_client
 import json
 from typing import Optional
 
-router = APIRouter(prefix="/api/v1", tags=["decisions"])
+router = APIRouter(tags=["decisions"])
 
 
 @router.get("/decisions/feed")

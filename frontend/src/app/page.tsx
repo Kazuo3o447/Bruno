@@ -1,489 +1,538 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import dynamic from "next/dynamic";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { getBrowserWebSocketUrl } from "./utils/runtimeUrls";
 import {
-  TrendingUp, TrendingDown, Activity, ShieldAlert, Cpu, Zap,
-  BarChart3, Radio, AlertTriangle, CheckCircle2, Clock, Wifi,
-  ArrowRight, MessageSquare, Eye
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  Cell,
+  PieChart,
+  Pie,
+  Area,
+  AreaChart,
+} from "recharts";
+import {
+  TrendingUp,
+  Activity,
+  Zap,
+  Shield,
+  Clock,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  ChevronRight,
+  BarChart3,
+  Settings,
+  Monitor,
+  Cpu,
+  Radio,
+  Database,
+  Wifi
 } from "lucide-react";
 
-const LightweightChart = dynamic(() => import("../components/LightweightChart"), { ssr: false });
-const SystemMatrix = dynamic(() => import("../components/SystemMatrix"), { ssr: false });
-const ActivePositions = dynamic(() => import("../components/ActivePositions"), { ssr: false });
-const ApiConnectivity = dynamic(() => import("../components/ApiConnectivity"), { ssr: false });
-
-
-/* ─── Types ─── */
-interface HealthData {
-  api: boolean;
-  db: boolean;
-  redis: boolean;
-  ollama: boolean;
+// Types
+interface Telemetry {
+  status: "ARMED" | "HALTED";
+  veto_active: boolean;
+  veto_reason: string;
+  dry_run: boolean;
+  live_trading_approved?: boolean;
+  grss: {
+    score: number | null;
+    velocity_30min: number | null;
+    veto_active: boolean;
+  };
+  market: {
+    btc_price: number | null;
+    btc_change_24h_pct: number | null;
+    btc_change_1h_pct: number | null;
+    ofi: number | null;
+    funding_rate: number | null;
+    put_call_ratio: number | null;
+    fear_greed: number | null;
+    vix?: number | null;
+    dvol?: number | null;
+    retail_score?: number | null;
+    sentiment?: number | null;
+    oi_delta_pct?: number | null;
+    long_short_ratio?: number | null;
+  };
+  data_sources: Record<string, { status: string; latency_ms: number; last_update: string }>;
+  agents: Record<string, { status: string; age_seconds: number | null; healthy: boolean }>;
 }
 
-interface AgentBrief {
-  id: string;
-  name: string;
+interface Position {
   status: string;
-  type: string;
-  processed_count: number;
-  error_count: number;
-  description: string;
-  last_activity: string;
-  uptime_seconds?: number;
+  symbol: string;
+  side: string;
+  entry_price: number;
+  quantity: number;
+  stop_loss_price: number;
+  take_profit_price: number;
+  pnl_pct?: number;
 }
 
-interface LogEntry {
-  timestamp: string;
-  level: string;
-  source: string;
-  message: string;
+interface TradePipelineStatus {
+  summary: {
+    blocking_gates: string[];
+    trade_possible: boolean;
+    grss_score: number | null;
+    vix: number | null;
+    data_freshness_active: boolean | null;
+    context_timestamp: string | null;
+  };
+  gates: Record<string, { blocked?: boolean; note?: string }>;
+  portfolio: {
+    capital_eur: number | null;
+    total_trades: number | null;
+    daily_pnl_eur: number | null;
+  };
+  quant_micro: {
+    price: number | null;
+    ofi: number | null;
+    ofi_buy_pressure: number | null;
+    source: string | null;
+    timestamp: string | null;
+  };
 }
 
-export default function HomePage() {
-  const [price, setPrice] = useState(0);
-  const [change24h, setChange24h] = useState(0);
-  const [health, setHealth] = useState<HealthData>({ api: false, db: false, redis: false, ollama: false });
-  const [agents, setAgents] = useState<AgentBrief[]>([]);
-  const [newsHealth, setNewsHealth] = useState<{ active: number, total: number } | null>(null);
-  const [contextData, setContextData] = useState<any>(null);
-  const [microData, setMicroData] = useState<any>(null);
-  const [time, setTime] = useState<Date | null>(null);
-  const [recentLogs, setRecentLogs] = useState<LogEntry[]>([]);
-  const [sourceHealth, setSourceHealth] = useState<any>({});
-  const wsLogRef = useRef<WebSocket | null>(null);
+interface DecisionEvent {
+  ts?: string;
+  outcome?: string;
+  reason?: string;
+  regime?: string;
+  ofi?: number;
+}
 
-  // Realtime price via WS
-  useEffect(() => {
-    const ws = new WebSocket(getBrowserWebSocketUrl("/ws/market/BTCUSDT"));
-    ws.onmessage = (e) => {
-      try {
-        const p = JSON.parse(e.data);
-        if (p.type === "ticker") {
-          setPrice(p.data.last_price);
-          setChange24h(p.data.price_change_percent);
-        } else if (p.type === "context_update") {
-          setContextData(p.data);
-        } else if (p.type === "micro_update") {
-          setMicroData(p.data);
-        }
-      } catch {}
-    };
-    return () => ws.close();
-  }, []);
+interface DecisionFeedResponse {
+  events: DecisionEvent[];
+  count: number;
+  stats: {
+    ofi_below_threshold: number;
+    cascade_hold: number;
+    signals_generated: number;
+  };
+}
 
-  // Health check
-  useEffect(() => {
-    const check = async () => {
-      try {
-        const res = await fetch("/api/v1/health");
-        if (res.ok) {
-          const d = await res.json();
-          setHealth({
-            api: true,
-            db: d.database === "connected" || d.db === "ok",
-            redis: d.redis === "connected" || d.redis === "ok",
-            ollama: d.ollama === "connected" || d.ollama === "ok",
-          });
-        }
-      } catch {
-        setHealth({ api: false, db: false, redis: false, ollama: false });
-      }
-    };
-    check();
-    const iv = setInterval(check, 15000);
-    return () => clearInterval(iv);
-  }, []);
+interface PerformanceMetrics {
+  daily_return?: number;
+  weekly_return?: number;
+  win_rate?: number;
+  total_pnl?: number;
+  profit_factor?: number;
+  max_drawdown?: number;
+  status: string;
+}
 
-  // Agent status
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch("/api/v1/agents/status");
-        if (res.ok) {
-          const d = await res.json();
-          setAgents(d.agents || []);
-        }
-      } catch {}
-    };
-    load();
-    const iv = setInterval(load, 5000);
-    return () => clearInterval(iv);
-  }, []);
+// Utility functions
+function fmt(n: number | null | undefined, digits = 2): string {
+  if (n === null || n === undefined) return "—";
+  return n.toFixed(digits);
+}
 
-  // News Health
-  useEffect(() => {
-    const loadHealth = async () => {
-      try {
-        const res = await fetch("/api/v1/systemtest/news_health");
-        if (res.ok) {
-          const d = await res.json();
-          const feeds = Object.values(d.feeds || {});
-          const active = feeds.filter((f: any) => {
-            const status = String(f?.status || "").toLowerCase();
-            return ["success", "healthy", "online", "ok", "connected"]?.includes(status) || false;
-          }).length;
-          setNewsHealth({ active, total: feeds.length });
-        }
-      } catch {}
-    };
-    loadHealth();
-    const iv = setInterval(loadHealth, 30000);
-    return () => clearInterval(iv);
-  }, []);
+function fmtPrice(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
 
-  // Data Source Health & Latency - optimiert mit 5s Polling
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await fetch("/api/v1/systemtest/health/sources");
-        if (res.ok) {
-          setSourceHealth(await res.json());
-        }
-      } catch {}
-    };
-    load();
-    const iv = setInterval(load, 5000); // Schnellere Updates
-    return () => clearInterval(iv);
-  }, []);
+function timeAgo(isoStr: string | null | undefined): string {
+  if (!isoStr) return "—";
+  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+  if (diff < 60) return `${diff}s`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  return `${Math.floor(diff / 3600)}h`;
+}
 
-  // Live log stream for activity feed
-  useEffect(() => {
-    const connect = () => {
-      const ws = new WebSocket(getBrowserWebSocketUrl("/api/v1/logs/ws"));
-      wsLogRef.current = ws;
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === "new_log") {
-            setRecentLogs((prev: LogEntry[]) => [data.log, ...prev].slice(0, 30));
-          } else if (data.type === "history") {
-            setRecentLogs(data.logs.slice(0, 30));
-          }
-        } catch {}
-      };
-      ws.onclose = () => setTimeout(connect, 3000);
-    };
-    connect();
-    return () => wsLogRef.current?.close();
-  }, []);
-
-  // Clock
-  useEffect(() => {
-    setTime(new Date()); // Set initial time on client
-    const iv = setInterval(() => setTime(new Date()), 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const isUp = change24h >= 0;
-  const runningAgents = agents.filter(a => a.status === "running").length;
-  const totalOps = agents.reduce((sum, a) => sum + a.processed_count, 0);
-  const totalErrors = agents.reduce((sum, a) => sum + a.error_count, 0);
+// Components
+function StatusCard({ title, value, status, icon: Icon, detail }: { 
+  title: string; 
+  value: string; 
+  status: "success" | "warning" | "error" | "neutral";
+  icon: React.ElementType;
+  detail?: string;
+}) {
+  const colors = {
+    success: "border-emerald-800 bg-emerald-950/20 text-emerald-400",
+    warning: "border-amber-800 bg-amber-950/20 text-amber-400",
+    error: "border-red-800 bg-red-950/20 text-red-400",
+    neutral: "border-slate-800 bg-slate-950/20 text-slate-400",
+  };
 
   return (
-    <div className="p-6 lg:p-8 animate-page-in min-h-screen relative">
+    <div className={`p-4 rounded-xl border ${colors[status]}`}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] uppercase tracking-wider text-slate-500">{title}</span>
+        <Icon className="w-4 h-4 opacity-60" />
+      </div>
+      <div className="text-lg font-bold">{value}</div>
+      {detail && <div className="text-[10px] mt-1 opacity-70">{detail}</div>}
+    </div>
+  );
+}
 
-      {/* Header */}
-      <header className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-8 relative z-10">
-        <div>
-          <p className="text-[11px] text-slate-600 font-bold uppercase tracking-[0.2em] mb-1">
-            Command Center
-          </p>
-          <h1 className="text-3xl font-extrabold tracking-tight relative">
-            {/* Neon BRUNO Effect */}
-            <span className="relative text-cyan-400">
-              BRUNO
-            </span>
-          </h1>
-          <p className="text-xs text-cyan-200/60 font-mono mt-1">
-            Autonomous Bitcoin Trading Intelligence
-          </p>
+export default function Dashboard() {
+  const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
+  const [position, setPosition] = useState<Position | null>(null);
+  const [pipeline, setPipeline] = useState<TradePipelineStatus | null>(null);
+  const [decisions, setDecisions] = useState<DecisionFeedResponse | null>(null);
+  const [performance, setPerformance] = useState<PerformanceMetrics | null>(null);
+  const [error, setError] = useState("");
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+
+  const refresh = useCallback(async () => {
+    try {
+      const [telRes, posRes, pipeRes, decRes, perfRes] = await Promise.allSettled([
+        fetch("/api/v1/telemetry/live").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)),
+        fetch("/api/v1/positions/open").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)),
+        fetch("/api/v1/monitoring/debug/trade-pipeline").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)),
+        fetch("/api/v1/decisions/feed?limit=20").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)),
+        fetch("/api/v1/performance/metrics").then(r => r.ok ? r.json() : Promise.reject(`HTTP ${r.status}`)),
+      ]);
+
+      if (telRes.status === "fulfilled") setTelemetry(telRes.value);
+      if (posRes.status === "fulfilled") setPosition(posRes.value.position || posRes.value.positions?.[0] || null);
+      if (pipeRes.status === "fulfilled") setPipeline(pipeRes.value);
+      if (decRes.status === "fulfilled") setDecisions(decRes.value);
+      if (perfRes.status === "fulfilled") setPerformance(perfRes.value);
+
+      setLastUpdate(new Date());
+      setError("");
+    } catch (e: any) {
+      setError(e.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => clearInterval(interval);
+  }, [refresh]);
+
+  // Derived data
+  const decisionTimeline = useMemo(() => {
+    if (!decisions?.events) return [];
+    return [...decisions.events].reverse().slice(0, 20).map((e, i) => ({
+      time: e.ts ? new Date(e.ts).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "—",
+      signal: e.outcome?.includes("SIGNAL") ? 1 : 0,
+      blocked: e.outcome?.includes("HOLD") || e.outcome?.includes("BLOCK") || e.outcome?.includes("VETO") ? 1 : 0,
+      ofi: e.ofi || 0,
+    }));
+  }, [decisions]);
+
+  const marketData = useMemo(() => [
+    { label: "BTC Preis", value: fmtPrice(telemetry?.market?.btc_price), change: telemetry?.market?.btc_change_24h_pct },
+    { label: "24h Change", value: fmt(telemetry?.market?.btc_change_24h_pct, 2) + "%", change: telemetry?.market?.btc_change_24h_pct },
+    { label: "1h Change", value: fmt(telemetry?.market?.btc_change_1h_pct, 2) + "%", change: telemetry?.market?.btc_change_1h_pct },
+    { label: "OFI", value: fmt(telemetry?.market?.ofi, 2), change: telemetry?.market?.ofi },
+    { label: "Funding", value: telemetry?.market?.funding_rate ? (telemetry.market.funding_rate * 100).toFixed(4) + "%" : "—", change: telemetry?.market?.funding_rate },
+    { label: "VIX", value: fmt(telemetry?.market?.vix, 1), change: telemetry?.market?.vix ? -(telemetry.market.vix - 20) : 0 },
+  ], [telemetry]);
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] text-white p-8">
+        <div className="bg-red-950/30 border border-red-800 rounded-xl p-6">
+          <AlertTriangle className="w-8 h-8 text-red-400 mb-2" />
+          <h2 className="text-lg font-bold text-red-400">Verbindungsfehler</h2>
+          <p className="text-slate-400">{error}</p>
+          <button onClick={refresh} className="mt-4 px-4 py-2 bg-red-600 rounded-lg text-sm">Erneut versuchen</button>
         </div>
-        <div className="flex items-center gap-3 text-xs text-slate-500">
-          <Wifi className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="font-mono">{time ? time.toLocaleTimeString("de-DE", { hour12: false }) : "--:--:--"}</span>
-          <span className="text-slate-700">|</span>
-          <div className="flex items-center gap-2">
-            {contextData?.GRSS_Score === 0 && (
-              <span className="text-red-500 font-bold animate-pulse px-2 py-0.5 bg-red-500/10 border border-red-500/20 rounded-md uppercase text-[10px]">
-                [CRITICAL] Data Silence - Trading Halted
+      </div>
+    );
+  }
+
+  if (!telemetry) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] text-white p-8 flex items-center justify-center">
+        <div className="text-center">
+          <Activity className="w-8 h-8 text-indigo-400 animate-pulse mx-auto mb-4" />
+          <p className="text-slate-400">Lade Dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const armed = telemetry.status === "ARMED";
+  const grss = telemetry.grss?.score;
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0f] text-white p-6">
+      {/* Header */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Dashboard</h1>
+            <p className="text-sm text-slate-500">Letzte Aktualisierung: {lastUpdate.toLocaleTimeString("de-DE")}</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${armed ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+              {armed ? "ARMED" : "HALTED"}
+            </span>
+            {telemetry.dry_run && (
+              <span className="px-3 py-1 rounded-full text-sm font-medium bg-amber-500/20 text-amber-400">
+                PAPER TRADING
               </span>
             )}
-            <span>{runningAgents}/{agents.length} Agenten aktiv</span>
-          </div>
-          <span className="text-slate-700">|</span>
-          <span>Paper Trading</span>
-        </div>
-      </header>
-
-      {/* Price Hero with inline chart */}
-      <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6 lg:p-8 mb-6 relative overflow-hidden glow-indigo">
-        <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/[0.03] rounded-full -translate-y-1/2 translate-x-1/2 blur-3xl pointer-events-none" />
-        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6 relative z-10">
-          <div className="shrink-0">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-sm font-bold text-slate-400">BTC / USDT</span>
-              <span className="text-[9px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-bold uppercase tracking-wider">
-                Binance Futures
-              </span>
-            </div>
-            <div className="flex items-end gap-4 mb-2">
-              <span className="text-5xl font-extrabold text-white font-mono tracking-tight">
-                ${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
-              <span className={`flex items-center gap-1 text-lg font-bold mb-1 ${isUp ? "text-emerald-400" : "text-red-400"}`}>
-                {isUp ? <TrendingUp className="w-5 h-5" /> : <TrendingDown className="w-5 h-5" />}
-                {isUp ? "+" : ""}{change24h.toFixed(2)}%
-              </span>
-            </div>
-            {/* Live Telemetry (Phase 6) */}
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#111122] border border-[#1a1a2e]">
-                <span className="text-[10px] text-slate-500 font-bold uppercase">Source</span>
-                <span className="text-[10px] text-indigo-400 font-mono font-bold">{microData?.Source || "BINANCE"}</span>
-              </div>
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#111122] border border-[#1a1a2e]">
-                <span className="text-[10px] text-slate-500 font-bold uppercase">Latency</span>
-                <span className={`text-[10px] font-mono font-bold ${microData?.latency_ms < 200 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                   {microData?.latency_ms ? `${Math.round(microData.latency_ms)}ms` : "--"}
-                </span>
-              </div>
-              <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#111122] border border-[#1a1a2e] ${contextData?.Stress_Score > 80 ? 'animate-pulse' : ''}`}>
-                <span className="text-[10px] text-slate-500 font-bold uppercase">Stress</span>
-                <span className={`text-[10px] font-mono font-bold ${contextData?.Stress_Score > 70 ? 'text-red-400' : contextData?.Stress_Score > 40 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                   {contextData?.Stress_Score ?? "--"}
-                </span>
-              </div>
-            </div>
-            </div>
-            
-            <div className="flex-1 min-w-0">
-               <LightweightChart symbol="BTCUSDT" />
-            </div>
           </div>
         </div>
+      </div>
 
-        <div className="mb-8">
-          <ActivePositions />
-        </div>
+      {/* Quick Status Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+        <StatusCard
+          title="System Status"
+          value={armed ? "ONLINE" : "PAUSED"}
+          status={armed ? "success" : "warning"}
+          icon={armed ? CheckCircle : XCircle}
+          detail={telemetry.veto_reason || "Keine Veto-Gründe"}
+        />
+        <StatusCard
+          title="GRSS Score"
+          value={grss ? grss.toFixed(1) : "—"}
+          status={grss && grss >= 40 ? "success" : grss && grss >= 25 ? "warning" : "error"}
+          icon={Shield}
+          detail={grss && grss >= 48 ? "Risk-On" : "Risk-Off"}
+        />
+        <StatusCard
+          title="BTC Preis"
+          value={fmtPrice(telemetry.market.btc_price)}
+          status={telemetry.market.btc_change_24h_pct && telemetry.market.btc_change_24h_pct >= 0 ? "success" : "error"}
+          icon={TrendingUp}
+          detail={`24h: ${fmt(telemetry.market.btc_change_24h_pct, 2)}%`}
+        />
+        <StatusCard
+          title="VIX"
+          value={fmt(telemetry.market.vix, 1)}
+          status={telemetry.market.vix && telemetry.market.vix > 30 ? "error" : telemetry.market.vix && telemetry.market.vix > 20 ? "warning" : "success"}
+          icon={Activity}
+          detail={telemetry.market.vix && telemetry.market.vix > 30 ? "High Volatility" : "Normal"}
+        />
+        <StatusCard
+          title="OFI"
+          value={fmt(telemetry.market.ofi, 2)}
+          status={telemetry.market.ofi && telemetry.market.ofi > 0.3 ? "success" : telemetry.market.ofi && telemetry.market.ofi < -0.3 ? "error" : "neutral"}
+          icon={Zap}
+          detail="Order Flow Imbalance"
+        />
+        <StatusCard
+          title="Win Rate"
+          value={performance?.win_rate ? fmt(performance.win_rate, 1) + "%" : "—"}
+          status={performance?.win_rate && performance.win_rate > 50 ? "success" : "neutral"}
+          icon={BarChart3}
+          detail={`${pipeline?.portfolio?.total_trades || 0} Trades`}
+        />
+      </div>
 
-        <div className="mb-8">
-          <SystemMatrix />
-        </div>
-
-        <div className="mb-8">
-          <ApiConnectivity sources={sourceHealth} loading={Object.keys(sourceHealth).length === 0} />
-        </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-
-        {/* Agent Pipeline — now with more info */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-sm font-bold text-white flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-indigo-400" />
-              Agent Pipeline
-            </h2>
-            <Link href="/agenten" className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-wider flex items-center gap-1 transition-colors">
-              Details <ArrowRight className="w-3 h-3" />
-            </Link>
+      {/* Main Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column - Chart & Position */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Chart */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-slate-300">BTC/USDT - Entscheidungszyklen</h3>
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"/> Signal</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"/> Blocked</span>
+              </div>
+            </div>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={decisionTimeline}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1a1a2e" />
+                  <XAxis dataKey="time" tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} />
+                  <YAxis tick={{ fill: "#64748b", fontSize: 10 }} axisLine={false} domain={[0, 1]} />
+                  <Tooltip 
+                    contentStyle={{ background: "#0c0c18", border: "1px solid #1a1a2e", borderRadius: "8px" }}
+                    labelStyle={{ color: "#94a3b8" }}
+                  />
+                  <Area type="step" dataKey="signal" stackId="1" stroke="#10b981" fill="#10b981" fillOpacity={0.3} />
+                  <Area type="step" dataKey="blocked" stackId="2" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          {agents.length === 0 ? (
-            <p className="text-xs text-slate-600 italic">Lade Agenten-Status…</p>
-          ) : (
-            <div className="space-y-2">
-              {agents.map((a: AgentBrief) => (
-                <div key={a.id} className="flex items-center justify-between py-1.5 group">
-                  <div className="flex items-center gap-2.5">
-                    <div className="relative">
-                      <span className={`flex w-2 h-2 rounded-full ${a.status === "running" ? "bg-emerald-500" : "bg-slate-700"}`} />
-                      {a.status === "running" && (
-                        <span className="absolute inset-0 flex w-2 h-2 rounded-full bg-emerald-400 animate-ping opacity-30" />
-                      )}
-                    </div>
-                    <span className="text-sm text-slate-300 font-medium">{a.name}</span>
-                  </div>
-                  <span className="text-[10px] text-slate-600 font-mono group-hover:text-slate-400 transition-colors">
-                    {a.processed_count} ops
+
+          {/* Position Card */}
+          {position?.status === "open" ? (
+            <div className={`p-4 rounded-xl border ${position.side === "long" ? "border-emerald-800 bg-emerald-950/10" : "border-red-800 bg-red-950/10"}`}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <span className={`px-2 py-1 rounded text-xs font-bold ${position.side === "long" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+                    {position.side.toUpperCase()}
                   </span>
+                  <span className="font-medium">{position.symbol}</span>
+                </div>
+                <Link href="/trading" className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+                  Details <ChevronRight className="w-3 h-3" />
+                </Link>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase">Entry</div>
+                  <div className="text-sm font-medium">{fmtPrice(position.entry_price)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase">Current</div>
+                  <div className="text-sm font-medium">{fmtPrice(telemetry.market.btc_price)}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase">P&L</div>
+                  <div className={`text-sm font-medium ${position.pnl_pct && position.pnl_pct >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                    {position.pnl_pct ? fmt(position.pnl_pct, 2) + "%" : "—"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase">SL / TP</div>
+                  <div className="text-sm font-medium text-slate-300">
+                    {fmtPrice(position.stop_loss_price)} / {fmtPrice(position.take_profit_price)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 rounded-xl border border-slate-800 bg-slate-950/20 text-center">
+              <p className="text-slate-500 text-sm">Keine offene Position</p>
+              <Link href="/trading" className="text-xs text-indigo-400 hover:text-indigo-300 mt-2 inline-block">
+                Zur Trading-Ansicht →
+              </Link>
+            </div>
+          )}
+
+          {/* Pipeline Gates */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-slate-300">Entscheidungs-Kaskade</h3>
+              <Link href="/trading" className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+                Vollständige Ansicht <ChevronRight className="w-3 h-3" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+              {[
+                { name: "Data", check: !pipeline?.gates?.gate_1_data_freshness?.blocked, detail: "Freshness" },
+                { name: "Context", check: !pipeline?.gates?.gate_2_context?.blocked, detail: "GRSS" },
+                { name: "Sentiment", check: !pipeline?.gates?.gate_3_sentiment?.blocked, detail: "News" },
+                { name: "Quant", check: !pipeline?.gates?.gate_4_quant_micro?.blocked, detail: "OFI" },
+                { name: "Risk", check: !pipeline?.gates?.gate_5_risk_veto?.blocked, detail: "Vetos" },
+                { name: "Portfolio", check: !pipeline?.gates?.gate_6_portfolio?.blocked, detail: "Limits" },
+              ].map((gate, i) => (
+                <div key={gate.name} className={`p-3 rounded-lg border text-center ${gate.check ? "border-emerald-800 bg-emerald-950/10" : "border-red-800 bg-red-950/10"}`}>
+                  <div className={`w-2 h-2 rounded-full mx-auto mb-1 ${gate.check ? "bg-emerald-400" : "bg-red-400"}`} />
+                  <div className={`text-xs font-medium ${gate.check ? "text-emerald-400" : "text-red-400"}`}>{gate.name}</div>
+                  <div className="text-[9px] text-slate-500">{gate.detail}</div>
                 </div>
               ))}
             </div>
-          )}
-          {/* Pipeline Summary */}
-          <div className="mt-4 pt-4 border-t border-[#1a1a2e] grid grid-cols-3 gap-2 text-center">
-            <div>
-              <p className="text-[9px] text-slate-600 font-bold uppercase">Aktiv</p>
-              <p className="text-sm font-bold text-emerald-400 font-mono">{runningAgents}</p>
-            </div>
-            <div>
-              <p className="text-[9px] text-slate-600 font-bold uppercase">Total Ops</p>
-              <p className="text-sm font-bold text-white font-mono">{totalOps}</p>
-            </div>
-            <div>
-              <p className="text-[9px] text-slate-600 font-bold uppercase">Errors</p>
-              <p className={`text-sm font-bold font-mono ${totalErrors > 0 ? "text-red-400" : "text-emerald-400"}`}>{totalErrors}</p>
-            </div>
+            {pipeline?.summary?.blocking_gates && pipeline.summary.blocking_gates.length > 0 && (
+              <div className="mt-3 p-2 bg-red-950/20 border border-red-800 rounded-lg text-xs text-red-400">
+                Blocked by: {pipeline.summary.blocking_gates.join(" → ")}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Market Indicators / Sentiment & Macro Card */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6">
-          <h2 className="text-sm font-bold text-white mb-5 flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-indigo-400" />
-            Sentiment & Macro Bias
-          </h2>
-          <div className="space-y-4">
-            {/* GRSS Score Section */}
-            <div className="mb-4">
-              <div className="flex justify-between items-end mb-1.5">
-                <span className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">GRSS Score</span>
-                <span className={`text-lg font-mono font-bold ${
-                  !contextData ? "text-slate-600" :
-                  contextData.GRSS_Score < 40 ? "text-red-400" :
-                  contextData.GRSS_Score < 70 ? "text-amber-400" : "text-emerald-400"
-                }`}>
-                  {contextData?.GRSS_Score ?? "—"}
+        {/* Right Column - Market & Agents */}
+        <div className="space-y-6">
+          {/* Market Overview */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-slate-300 mb-4">Marktdaten</h3>
+            <div className="space-y-3">
+              {marketData.map((item) => (
+                <div key={item.label} className="flex items-center justify-between">
+                  <span className="text-xs text-slate-500">{item.label}</span>
+                  <span className={`text-sm font-medium ${
+                    item.change !== undefined && item.change !== null
+                      ? item.change > 0 ? "text-emerald-400" : item.change < 0 ? "text-red-400" : "text-slate-300"
+                      : "text-slate-300"
+                  }`}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Agent Status */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-slate-300">Agenten</h3>
+              <Link href="/monitor" className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1">
+                <Monitor className="w-3 h-3" />
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {["ingestion", "technical", "quant", "context", "risk", "execution"].map((agentId) => {
+                const agent = telemetry.agents?.[agentId];
+                if (!agent) return null;
+                return (
+                  <div key={agentId} className="flex items-center justify-between p-2 rounded-lg bg-[#080810]">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${agent.healthy ? "bg-emerald-400" : "bg-red-400"}`} />
+                      <span className="text-xs capitalize text-slate-300">{agentId}</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500">{agent.age_seconds ? Math.round(agent.age_seconds) + "s" : "—"}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Performance Summary */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-slate-300 mb-4">Performance</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span className="text-xs text-slate-500">Daily Return</span>
+                <span className={`text-sm ${performance?.daily_return && performance.daily_return >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {performance?.daily_return ? fmt(performance.daily_return, 2) + "%" : "—"}
                 </span>
               </div>
-              <div className="h-1.5 w-full bg-[#1a1a2e] rounded-full overflow-hidden">
-                <div 
-                  className={`h-full transition-all duration-1000 ${
-                    !contextData ? "bg-slate-800" :
-                    contextData.GRSS_Score < 40 ? "bg-red-500" :
-                    contextData.GRSS_Score < 70 ? "bg-amber-500" : "bg-emerald-500"
-                  }`}
-                  style={{ width: `${contextData?.GRSS_Score ?? 0}%` }}
-                />
+              <div className="flex justify-between">
+                <span className="text-xs text-slate-500">Weekly Return</span>
+                <span className={`text-sm ${performance?.weekly_return && performance.weekly_return >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {performance?.weekly_return ? fmt(performance.weekly_return, 2) + "%" : "—"}
+                </span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-slate-500">Profit Factor</span>
+                <span className={`text-sm ${performance?.profit_factor && performance.profit_factor >= 1.5 ? "text-emerald-400" : "text-amber-400"}`}>
+                  {performance?.profit_factor ? fmt(performance.profit_factor, 2) : "—"}
+                </span>
               </div>
+              <div className="flex justify-between">
+                <span className="text-xs text-slate-500">Max Drawdown</span>
+                <span className="text-sm text-red-400">
+                  {performance?.max_drawdown ? fmt(performance.max_drawdown, 2) + "%" : "—"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Links */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-slate-300 mb-4">Schnellzugriff</h3>
+            <div className="space-y-2">
+              <Link href="/trading" className="flex items-center justify-between p-2 rounded-lg bg-[#080810] hover:bg-[#0f0f18] transition-colors">
+                <span className="text-xs text-slate-300">Trading Details</span>
+                <ChevronRight className="w-3 h-3 text-slate-500" />
+              </Link>
+              <Link href="/monitor" className="flex items-center justify-between p-2 rounded-lg bg-[#080810] hover:bg-[#0f0f18] transition-colors">
+                <span className="text-xs text-slate-300">System Monitor</span>
+                <ChevronRight className="w-3 h-3 text-slate-500" />
+              </Link>
+              <Link href="/settings" className="flex items-center justify-between p-2 rounded-lg bg-[#080810] hover:bg-[#0f0f18] transition-colors">
+                <span className="text-xs text-slate-300">Einstellungen</span>
+                <Settings className="w-3 h-3 text-slate-500" />
+              </Link>
             </div>
           </div>
         </div>
       </div>
-  );
-}
-
-/* legacy broken tail disabled
-
-// ─── Sub-Components ───
-
-/*
-
-function MiniStat({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div className="bg-[#06060f] border border-[#1a1a2e] rounded-xl px-4 py-2.5 min-w-[110px]">
-      <p className="text-[9px] text-slate-600 font-bold uppercase tracking-wider mb-0.5">{label}</p>
-      <p className={`text-sm font-bold font-mono ${color}`}>{value}</p>
     </div>
   );
 }
-
-function SourceHealthRow({ label, data }: { label: string; data: any }) {
-  const status = String(data?.status || "offline").toLowerCase();
-  const latency = data?.latency_ms || 0;
-  const ok = ["online", "ok", "healthy", "connected", "success", "running"]?.includes(status) || false;
-  const warn = ["degraded", "warning", "fallback", "partial"]?.includes(status) || false;
-  
-  const latencyColor = latency < 200 ? "text-emerald-500" : latency < 1000 ? "text-amber-500" : "text-red-500";
-  
-  return (
-    <div className="flex items-center justify-between py-1">
-      <span className="text-sm text-slate-400">{label}</span>
-      <div className="flex items-center gap-2">
-        {ok && latency > 0 && (
-           <span className={`text-[10px] font-mono ${latencyColor}`}>
-              {Math.round(latency)}ms
-           </span>
-        )}
-        <span
-          className={`w-2 h-2 rounded-full ${ok ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : warn ? "bg-amber-500" : "bg-red-500"}`}
-        />
-      </div>
-    </div>
-  );
-}
-
-function HealthRow({ label, ok, warn }: { label: string; ok: boolean; warn?: boolean }) {
-  return (
-    <div className="flex items-center justify-between py-1">
-      <span className="text-sm text-slate-400">{label}</span>
-      {ok ? (
-        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
-          <CheckCircle2 className="w-3.5 h-3.5" /> Online
-        </span>
-      ) : warn ? (
-        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
-          <AlertTriangle className="w-3.5 h-3.5" /> Fallback
-        </span>
-      ) : (
-        <span className="flex items-center gap-1.5 text-xs text-slate-600 font-medium">
-          <Clock className="w-3.5 h-3.5" /> Prüfe…
-        </span>
-      )}
-    </div>
-  );
-}
-
-function IndicatorRow({ label, value, badge, badgeColor }: { label: string; value: string; badge: string; badgeColor: string }) {
-  return (
-    <div className="flex items-center justify-between group">
-      <div>
-        <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider mb-0.5">{label}</p>
-        <p className="text-sm font-bold text-white font-mono">{value}</p>
-      </div>
-      <span className={`text-[9px] px-2 py-0.5 rounded-full border font-bold uppercase tracking-wider ${badgeColor}`}>
-        {badge}
-      </span>
-    </div>
-  );
-}
-
-function BiasBar({ label, value }: { label: string; value: number | undefined }) {
-  const normValue = value !== undefined ? (value + 1) / 2 : 0.5; // -1..1 to 0..1
-  const colorClass = value === undefined ? "bg-slate-800" :
-                    value > 0.3 ? "bg-emerald-500" :
-                    value < -0.3 ? "bg-red-500" : "bg-indigo-500/60";
-
-  return (
-    <div>
-      <div className="flex justify-between items-center mb-1">
-        <span className="text-[10px] text-slate-500 font-medium">{label}</span>
-        <span className={`text-[10px] font-mono ${value && value > 0 ? "text-emerald-400" : value && value < 0 ? "text-red-400" : "text-slate-500"}`}>
-          {value !== undefined ? (value > 0 ? "+" : "") + value.toFixed(2) : "—"}
-        </span>
-      </div>
-      <div className="h-1 w-full bg-[#1a1a2e] rounded-full overflow-hidden">
-        <div 
-          className={`h-full transition-all duration-700 ${colorClass}`}
-          style={{ width: `${normValue * 100}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
-function KPIRow({ icon, label, value }: { icon: any; label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        {icon}
-        <span className="text-sm text-slate-300">{label}</span>
-      </div>
-      <span className="text-sm font-bold text-white font-mono">{value}</span>
-    </div>
-  );
-}
-
-function formatUptime(sec: number): string {
-  if (sec < 60) return `${sec}s`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
-  return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`;
-}
-
-*/
-
-

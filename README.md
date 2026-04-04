@@ -19,15 +19,16 @@
 | **Strategie** | Medium-Frequency (5–15 Minuten Signale) |
 | **Startkapital** | 500 EUR |
 | **Execution-Börse** | **Bybit** (Futures, max 1.0× Leverage) |
-| **Daten-Börse** | **Binance** (WebSocket + REST) |
+| **Daten-Börse** | **Binance** (WebSocket + REST + API Client) |
 | **LLM-Stack** | Deepseek Reasoning API (Cloud) für Post-Trade Analyse & Learning |
+| **API Integration** | BinanceDataClient + MarketDataCollector (30s Updates) |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (Cloud API Integration) |
-| **Dashboard** | Next.js mit Live-API-Integration und Preset-System |
+| **Dashboard** | Next.js 14 mit 7 Seiten: Dashboard, Trading, Monitor, Logs, Reports, Einstellungen, Journey |
 | **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
 | **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
 | **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
 
-**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten. Keine LLM-Entscheidungskette. **Post-Trade Analyse mit professioneller Deepseek API.**
+**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten. Keine LLM-Entscheidungskette. **Post-Trade Analyse mit professioneller Deepseek API.** **Live Marktdaten von Binance alle 30 Sekunden.**
 
 > ⚠️ **WICHTIG:** Alle Architekturentscheidungen sind in `WINDSURF_MANIFEST.md` dokumentiert. Dieses Dokument überschreibt alle anderen bei Widerspruch.
 

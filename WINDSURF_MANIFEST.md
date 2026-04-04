@@ -7,7 +7,7 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-06 (Bruno v2.1 Dashboard + Logic Page)
+> Letzte Aktualisierung: 2026-04-06 (Bruno v2.2 Frontend Neuaufbau - 7 Seiten)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
 ---
@@ -24,18 +24,55 @@
 - **Breakeven-Stop** — SL auf Entry wenn Trade > 0.5% im Plus
 - **60s Zykluszeit** — kein LLM-Overhead mehr
 - **Post-Trade Deepseek Analysis** — Professionelle Reasoning API nach jedem Trade → DB für Lernloop
-- **Dashboard v2.1** — 4 Sections: Trading & Market, Decision Analysis, Pipeline Status, System Health
-- **Logic Page (`/logic`)** — 6-Gate Pipeline, GRSS Composition, Composite Radar, Decision Timeline
+- **Binance API Integration v2.1** — Ollama entfernt, BinanceDataClient + MarketDataCollector
+- **Live Marktdaten** — Alle 30s: Ticker, Klines, Orderbook, Funding, OI, Liquidations
+- **Frontend v2.2** — 7 Seiten: Dashboard, Trading, Monitor, Logs, Reports, Einstellungen, Journey
+- **Dashboard** — Status-Cards, Entscheidungs-Timeline, Pipeline Gates, Agenten-Status, Performance
+- **Trading Page** — 6-Gate Kaskade-Visualisierung, Quant Micro Daten, GRSS Breakdown
+- **Monitor** — API-Health Tests, Agent Heartbeats, Scheduler Steuerung
+- **Logs** — Live WebSocket Logs mit Filter und Export
+- **Reports** — Trades, Lern-Logs, Performance-Perioden
+- **Settings** — 4 Presets, Parameter-Editor, Deepseek-Test
+- **Journey** — Dokumentation mit 7 Abschnitten
 
 ## AGENT-PIPELINE v2
 
 | Stage | Agenten | Redis Output |
 |-------|---------|-------------|
-| 1 | ingestion | market_candles, liquidations, market:ticker, market:funding, market:ofi:ticks |
+| 1 | ingestion | market_candles, liquidations, market:ticker, market:funding, market:ofi:ticks, market:orderbook |
 | 2 | technical, context, sentiment | bruno:ta:snapshot, bruno:context:grss, bruno:sentiment:aggregate |
 | 3 | quant | bruno:quant:micro, bruno:liq:intelligence, bruno:decisions:feed, bruno:pubsub:signals |
 | 4 | risk | bruno:veto:state |
 | 5 | execution | bruno:portfolio:state |
+
+### Binance API Integration (v2.1)
+
+**MarketDataCollector** (Worker-Task, 30s Intervall):
+```python
+# API Endpoints (keine Keys erforderlich)
+get_ticker()           # 67263.7 USD
+get_klines()           # 500 Candlesticks
+get_orderbook()        # 100 Bids/Asks
+get_funding_rate()     # 0.0001
+get_open_interest()    # 123456 BTC
+get_liquidations()     # [{"side": "SELL", "price": 67000}]
+```
+
+**Redis Storage Pattern:**
+```bash
+# 5-10s TTL (sehr frisch)
+market:ticker:BTCUSDT           # {"last_price": 67263.7}
+market:orderbook:BTCUSDT        # {"imbalance_ratio": 1.23}
+market:ofi:ticks               # [{"t": "...", "r": 1.23}]
+
+# 60s TTL (frisch)
+bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
+market:liquidations:BTCUSDT    # [{"side": "SELL", "price": 67000}]
+
+# 300s TTL (mittel-frisch)
+market:funding:BTCUSDT         # {"fundingRate": 0.0001}
+market:open_interest:BTCUSDT   # {"openInterest": "123456.78"}
+```
 
 ### Entscheidungslogik: Composite Scorer
 
@@ -789,6 +826,18 @@ Ziel erreicht: Mehr Paper-Trades/Tag + deutlich mehr Trainingsdaten, ohne Produk
 
 ---
 
+### ✅ PHASE v2.1 - Ollama Entfernung & Binance API Integration (2026-04-04)
+- **Ollama komplett entfernt**: Keine lokalen LLMs mehr im System
+- **BinanceDataClient implementiert**: Zentraler API-Client für alle Marktdaten
+- **MarketDataCollector erstellt**: Automatische Datensammlung alle 30s
+- **LatencyMonitor bereinigt**: Keine Ollama-Abhängigkeiten mehr
+- **Worker Pipeline angepasst**: Ollama-freier Start und Betrieb
+- **Live Marktdaten verfügbar**: Ticker, Klines, Orderbook, Funding, OI, Liquidations
+- **Frontend Integration**: Frische Daten für Dashboard und Trading-Seite
+- **Dokumentation aktualisiert**: arch.md, trading_logic_v2.md, README.md
+
+---
+
 ## 8. ARCHITEKTUR-ENTSCHEIDUNGEN (FINAL — NICHT DISKUTIEREN)
 
 Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
@@ -796,8 +845,10 @@ Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
 | Entscheidung | Begründung |
 |---|---|
 | Medium-Frequency (5–15min Intervall) | Keine redundante Leitung, LLM-Latenz, Windows-Hybrid (Ryzen 7 7800X3D + RX 7900 XT) |
-| Ollama lokal (qwen2.5:14b, deepseek-r1:14b) | Ryzen 7 7800X3D + AMD RX 7900 XT GPU, keine API-Kosten für LLM, Datenschutz |
-| 3-Layer LLM-Kaskade (nicht Single-Prompt) | Skeptiker-Pattern verhindert Overconfidence |
+| **Binance API Integration (v2.1)** | **Keine API Keys für öffentliche Daten, 30s Updates, Redis Storage mit TTLs** |
+| **Ollama entfernt (v2.1)** | **Keine lokalen LLMs mehr, nur Deepseek für Post-Trade Analyse** |
+| Deepseek Cloud (Post-Trade) | Professionelle Reasoning API, keine lokalen Ressourcen nötig |
+| Composite Scoring (deterministisch) | 100% reproduzierbare Entscheidungen, keine LLM-Latenz |
 | GRSS als primäres Gate (nicht optionaler Filter) | Einheitlicher Risk-Score erzwingt Disziplin |
 | Read-Only Live-Parameter (kein Auto-Override) | MLOps-Prinzip: Mensch entscheidet über Parameteränderungen |
 | DRY_RUN Hardware-Block | Kapitalschutz ist absolut |

@@ -27,15 +27,17 @@
 | **FastAPI** | Python ASGI | Backend API, Agenten-Orchestration |
 | **Frontend** | Next.js + React | Trading Cockpit mit 4 Dashboard-Sections + Logic Page |
 
-### Frontend Pages
+### Frontend Pages (v2.2 - Neuaufbau)
 
 | Route | Zweck | Features |
 |-------|-------|----------|
-| `/` (Dashboard) | **Trading Command Center** | Live Chart, Position Status, Market Data, Sentiment & Bias, GRSS Breakdown |
-| `/dashboard` | **Trading View** | Detaillierte Trading-Ansicht mit allen Marktdaten |
-| `/logic` | **Decision Logic** | 6-Gate Pipeline, GRSS Composition, Composite Scoring, Decision Timeline, Top Blockers |
-| `/logs` | **System Logs** | Echtzeit-Logs aus allen Agenten |
-| `/einstellungen` | **Settings** | Konfigurationsmanagement |
+| `/` (Dashboard) | **Übersicht & Status** | 6 Status-Cards, Entscheidungs-Timeline, Pipeline Gates, Agenten-Status, Performance-Widget, Marktdaten |
+| `/trading` | **Trading Detailansicht** | 6-Gate Kaskade-Visualisierung, Quant Micro Daten, GRSS Breakdown, OFI/Metriken |
+| `/monitor` | **System-Überwachung** | API-Health Tests, Agent Heartbeats, Scheduler Steuerung, Datenquellen-Status |
+| `/logviewer` | **System-Logging** | Live WebSocket Logs, Filter (Level/Kategorie/Quelle), Export, Auto-Scroll |
+| `/reports` | **Analysen & Export** | Geschlossene Trades, LLM-Analysen, Lern-Logs (24h), Performance-Perioden |
+| `/settings` | **Konfiguration** | 4 Presets (Konservativ/Balanced/Opportunistisch/Test), Parameter-Editor, Deepseek-Test |
+| `/journey` | **Dokumentation** | 7 Abschnitte: Übersicht, Agenten, Kaskade, APIs, Features, Sicherheit, Tech Stack |
 
 ### Dashboard Abschnitte (v2.1)
 
@@ -99,7 +101,54 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 ---
 
-## Börsen-Architektur (Manifest v2.0)
+## Binance API Integration (v2.1)
+
+### BinanceDataClient
+**Zentraler API-Client für alle Marktdaten:**
+- **Keine API Keys erforderlich** für öffentliche Endpunkte
+- **Automatische Rate-Limiting** mit Connection Pooling
+- **Fehlerbehandlung** mit Retry-Logic und Fallbacks
+
+**Unterstützte Endpunkte:**
+```python
+# Core Market Data
+get_ticker(symbol="BTCUSDT")           # Aktueller Preis
+get_klines(symbol="BTCUSDT", interval="1m", limit=500)  # Candlesticks
+get_orderbook(symbol="BTCUSDT", limit=100)             # Orderbuch
+
+# Futures Data
+get_funding_rate(symbol="BTCUSDT")     # Funding Rate
+get_open_interest(symbol="BTCUSDT")     # Open Interest
+get_liquidations(symbol="BTCUSDT")      # Liquidation Orders
+
+# System
+get_server_time()                       # Binance Server-Zeit
+health_check()                          # API-Erreichbarkeit
+```
+
+### MarketDataCollector
+**Automatische Datensammlung im Worker:**
+- **30-Sekunden Intervall** für alle wichtigen Daten
+- **Parallel Fetching** für optimale Performance
+- **Redis Storage** mit verschiedenen TTLs:
+  - Ticker: 10s (sehr frisch)
+  - Orderbook: 5s (extrem frisch)
+  - Klines: 60s (Technical Analysis)
+  - Funding/OI: 300s (5 Minuten)
+
+**Redis Keys:**
+```bash
+market:ticker:BTCUSDT          # {"last_price": 67263.7, "timestamp": "..."}
+market:orderbook:BTCUSDT       # {"bids_volume": 1234567, "imbalance_ratio": 1.23}
+market:funding:BTCUSDT         # {"fundingRate": 0.0001, "nextFundingTime": "..."}
+market:liquidations:BTCUSDT    # [{"side": "SELL", "price": 67000, "qty": 0.1}]
+bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
+market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]  # 300 Ticks
+```
+
+---
+
+## Börsen-Architektur (Manifest v2.1)
 
 ```
 Binance WS/REST  ──► IngestionAgent + ContextAgent ──► Redis
@@ -136,7 +185,7 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 
 | Agent | Version | Input | Output | Zweck |
 |-------|---------|-------|--------|-------|
-| **Ingestion** | V2 | Binance WebSocket (5 Streams) | Redis Streams | OHLCV, OFI, Liquidations, Funding |
+| **Ingestion** | V2 | Binance WebSocket (5 Streams) + REST API | Redis Streams + Market Data | OHLCV, OFI, Liquidations, Funding, Ticker, Orderbook |
 | **Technical** | V2 | `market_candles` + Binance depth | `bruno:ta:snapshot` | EMA, RSI, VWAP, ATR, MTF, Wick, S/R |
 | **Context** | V1 | Makro-Daten (FRED, Deribit, RSS) | Redis `bruno:context:grss` | **GRSS Score** (0–100) |
 | **Sentiment** | V1 | RSS Feeds + CryptoCompare + CoinMarketCap | Redis `bruno:sentiment` | News- und Ereignis-Sentiment |
@@ -253,6 +302,15 @@ ADD COLUMN layer3_output JSONB;
 - [x] **ExecutionAgentV3**: Breakeven Stop Logic, Position Management
 - [x] **Configuration**: v2 Parameters, Dynamic Thresholds
 - [x] **Documentation**: Complete v2 Architecture Documentation
+
+### Phase v2.1 — Ollama Entfernung & Binance API Integration (April 2026) ✅ COMPLETED
+- [x] **Ollama komplett entfernt**: Keine lokalen LLMs mehr im System
+- [x] **BinanceDataClient**: Neuer API-Client für alle Marktdaten
+- [x] **MarketDataCollector**: Automatische Datensammlung alle 30s
+- [x] **LatencyMonitor**: Bereinigt von Ollama-Abhängigkeiten
+- [x] **Worker Pipeline**: Ollama-freier Start und Betrieb
+- [x] **Live Marktdaten**: Ticker, Klines, Orderbook, Funding, OI, Liquidations
+- [x] **Frontend Integration**: Frische Daten für Dashboard und Trading-Seite
 
 ### Geplant: Phasen v2.1–v2.2
 - [ ] Trailing Stops, Multi-Symbol Support

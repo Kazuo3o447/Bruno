@@ -121,7 +121,7 @@ async def get_live_telemetry():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/debug/trade-pipeline")
+@router.get("/monitoring/debug/trade-pipeline")
 async def trade_pipeline_debug():
     """
     Zeigt den Zustand jedes Gates in der Trade-Execution-Pipeline.

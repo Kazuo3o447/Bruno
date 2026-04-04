@@ -6,8 +6,8 @@ import Sidebar from '../components/Sidebar'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Bruno — Multi-Agent Trading Intelligence',
-  description: 'Krypto Trading Bot mit 5 KI-Agenten, Echtzeit-Charts und Risk Management',
+  title: 'Bruno v2 — Deterministic Trading Intelligence',
+  description: 'Deterministischer Multi-Agent Trading Bot für Bitcoin mit 6-Gate Entscheidungskaskade und Paper Trading',
 }
 
 export default function RootLayout({

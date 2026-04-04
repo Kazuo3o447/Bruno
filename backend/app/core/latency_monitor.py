@@ -3,7 +3,7 @@ Latenz-Monitor — Bruno Trading Bot
 
 Überwacht aktiv:
 - Binance WebSocket Verbindungsqualität
-- Ollama Inferenz-Zeiten
+- Binance API Latenz
 - Generelle Netzwerk-Erreichbarkeit
 
 Ubuntu-ready: Kein WSL2-spezifischer Code.
@@ -24,16 +24,12 @@ class LatencyMonitor:
 
     # Schwellenwerte
     BINANCE_WS_LATENCY_VETO_MS = 500       # Trade-Veto bei >500ms
-    OLLAMA_INFERENCE_WARN_MS = 8000        # Nur Warning bei >8s
-    OLLAMA_INFERENCE_FALLBACK_MS = 30000   # Fallback-Modus bei >30s
 
     REDIS_KEY = "bruno:telemetry:latency"
 
-    def __init__(self, redis_client, ollama_host: str):
+    def __init__(self, redis_client):
         self.redis = redis_client
-        self.ollama_host = ollama_host
         self._binance_latency_ms: float = 0.0
-        self._ollama_latency_ms: float = 0.0
         self._veto_active: bool = False
 
     async def check_binance_latency(self) -> float:
@@ -54,58 +50,25 @@ class LatencyMonitor:
         self._binance_latency_ms = latency
         return latency
 
-    async def check_ollama_latency(self) -> float:
-        """Minimal-Inference-Test gegen Ollama."""
-        start = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=35.0) as client:
-                resp = await client.get(f"{self.ollama_host}/api/tags")
-                latency = (time.perf_counter() - start) * 1000
-                if resp.status_code == 200:
-                    self._ollama_latency_ms = latency
-                    return latency
-        except Exception:
-            pass
-        latency = (time.perf_counter() - start) * 1000
-        self._ollama_latency_ms = latency
-        return latency
-
     async def run_checks(self) -> dict:
         """
         Führt alle Latenz-Checks aus.
         Wird alle 5 Minuten vom ContextAgent aufgerufen.
         """
-        binance_ms, ollama_ms = await asyncio.gather(
-            self.check_binance_latency(),
-            self.check_ollama_latency(),
-            return_exceptions=True
-        )
+        binance_ms = await self.check_binance_latency()
 
         if isinstance(binance_ms, Exception):
             binance_ms = 9999.0
-        if isinstance(ollama_ms, Exception):
-            ollama_ms = 9999.0
 
         # Trade-Veto nur bei Binance-Latenz
         veto = binance_ms > self.BINANCE_WS_LATENCY_VETO_MS
         self._veto_active = veto
 
-        # Ollama-Status
-        ollama_status = (
-            "ok" if ollama_ms < self.OLLAMA_INFERENCE_WARN_MS
-            else "degraded" if ollama_ms < self.OLLAMA_INFERENCE_FALLBACK_MS
-            else "fallback_required"
-        )
-
         result = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "binance_latency_ms": round(binance_ms, 1),
-            "ollama_latency_ms": round(ollama_ms, 1),
             "trade_veto_active": veto,
-            "ollama_status": ollama_status,
-            "overall_health": (
-                "degraded" if veto or ollama_status != "ok" else "ok"
-            )
+            "overall_health": "degraded" if veto else "ok"
         }
 
         await self.redis.set_cache(
@@ -116,11 +79,6 @@ class LatencyMonitor:
             logger.warning(
                 f"⛔ LATENZ-VETO: Binance {binance_ms:.0f}ms > "
                 f"{self.BINANCE_WS_LATENCY_VETO_MS}ms"
-            )
-        if ollama_status != "ok":
-            logger.warning(
-                f"⚠️ Ollama langsam: {ollama_ms:.0f}ms "
-                f"({ollama_status})"
             )
 
         return result
