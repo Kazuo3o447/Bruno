@@ -13,6 +13,7 @@ import {
 const LightweightChart = dynamic(() => import("../components/LightweightChart"), { ssr: false });
 const SystemMatrix = dynamic(() => import("../components/SystemMatrix"), { ssr: false });
 const ActivePositions = dynamic(() => import("../components/ActivePositions"), { ssr: false });
+const ApiConnectivity = dynamic(() => import("../components/ApiConnectivity"), { ssr: false });
 
 
 /* ─── Types ─── */
@@ -134,7 +135,7 @@ export default function HomePage() {
     return () => clearInterval(iv);
   }, []);
 
-  // Data Source Health & Latency
+  // Data Source Health & Latency - optimiert mit 5s Polling
   useEffect(() => {
     const load = async () => {
       try {
@@ -145,7 +146,7 @@ export default function HomePage() {
       } catch {}
     };
     load();
-    const iv = setInterval(load, 10000);
+    const iv = setInterval(load, 5000); // Schnellere Updates
     return () => clearInterval(iv);
   }, []);
 
@@ -271,6 +272,10 @@ export default function HomePage() {
 
         <div className="mb-8">
           <SystemMatrix />
+        </div>
+
+        <div className="mb-8">
+          <ApiConnectivity sources={sourceHealth} loading={Object.keys(sourceHealth).length === 0} />
         </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">

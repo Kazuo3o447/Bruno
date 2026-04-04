@@ -132,15 +132,15 @@ class TechnicalAnalysisAgent(PollingAgent):
             # Versuch 1: TimescaleDB time_bucket()
             try:
                 async with self.deps.db_session_factory() as session:
-                    result = await session.execute(text("""
+                    result = await session.execute(text(f"""
                         SELECT time_bucket(:interval, time) AS bucket,
                                FIRST(open, time) AS open, MAX(high) AS high,
-                               MIN(low) AS low, LAST(close, time) AS close, SUM(volume) AS volume
+                               MIN(low) as low, LAST(close, time) AS close, SUM(volume) AS volume
                         FROM market_candles 
-                        WHERE symbol = :symbol AND time > NOW() - :lookback
+                        WHERE symbol = :symbol AND time > NOW() - INTERVAL '{lookback}'
                         GROUP BY bucket ORDER BY bucket ASC
                         LIMIT :limit
-                    """), {"interval": interval, "symbol": "BTCUSDT", "lookback": lookback, "limit": limit})
+                    """), {"interval": interval, "symbol": "BTCUSDT", "limit": limit})
                     
                     rows = result.fetchall()
                     return [
@@ -163,29 +163,30 @@ class TechnicalAnalysisAgent(PollingAgent):
                 async with self.deps.db_session_factory() as session:
                     if interval in ["1 hour", "4 hours"]:
                         # date_trunc() für 1h/4h
-                        result = await session.execute(text("""
-                            SELECT date_trunc(:interval, time) AS bucket,
+                        interval_map = {"1 hour": "hour", "4 hours": "hour"}
+                        result = await session.execute(text(f"""
+                            SELECT date_trunc('{interval_map[interval]}', time) AS bucket,
                                    FIRST(open, time) AS open, MAX(high) AS high,
                                    MIN(low) AS low, LAST(close, time) AS close, SUM(volume) AS volume
                             FROM market_candles 
-                            WHERE symbol = :symbol AND time > NOW() - :lookback
+                            WHERE symbol = 'BTCUSDT' AND time > NOW() - INTERVAL '{lookback}'
                             GROUP BY bucket ORDER BY bucket ASC
-                            LIMIT :limit
-                        """), {"interval": interval, "symbol": "BTCUSDT", "lookback": lookback, "limit": limit})
+                            LIMIT {limit}
+                        """))
                     else:
                         # floor-Berechnung für 5m/15m
                         seconds_map = {"5 minutes": 300, "15 minutes": 900}
                         seconds = seconds_map.get(interval, 300)
                         
-                        result = await session.execute(text("""
-                            SELECT to_timestamp(floor(extract(epoch from time) / :seconds) * :seconds) AS bucket,
+                        result = await session.execute(text(f"""
+                            SELECT to_timestamp(floor(extract(epoch from time) / {seconds}) * {seconds}) AS bucket,
                                    FIRST(open, time) AS open, MAX(high) AS high,
-                                   MIN(low) AS low, LAST(close, time) AS close, SUM(volume) AS volume
+                                   MIN(low) as low, LAST(close, time) AS close, SUM(volume) AS volume
                             FROM market_candles 
-                            WHERE symbol = :symbol AND time > NOW() - :lookback
+                            WHERE symbol = 'BTCUSDT' AND time > NOW() - INTERVAL '{lookback}'
                             GROUP BY bucket ORDER BY bucket ASC
-                            LIMIT :limit
-                        """), {"seconds": seconds, "symbol": "BTCUSDT", "lookback": lookback, "limit": limit})
+                            LIMIT {limit}
+                        """))
                     
                     rows = result.fetchall()
                     return [

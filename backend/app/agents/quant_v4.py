@@ -53,6 +53,9 @@ class QuantAgentV4(PollingAgent):
 
     async def process(self) -> None:
         try:
+            # 0. Health Check für Liquidation_Cluster_SQL
+            await self._check_liquidation_cluster_sql()
+            
             # 1. Orderbook + VAMP + CVD (aus quant_v3 kopiert)
             ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
             if not ob or not ob.get("bids") or not ob.get("asks"): 
@@ -146,6 +149,32 @@ class QuantAgentV4(PollingAgent):
         current_map = await self.deps.redis.get_cache("bruno:health:sources") or {}
         current_map[source] = health_data
         await self.deps.redis.set_cache("bruno:health:sources", current_map)
+
+    async def _check_liquidation_cluster_sql(self):
+        """Health Check für Liquidation_Cluster_SQL (Legacy von quant_v3)."""
+        import time
+        from sqlalchemy import text
+        
+        start = time.perf_counter()
+        query = text("""
+            SELECT ROUND(price::numeric, -2) as zone, SUM(total_usdt) as amount 
+            FROM liquidations 
+            WHERE symbol = 'BTCUSDT' AND time > NOW() - INTERVAL '24 hours' 
+            GROUP BY zone 
+            HAVING SUM(total_usdt) > 100000
+            ORDER BY amount DESC
+        """)
+        try:
+            async with self.deps.db_session_factory() as session:
+                result = await session.execute(query)
+                clusters = [{"zone": float(row[0]), "amount": float(row[1])} for row in result.fetchall()]
+                latency = (time.perf_counter() - start) * 1000
+                await self._report_health("Liquidation_Cluster_SQL", "online", latency)
+                return clusters
+        except Exception as e:
+            latency = (time.perf_counter() - start) * 1000
+            await self._report_health("Liquidation_Cluster_SQL", "offline", latency)
+            return []
 
     async def _fetch_ofi_rolling(self) -> dict:
         """
