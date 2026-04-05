@@ -29,6 +29,16 @@ Alle wichtigen Änderungen und Fixes pro Version.
 - **context.py**: ConfigCache statt direktem File I/O in _is_learning_mode()
 - **Frontend/Monitoring**: gate_4_llm_cascade zu gate_4_composite_scorer umbenannt (irreführende Bezeichnung korrigiert)
 
+#### **Prompt 6 Bug Fixes (Alle bereits behoben)**
+- **Bug 1 (KRITISCH):** Orderbuch-Walls Key-Mismatch behoben – TechnicalAgent schreibt `bruno:ta:ob_walls` separat
+- **Bug 2 (KRITISCH):** TP1/TP2 Feldweiterleitung zu PositionTracker komplett implementiert
+- **Bug 3 (MITTEL):** scale_out_position() Integration in execution_v4 über _partial_close()
+- **Bug 4 (MITTEL):** Hardcoded amount entfernt – Signal nutzt `position_size_hint_pct`
+- **Bug 5 (KLEIN):** Any Import in execution_v4.py vorhanden
+- **Bug 6 (KLEIN):** Alle Legacy-Config-Keys entfernt
+- **Bug 7 (MITTEL):** Breakeven-Trigger nutzt dynamischen Position-Wert statt Config
+- **Bug 8 (MITTEL):** _score_flow() ist async und akzeptiert analytics_data Parameter
+
 ### 📚 Dokumentation
 - CHANGELOG.md – v2.2.1 Eintrag
 - README.md – ExecutionAgentV4, ConfigCache, Dead Code Cleanup

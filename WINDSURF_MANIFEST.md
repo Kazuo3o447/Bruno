@@ -25,6 +25,7 @@
 - **Ollama komplett entfernt** – chat.py, llm_client.py, llm_provider.py, llm/ Ordner, routers/llm_cascade.py gelöscht
 - **Config Cleanup** – OLLAMA_HOST aus config.py entfernt
 - **Bugfixes nach Cleanup** – main.py chat import entfernt, context.py ConfigCache statt File I/O, Frontend/Monitoring gate_4_llm_cascade zu gate_4_composite_scorer umbenannt
+- **Prompt 6 Bug Fixes (Alle bereits behoben)** – 8/8 Bugs behoben: Orderbuch-Walls Key-Mismatch, TP1/TP2 Propagation, scale_out_position Integration, hardcoded amount, Any Import, dead config keys, Breakeven-Trigger dynamisch, _score_flow async
 
 ### ✅ BRUNO v2.2 — Retail-Ready mit echtem CVD & GRSS v3
 - **Echtes CVD** — aggTrade Delta mit 1-Sekunden-Buckets und Redis Rolling Window (3600 Ticks)
