@@ -2,30 +2,34 @@
 
 ## 1. Purpose
 
-Bruno v2.2 replaces the LLM-based decision chain with a deterministic, regime-adaptive trading system featuring institutional-grade mathematical precision. The system is designed for medium-frequency Bitcoin trading and uses three primary decision layers:
+Bruno v2.2 is a **retail-ready** deterministic trading system with institutional-grade mathematical precision. The system features:
 
-1. **Technical Analysis** for trend, structure, and timing.
-2. **Liquidity Intelligence** for sweep opportunities and cluster magnetism.
-3. **Composite Scoring** for the final trade decision.
+1. **Echtes CVD** - aggTrade Delta mit 1-Sekunden-Buckets für echte Volume-Delta-Analyse
+2. **GRSS v3** - 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro)
+3. **Adaptive Thresholds** - ATR-basiert mit Event Calendar Guardrails
+4. **MTF-Filter** - Regime-abhängige Filter für bessere Signalqualität im Ranging
+5. **DeepSeek Post-Trade Analyse** - Automatische Trade-Evaluation für Phantom Trades
 
-The LLM is **legacy-only** and has been removed from live trading. Only the **Deepseek Reasoning API** is used exclusively for post-trade debriefing and learning analysis by the LearningAgent, not for live trade decisions.
+The LLM is **legacy-only** and has been removed from live trading. Only the **Deepseek Reasoning API** is used exclusively for post-trade debriefing and learning analysis.
 
 ## 2. Data Flow Overview
 
 ```text
 Binance API (REST + WebSocket) → MarketDataCollector → Redis
     ↓
-TechnicalAnalysisAgent → bruno:ta:snapshot
+TechnicalAnalysisAgent → bruno:ta:snapshot (echtes CVD)
+    ↓
+ContextAgent → bruno:context:grss (GRSS v3)
     ↓
 LiquidityEngine → bruno:liq:intelligence
     ↓
 QuantAgentV4 → bruno:quant:micro + bruno:decisions:feed
     ↓
-CompositeScorer → trade decision
+CompositeScorer → trade decision (adaptive thresholds)
     ↓
-RiskAgent → veto state
+RiskAgent → veto state (event calendar)
     ↓
-ExecutionAgentV4 → order / position management
+ExecutionAgentV4 → order / position management (paper trading)
 ```
 
 ### 2.1 Binance API Integration (v2.1)
@@ -37,6 +41,7 @@ ExecutionAgentV4 → order / position management
 - **Funding Rate**: Futures Funding für Sentiment
 - **Open Interest**: Markttiefe und Liquidität
 - **Liquidations**: Liquidation Orders für Risk Management
+- **aggTrades**: Echte Trade-Daten für CVD-Berechnung
 
 **Redis Storage Pattern:**
 ```bash
@@ -44,10 +49,14 @@ ExecutionAgentV4 → order / position management
 market:ticker:BTCUSDT           # {"last_price": 67263.7}
 market:orderbook:BTCUSDT        # {"imbalance_ratio": 1.23}
 market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]
+market:cvd:ticks               # [{"ts": "...", "delta": 1.23}, ...]
+market:cvd:cumulative           # "1234.56"
 
 # Frisch (60s TTL)
 bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
 market:liquidations:BTCUSDT    # [{"side": "SELL", "price": 67000}]
+bruno:ta:snapshot              # {"ta_score": {...}, "regime": "ranging"}
+bruno:context:grss             # {"GRSS_Score": 62.0, "regime_hint": "ranging"}
 
 # Mittel-frisch (300s TTL)
 market:funding:BTCUSDT         # {"fundingRate": 0.0001}

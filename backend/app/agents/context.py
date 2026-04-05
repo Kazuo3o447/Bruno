@@ -1,9 +1,10 @@
+from app.services.event_calendar import EventCalendar
 import asyncio
 import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from app.agents.base import StreamingAgent
@@ -63,6 +64,15 @@ class ContextAgent(StreamingAgent):
         self._retail_fomo_warning: bool = False
         self.onchain_data: Dict = {}
         self._deribit_options_chain: List[Dict] = []
+        self._last_grss_breakdown: Dict[str, Any] = {
+            "deriv": 0.0,
+            "inst": 0.0,
+            "sent": 0.0,
+            "macro": 0.0,
+            "regime_hint": "ranging",
+            "max_pain": None,
+            "max_pain_distance_pct": None,
+        }
 
         # Latenz & CoinGlass & Retail
         from app.core.latency_monitor import LatencyMonitor
@@ -673,191 +683,348 @@ class ContextAgent(StreamingAgent):
             "degraded", "warning", "fallback", "partial",
         }
 
+    @staticmethod
+    def _clamp(value: float, low: float = -1.0, high: float = 1.0) -> float:
+        return max(low, min(high, value))
+
+    def _normalize_max_pain_effect(self, price: float, max_pain: Optional[float]) -> float:
+        if not price or not max_pain:
+            return 0.0
+
+        distance_pct = ((float(max_pain) - float(price)) / float(price)) * 100.0
+        abs_distance = abs(distance_pct)
+
+        # Promptvorgabe: innerhalb 1% leicht bearish, >3% über Max Pain leicht bullish
+        if abs_distance <= 1.0:
+            return -0.3
+        if distance_pct < -3.0:
+            return 0.2
+        return 0.0
+
+    def _calc_deriv_subscore(self, data: dict) -> float:
+        price = float(data.get("current_price", 0.0) or 0.0)
+        max_pain = data.get("max_pain")
+
+        funding_rate = float(data.get("funding_rate", 0.0) or 0.0)
+        if funding_rate < -0.01:
+            funding_norm = 1.0
+        elif funding_rate <= 0.03:
+            funding_norm = 0.5
+        elif funding_rate <= 0.05:
+            funding_norm = 0.0
+        else:
+            funding_norm = -1.0
+
+        oi_delta = float(data.get("oi_delta_pct", 0.0) or 0.0)
+        if oi_delta > 15:
+            oi_norm = -1.0
+        elif oi_delta > 5:
+            oi_norm = 0.4
+        elif oi_delta < -15:
+            oi_norm = 0.2
+        elif oi_delta < -5:
+            oi_norm = 0.6
+        else:
+            oi_norm = 0.0
+
+        pcr = float(data.get("put_call_ratio", 0.6) or 0.6)
+        if pcr < 0.45:
+            pcr_norm = 1.0
+        elif pcr < 0.75:
+            pcr_norm = 0.3
+        elif pcr < 0.9:
+            pcr_norm = -0.4
+        else:
+            pcr_norm = -1.0
+
+        dvol = data.get("dvol")
+        if dvol is None:
+            dvol_norm = 0.0
+        else:
+            dvol = float(dvol)
+            if dvol < 40:
+                dvol_norm = 1.0
+            elif dvol < 65:
+                dvol_norm = 0.3
+            elif dvol < 80:
+                dvol_norm = -0.4
+            else:
+                dvol_norm = -1.0
+
+        ls = data.get("long_short_ratio")
+        if ls is None:
+            ls_norm = 0.0
+        else:
+            ls = float(ls)
+            if ls < 0.9:
+                ls_norm = 0.8
+            elif ls < 1.2:
+                ls_norm = 0.2
+            elif ls < 1.5:
+                ls_norm = -0.4
+            else:
+                ls_norm = -0.9
+
+        max_pain_norm = self._normalize_max_pain_effect(price, max_pain)
+
+        weighted = (
+            funding_norm * 0.25 +
+            oi_norm * 0.20 +
+            pcr_norm * 0.15 +
+            dvol_norm * 0.12 +
+            ls_norm * 0.13 +
+            max_pain_norm * 0.15  # Erhöht von 5% auf 15% für Retail
+        )
+        return round(self._clamp(weighted * 25.0, -25.0, 25.0), 1)
+
+    def _calc_retail_subscore(self, data: dict) -> float:
+        etf_flow_3d_m = float(data.get("etf_flow_3d_m", 0.0) or 0.0)
+        if etf_flow_3d_m > 500:
+            etf_norm = 1.0
+        elif etf_flow_3d_m > 200:
+            etf_norm = 0.6
+        elif etf_flow_3d_m > 0:
+            etf_norm = 0.2
+        elif etf_flow_3d_m < -500:
+            etf_norm = -1.0
+        elif etf_flow_3d_m < -200:
+            etf_norm = -0.6
+        else:
+            etf_norm = 0.0
+
+        oi_7d_change_pct = float(data.get("oi_7d_change_pct", 0.0) or 0.0)
+        if oi_7d_change_pct > 15:
+            oi_norm = -0.7
+        elif oi_7d_change_pct > 3:
+            oi_norm = 0.7
+        elif oi_7d_change_pct < -15:
+            oi_norm = 0.4
+        elif oi_7d_change_pct < -5:
+            oi_norm = 0.6
+        else:
+            oi_norm = 0.0
+
+        stablecoin_delta_bn = float(data.get("stablecoin_delta_bn", 0.0) or 0.0)
+        if stablecoin_delta_bn > 2.0:
+            stable_norm = 1.0
+        elif stablecoin_delta_bn > 0.5:
+            stable_norm = 0.4
+        elif stablecoin_delta_bn < -2.0:
+            stable_norm = -1.0
+        elif stablecoin_delta_bn < -0.5:
+            stable_norm = -0.4
+        else:
+            stable_norm = 0.0
+
+        pattern_score = float(data.get("pattern_score", 0.0) or 0.0)
+        if pattern_score > 10:
+            pattern_norm = 1.0
+        elif pattern_score > 3:
+            pattern_norm = 0.5
+        elif pattern_score < -10:
+            pattern_norm = -1.0
+        elif pattern_score < -3:
+            pattern_norm = -0.5
+        else:
+            pattern_norm = 0.0
+
+        weighted = (
+            etf_norm * 0.35 +
+            oi_norm * 0.25 +
+            stable_norm * 0.25 +
+            pattern_norm * 0.15
+        )
+        return round(self._clamp(weighted * 25.0, -25.0, 25.0), 1)
+
+    def _calc_sentiment_subscore(self, data: dict) -> float:
+        fear_greed = float(data.get("fear_greed", 50.0) or 50.0)
+        if fear_greed < 20:
+            fg_norm = 1.0
+        elif fear_greed < 35:
+            fg_norm = 0.4
+        elif fear_greed <= 65:
+            fg_norm = 0.0
+        elif fear_greed <= 80:
+            fg_norm = -0.4
+        else:
+            fg_norm = -1.0
+
+        llm_news_sentiment = float(data.get("llm_news_sentiment", 0.0) or 0.0)
+        if llm_news_sentiment > 0.5:
+            news_norm = 1.0
+        elif llm_news_sentiment > 0.1:
+            news_norm = 0.4
+        elif llm_news_sentiment < -0.5:
+            news_norm = -1.0
+        elif llm_news_sentiment < -0.1:
+            news_norm = -0.4
+        else:
+            news_norm = 0.0
+
+        retail_score = float(data.get("retail_score", 0.0) or 0.0)
+        retail_fomo_warning = bool(data.get("retail_fomo_warning", False))
+        if retail_fomo_warning or retail_score > 0.7:
+            retail_norm = -1.0
+        elif retail_score > 0.4:
+            retail_norm = -0.4
+        elif retail_score < -0.4:
+            retail_norm = 0.4
+        else:
+            retail_norm = 0.0
+
+        onchain = data.get("onchain", {}) or {}
+        exchange_outflow = bool(onchain.get("exchange_outflow"))
+        exchange_balance_change_btc = float(onchain.get("exchange_balance_change_btc", 0.0) or 0.0)
+        if exchange_outflow:
+            onchain_norm = 1.0
+        elif exchange_balance_change_btc > 5000:
+            onchain_norm = -1.0
+        elif exchange_balance_change_btc > 1000:
+            onchain_norm = -0.4
+        elif exchange_balance_change_btc < -5000:
+            onchain_norm = 1.0
+        elif exchange_balance_change_btc < -1000:
+            onchain_norm = 0.4
+        else:
+            onchain_norm = 0.0
+
+        weighted = (
+            fg_norm * 0.30 +
+            news_norm * 0.30 +
+            retail_norm * 0.20 +
+            onchain_norm * 0.20
+        )
+        return round(self._clamp(weighted * 25.0, -25.0, 25.0), 1)
+
+    def _calc_macro_subscore(self, data: dict) -> float:
+        vix = float(data.get("vix", 20.0) or 20.0)
+        if vix < 15:
+            vix_norm = 1.0
+        elif vix < 20:
+            vix_norm = 0.5
+        elif vix < 25:
+            vix_norm = 0.0
+        elif vix < 35:
+            vix_norm = -0.5
+        else:
+            vix_norm = -1.0
+
+        ndx_status = str(data.get("ndx_status", "") or "").upper()
+        if ndx_status == "BULLISH":
+            ndx_norm = 1.0
+        elif ndx_status == "BEARISH":
+            ndx_norm = -1.0
+        else:
+            ndx_norm = 0.0
+
+        yields_10y = float(data.get("yields_10y", 4.2) or 4.2)
+        if yields_10y < 4.0:
+            yields_norm = 1.0
+        elif yields_10y < 4.5:
+            yields_norm = 0.3
+        elif yields_10y < 5.0:
+            yields_norm = -0.5
+        else:
+            yields_norm = -1.0
+
+        m2_yoy_pct = float(data.get("m2_yoy_pct", 0.0) or 0.0)
+        if m2_yoy_pct > 5:
+            m2_norm = 1.0
+        elif m2_yoy_pct > 2:
+            m2_norm = 0.4
+        elif m2_yoy_pct < 0:
+            m2_norm = -1.0
+        else:
+            m2_norm = 0.0
+
+        weighted = (
+            vix_norm * 0.35 +
+            ndx_norm * 0.25 +
+            yields_norm * 0.20 +
+            m2_norm * 0.20
+        )
+        return round(self._clamp(weighted * 25.0, -25.0, 25.0), 1)
+
+    def _calc_max_pain(self) -> dict:
+        """
+        Max Pain = Strike-Preis bei dem die Summe aller Optionsverluste
+        (Call + Put) für Käufer maximal ist = Market Maker profitieren am meisten.
+
+        An Monthly Expiries ist Max Pain ein Preismagnet.
+        """
+        if not self._deribit_options_chain:
+            return {"max_pain": None, "distance_pct": None}
+
+        strikes = sorted({float(opt.get("strike", 0.0)) for opt in self._deribit_options_chain if opt.get("strike") is not None})
+        if not strikes:
+            return {"max_pain": None, "distance_pct": None}
+
+        min_pain_value = float("inf")
+        max_pain_strike = 0.0
+
+        for test_strike in strikes:
+            total_pain = 0.0
+            for opt in self._deribit_options_chain:
+                oi = float(opt.get("open_interest", 0.0) or 0.0)
+                strike = float(opt.get("strike", 0.0) or 0.0)
+                opt_type = str(opt.get("type", "")).upper()
+                if opt_type == "C":
+                    total_pain += max(0.0, test_strike - strike) * oi
+                elif opt_type == "P":
+                    total_pain += max(0.0, strike - test_strike) * oi
+
+            if total_pain < min_pain_value:
+                min_pain_value = total_pain
+                max_pain_strike = test_strike
+
+        return {"max_pain": max_pain_strike, "distance_pct": None}
+
+    def _determine_regime_hint(self, data: dict, grss: float) -> str:
+        vix = float(data.get("vix", 20.0) or 20.0)
+        ndx_status = str(data.get("ndx_status", "") or "").upper()
+
+        if vix > 35:
+            return "high_vola"
+        if ndx_status == "BULLISH" and grss >= 55:
+            return "trending_bull"
+        if ndx_status == "BEARISH" and grss <= 45:
+            return "bear"
+        return "ranging"
+
     # ── GRSS Logic ──────────────────────────────────────────────────────────
 
     def calculate_grss(self, data: dict) -> float:
         """
-        GRSS v2 — Global Risk & Sentiment Score (0–100)
-
-        Mindestens 2 frische Datenquellen erforderlich.
-        VIX > 45 = Hard Veto (systemischer Crash).
-        NDX BEARISH = -10 Punkte (kein Block mehr).
+        GRSS v3 — 4 gewichtete Sub-Komplexe statt 25 additive Terme.
         """
-        score = 50.0
+        deriv_score = self._calc_deriv_subscore(data)
+        retail_score = self._calc_retail_subscore(data)
+        sent_score = self._calc_sentiment_subscore(data)
+        macro_score = self._calc_macro_subscore(data)
+
+        score = 50.0 + deriv_score + retail_score + sent_score + macro_score
+
         fresh_count = int(data.get("fresh_source_count", 0))
         if fresh_count == 0:
-            # Kein harter Kollaps — System arbeitet mit veralteten Daten weiter
-            # Penalty statt Nullung: -20 Punkte für kompletten Datenverlust
-            score -= 20
-        elif fresh_count < 2:
-            # Teilweise Daten: -8 Punkte pro fehlendem Source
-            score -= (2 - fresh_count) * 8
-        # Absoluter Minimalwert: 10 (nie 0.0 bei normalen API-Ausfällen)
-        # Der news_silence_seconds Veto am Ende der Funktion bleibt erhalten
+            score = max(score * 0.5, 10.0)
+        elif fresh_count < 3:
+            score *= 0.85
 
-        # ═══ TIER 1: DERIVATE ═══════════════════════════════════════════════
-        f = data.get("funding_rate", 0.01)
-        if -0.01 <= f <= 0.03:
-            score += 12
-        elif f > 0.05:
-            score -= 12
-        elif f < -0.01:
-            score += 6
+        vix = float(data.get("vix", 20.0) or 20.0)
+        regime_hint = self._determine_regime_hint(data, score)
+        self._last_grss_breakdown = {
+            "deriv": deriv_score,
+            "retail": retail_score,
+            "sent": sent_score,
+            "macro": macro_score,
+            "regime_hint": regime_hint,
+            "max_pain": data.get("max_pain"),
+            "max_pain_distance_pct": data.get("max_pain_distance_pct"),
+        }
 
-        oi_delta = data.get("oi_delta_pct", 0)
-        btc_1h = data.get("btc_change_1h", 0)
-        if oi_delta > 0 and btc_1h > 0:
-            score += 8
-        elif oi_delta > 0 and btc_1h < 0:
-            score -= 6
-
-        pcr = data.get("put_call_ratio", 0.6)
-        if pcr < 0.45:
-            score += 10
-        elif 0.45 <= pcr <= 0.75:
-            score += 3
-        elif pcr > 0.9:
-            score += 6
-        elif pcr > 0.75:
-            score -= 5
-
-        basis = data.get("perp_basis_pct", 0)
-        if 0.0001 <= basis <= 0.05:
-            score += 5
-        elif basis > 0.1:
-            score -= 8
-        elif basis < -0.01:
-            score -= 4
-
-        div = data.get("funding_divergence", 0)
-        if div < 0.01:
-            score += 6
-        elif div > 0.03:
-            score -= 8
-
-        dvol = data.get("dvol")
-        if dvol is not None:
-            if dvol < 40:
-                score += 5
-            elif dvol > 80:
-                score -= 10
-            elif dvol > 65:
-                score -= 4
-
-        ls = data.get("long_short_ratio")
-        if ls is not None:
-            if ls < 0.9:
-                score += 5
-            elif ls > 1.5:
-                score -= 4
-
-        # ═══ TIER 2: INSTITUTIONELL ═══════════════════════════════════════
-        etf = data.get("etf_flow_3d_m", 0)
-        if etf > 500:
-            score += 12
-        elif etf > 200:
-            score += 7
-        elif etf > 0:
-            score += 3
-        elif etf < -500:
-            score -= 12
-        elif etf < -200:
-            score -= 7
-
-        oi_7d = data.get("oi_7d_change_pct", 0)
-        if -15 <= oi_7d <= -5:
-            score += 7
-        elif oi_7d < -15:
-            score += 3
-        elif 3 <= oi_7d <= 12:
-            score += 5
-        elif oi_7d > 15:
-            score -= 8
-
-        stable = data.get("stablecoin_delta_bn", 0)
-        if stable > 2.0:
-            score += 8
-        elif stable > 0.5:
-            score += 3
-        elif stable < -2.0:
-            score -= 8
-        elif stable < -0.5:
-            score -= 3
-
-        # ═══ TIER 3: SENTIMENT ═════════════════════════════════════════════
-        fng = data.get("fear_greed", 50)
-        score += ((fng - 50) / 50.0) * 10
-        score += data.get("llm_news_sentiment", 0.0) * 8
-
-        # ═══ TIER 4: MAKRO ═════════════════════════════════════════════════
-        if data.get("ndx_status") == "BULLISH":
-            score += 8
-        elif data.get("ndx_status") == "BEARISH":
-            score -= 10
-
-        vix = data.get("vix", 20)
-        if vix < 15:
-            score += 8
-        elif vix < 20:
-            score += 4
-        elif vix < 25:
-            score += 0
-        elif vix < 35:
-            score -= 7
-        elif vix < 45:
-            score -= 14
-
-        yields = data.get("yields_10y", 4.2)
-        if yields < 4.0:
-            score += 6
-        elif yields < 4.5:
-            score += 0
-        elif yields < 5.0:
-            score -= 6
-        else:
-            score -= 12
-
-        m2 = data.get("m2_yoy_pct", 1.5)
-        if m2 > 5:
-            score += 5
-        elif m2 > 2:
-            score += 2
-        elif m2 < 0:
-            score -= 7
-
-        score += data.get("pattern_score", 0)
-
-        # ═══ TIER 3b: ON-CHAIN ════════════════════════════════════════
-        onchain = data.get("onchain", {})
-        if onchain:
-            # Hash Rate steigend = Miner bullish (±3)
-            hr_change = onchain.get("hash_rate_7d_change_pct", 0)
-            if hr_change > 5:
-                score += 3
-            elif hr_change < -10:
-                score -= 3
-            
-            # Exchange Outflow = bullish (±4)
-            if onchain.get("exchange_outflow"):
-                score += 4
-            elif onchain.get("exchange_balance_change_btc", 0) > 5000:
-                score -= 4  # >5000 BTC Inflow = bearish
-
-        # Absoluter Minimalwert: 25 (nie 0.0 bei normalen API-Ausfällen)
-        score = max(score, 25.0)
-
-        # News Silence: Graduelle Penalty statt nuklearer Veto
-        silence = data.get("news_silence_seconds", 0)
-        if silence > 7200:  # 2 Stunden: starke Penalty, aber kein Totalausfall
-            score -= 15
-        elif silence > 3600:  # 1 Stunde: moderate Penalty
-            score -= 8
-        
-        # Erneut Minimum prüfen nach News Silence Penalty
-        score = max(score, 25.0)
         if vix > 45:
             return 10.0
-        if data.get("ndx_status") == "BEARISH" and f > 0.08:
+        if data.get("ndx_status") == "BEARISH" and float(data.get("funding_rate", 0.0) or 0.0) > 0.08:
             return 5.0
 
         return max(0.0, min(100.0, round(score, 1)))
@@ -921,6 +1088,11 @@ class ContextAgent(StreamingAgent):
         
             btc_t = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
             price = float(btc_t.get("last_price", 0))
+            max_pain_result = self._calc_max_pain()
+            max_pain = max_pain_result.get("max_pain")
+            max_pain_distance_pct = None
+            if max_pain is not None and price > 0:
+                max_pain_distance_pct = round(((float(max_pain) - price) / price) * 100.0, 2)
         
             sources = [
                 "Binance_REST",
@@ -995,6 +1167,8 @@ class ContextAgent(StreamingAgent):
                 "vix": self.vix, "ndx_status": self.ndx_status,
                 "llm_news_sentiment": float(sentiment_data.get("average_score", 0)),
                 "fresh_source_count": fresh_count,
+                "retail_score": retail_score,
+                "retail_fomo_warning": retail_fomo_warning,
                 "pattern_score": self.pattern_result["pattern_score"],
                 "put_call_ratio": self.put_call_ratio,
                 "news_silence_seconds": news_silence_seconds,
@@ -1004,9 +1178,16 @@ class ContextAgent(StreamingAgent):
                 "m2_yoy_pct": self.m2_yoy_pct,
                 "onchain": self.onchain_data,
                 "taker_buy_sell_ratio": analytics.get("taker_buy_sell_ratio", 1.0),
+                "current_price": price,
+                "max_pain": max_pain,
+                "max_pain_distance_pct": max_pain_distance_pct,
             }
         
             grss = self.calculate_grss(grss_input)
+            
+            # Active Event Check
+            active_event = EventCalendar.get_active_event()
+            
             current_ts = datetime.now(timezone.utc)
             self.grss_history.append({"timestamp": current_ts, "score": grss})
             self.grss_history = [
@@ -1022,6 +1203,10 @@ class ContextAgent(StreamingAgent):
                 "GRSS_Score_Raw": round(grss, 1),
                 "GRSS_Score": round(self._grss_ema, 1),
                 "GRSS_Velocity_30min": grss_velocity_30min,
+                "GRSS_Deriv_Sub": self._last_grss_breakdown.get("deriv", 0.0),
+                "GRSS_Inst_Sub": self._last_grss_breakdown.get("inst", 0.0),
+                "GRSS_Sent_Sub": self._last_grss_breakdown.get("sent", 0.0),
+                "GRSS_Macro_Sub": self._last_grss_breakdown.get("macro", 0.0),
                 "Macro_Status": self.ndx_status,
                 "VIX": round(self.vix, 2),
                 "Yields_10Y": round(self.yields_10y, 2),
@@ -1045,11 +1230,15 @@ class ContextAgent(StreamingAgent):
                 "CoinGlass_Active": self.coinglass.is_active,
                 "BTC_Change_24h_Pct": round(self.btc_change_24h, 4),
                 "BTC_Change_1h_Pct": 0.0,
+                "Max_Pain": max_pain,
+                "Max_Pain_Distance_Pct": max_pain_distance_pct,
+                "Active_Event": active_event,
+                "_regime_hint": self._last_grss_breakdown.get("regime_hint", "ranging"),
                 "pattern_score": self.pattern_result["pattern_score"],
                 "Active_Patterns": self.pattern_result["active_patterns"],
                 "OI_Trend": self.oi_trend,
                 "ETF_Flows": self.etf_flows,
-    "CryptoCompare": {
+                "CryptoCompare": {
                     "timestamp": cryptocompare_bundle.get("timestamp"),
                     "symbols": cryptocompare_bundle.get("symbols", []),
                     "tsym": cryptocompare_bundle.get("tsym", "USD"),

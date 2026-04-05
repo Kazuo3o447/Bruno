@@ -10,7 +10,8 @@ import {
   BarChart3,
   Settings,
   BookOpen,
-  Terminal
+  Terminal,
+  Play
 } from "lucide-react";
 
 const menuItems = [
@@ -18,6 +19,7 @@ const menuItems = [
   { href: "/trading", label: "Trading", icon: TrendingUp, description: "Markt & Entscheidungen" },
   { href: "/monitor", label: "Monitor", icon: Activity, description: "System & APIs" },
   { href: "/logviewer", label: "Logs", icon: Terminal, description: "Alle System-Logs" },
+  { href: "/backtest", label: "Backtest", icon: Play, description: "Pipeline Validierung" },
   { href: "/reports", label: "Reports", icon: BarChart3, description: "Analysen & Export" },
   { href: "/settings", label: "Einstellungen", icon: Settings, description: "Konfiguration" },
   { href: "/journey", label: "Journey", icon: BookOpen, description: "Dokumentation" },

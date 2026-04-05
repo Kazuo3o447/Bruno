@@ -32,6 +32,14 @@ interface DecisionEvent {
   ofi?: number;
   grss_score?: number;
   vix?: number;
+  diagnostics?: {
+    effective_threshold?: number;
+    threshold_base?: number;
+    threshold_multiplier?: number;
+    atr_14?: number;
+    price?: number;
+    gap_to_threshold?: number;
+  };
 }
 
 interface DecisionFeedResponse {
@@ -155,7 +163,8 @@ export default function LogicPage() {
     return events.map((e, i) => ({
       idx: i,
       time: e.ts ? new Date(e.ts).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : `#${i}`,
-      composite: e.composite_score ?? 0,
+      composite: Math.abs(e.composite_score ?? 0),
+      threshold: e.diagnostics?.effective_threshold ?? 55,
       signal: e.outcome?.includes("SIGNAL") ? 1 : 0,
       blocked: !e.outcome?.includes("SIGNAL") ? 1 : 0,
       outcome: e.outcome,
@@ -370,11 +379,12 @@ export default function LogicPage() {
             <LineChart data={decisionTimeline}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1f1f33" />
               <XAxis dataKey="time" tick={{ fill: "#94a3b8", fontSize: 10 }} angle={-45} textAnchor="end" height={50} />
-              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} domain={[0, 1]} />
+              <YAxis tick={{ fill: "#94a3b8", fontSize: 11 }} domain={[0, 100]} />
               <Tooltip
                 contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }}
                 formatter={(value: any, name: any, props: any) => {
-                  if (name === "composite") return [fmt(value, 1), "Composite Score"];
+                  if (name === "composite") return [fmt(value, 1), "Abs Score"];
+                  if (name === "threshold") return [fmt(value, 1), "Threshold"];
                   if (name === "signal") return [value === 1 ? "Yes" : "No", "Signal"];
                   return [value, name];
                 }}
@@ -384,6 +394,7 @@ export default function LogicPage() {
                 }}
               />
               <Line type="monotone" dataKey="composite" stroke="#6366f1" strokeWidth={2} dot={false} />
+              <Line type="stepAfter" dataKey="threshold" stroke="#f59e0b" strokeWidth={1} strokeDasharray="5 5" dot={false} />
               <Line type="step" dataKey="signal" stroke="#10b981" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>

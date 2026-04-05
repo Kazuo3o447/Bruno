@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export
+from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export, backtest_api, debrief_api
 from app.core.redis_client import redis_client
 from app.core.database import init_db, close_db
 from app.core.log_manager import log_manager
 from app.core.scheduler import scheduler
+from app.core.config_cache import ConfigCache
 import logging
 import asyncio
 import os
@@ -42,11 +43,18 @@ app.include_router(liquidations.router, prefix="/api/v1/liquidations", tags=["li
 app.include_router(decisions.router, prefix="/api/v1", tags=["decisions"])
 app.include_router(config_api.router, prefix="/api/v1", tags=["config"])
 app.include_router(export.router, prefix="/api/v1", tags=["export"])
+app.include_router(backtest_api.router, prefix="/api/v1", tags=["backtest"])
+app.include_router(debrief_api.router, prefix="/api/v1", tags=["debriefs"])
 
 @app.on_event("startup")
 async def startup_event():
     """Initialisiert alle Services beim Start."""
     try:
+        # ConfigCache initialisieren
+        config_path = os.path.join(os.path.dirname(__file__), "..", "..", "config.json")
+        ConfigCache.init(config_path)
+        logger.info("ConfigCache initialisiert")
+        
         await init_db()
         logger.info("Datenbank initialisiert")
         

@@ -731,7 +731,7 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "nearest_ask_wall": None, "wall_imbalance": 1.0}
 
     def _calculate_ta_score(self, trend, rsi, sr_levels, breakout, volume,
-                             price, ema_9, ema_21, vwap, mtf, wick) -> dict:
+                             price, ema_9, ema_21, vwap, mtf, wick, regime) -> dict:
         """
         Normalisierter TA-Score (-100 bis +100).
         Positiv = bullisch, negativ = bärisch.
@@ -814,21 +814,40 @@ class TechnicalAnalysisAgent(PollingAgent):
         direction = "long" if score > 0 else "short" if score < 0 else "neutral"
         alignment = mtf.get("alignment_score", 0)  # -1.0 bis +1.0
         
-        if direction == "long":
-            if alignment < 0:  # Gegensignal
-                score *= 0.3
-                signals.append("⚠ MTF contra-signal — score reduced 70%")
-            elif alignment < 0.5:  # Teilweise aligned
-                score *= 0.6
-                signals.append("⚠ MTF partially aligned — score reduced 40%")
-            # alignment >= 0.5: kein Abzug (2 von 3 TFs aligned reicht)
-        elif direction == "short":
-            if alignment > 0:
-                score *= 0.3
-                signals.append("⚠ MTF contra-signal — score reduced 70%")
-            elif alignment > -0.5:
-                score *= 0.6
-                signals.append("⚠ MTF partially aligned — score reduced 40%")
+        # Regime-abhängiger MTF-Filter
+        if regime in ["ranging", "high_vola"]:
+            # Entspannte Filter für Ranging/Hoch-Vola Märkte
+            if direction == "long":
+                if alignment < 0:  # Gegensignal
+                    score *= 0.5
+                    signals.append("⚠ MTF contra-signal — score reduced 50% (ranging regime)")
+                elif alignment < 0.5:  # Teilweise aligned
+                    score *= 0.8
+                    signals.append("⚠ MTF partially aligned — score reduced 20% (ranging regime)")
+            elif direction == "short":
+                if alignment > 0:
+                    score *= 0.5
+                    signals.append("⚠ MTF contra-signal — score reduced 50% (ranging regime)")
+                elif alignment > -0.5:
+                    score *= 0.8
+                    signals.append("⚠ MTF partially aligned — score reduced 20% (ranging regime)")
+            signals.append("MTF relaxed (ranging regime)")
+        else:
+            # Aggressive Filter für Trending-Märkte (bisherige Logik)
+            if direction == "long":
+                if alignment < 0:  # Gegensignal
+                    score *= 0.3
+                    signals.append("⚠ MTF contra-signal — score reduced 70%")
+                elif alignment < 0.5:  # Teilweise aligned
+                    score *= 0.6
+                    signals.append("⚠ MTF partially aligned — score reduced 40%")
+            elif direction == "short":
+                if alignment > 0:
+                    score *= 0.3
+                    signals.append("⚠ MTF contra-signal — score reduced 70%")
+                elif alignment > -0.5:
+                    score *= 0.6
+                    signals.append("⚠ MTF partially aligned — score reduced 40%")
         
         score = round(max(-100, min(100, score)), 1)
         
@@ -855,6 +874,10 @@ class TechnicalAnalysisAgent(PollingAgent):
         """Hauptzyklus (60s)."""
         try:
             start_time = time.perf_counter()
+            
+            # 0. Regime aus Redis lesen (für MTF-Filter)
+            grss_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
+            regime = grss_data.get("_regime_hint", "ranging")
             
             # 1. Multi-Timeframe Candles laden
             candles_1m = await self._fetch_candles("1 minute", limit=720)
@@ -918,7 +941,7 @@ class TechnicalAnalysisAgent(PollingAgent):
             
             # 13. TA-Score
             ta_score = self._calculate_ta_score(trend, rsi_14, sr_levels, breakout, 
-                                                 volume, price, ema_9, ema_21, vwap, mtf, wick)
+                                                 volume, price, ema_9, ema_21, vwap, mtf, wick, regime)
             
             # 13. Snapshot → Redis
             snapshot = {
@@ -932,11 +955,21 @@ class TechnicalAnalysisAgent(PollingAgent):
                 # NEU: Institutionelle Alpha-Indikatoren
                 "volume_profile": volume_profile,
                 "delta_analysis": delta_analysis,
+                "regime_used": regime,  # Für Debugging
             }
-            await self.deps.redis.set_cache("bruno:ta:snapshot", snapshot)
+            
+            # Fix datetime serialization
+            def datetime_handler(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError(repr(obj) + " is not JSON serializable")
+            
+            import json
+            snapshot_json = json.dumps(snapshot, default=datetime_handler)
+            await self.deps.redis.redis.setex("bruno:ta:snapshot", 300, snapshot_json)
             
             # NEU: Orderbuch-Walls auch separat für LiquidityEngine + ExecutionAgent
-            await self.deps.redis.set_cache("bruno:ta:ob_walls", ob_walls, ttl=60)
+            await self.deps.redis.redis.setex("bruno:ta:ob_walls", 60, json.dumps(ob_walls, default=datetime_handler))
             
             latency = (time.perf_counter() - start_time) * 1000
             await self._report_health("TA_Engine", "online", latency)

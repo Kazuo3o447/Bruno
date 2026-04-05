@@ -47,6 +47,10 @@ interface Telemetry {
   grss: {
     score: number | null;
     velocity_30min: number | null;
+    deriv_sub?: number | null;
+    inst_sub?: number | null;
+    sent_sub?: number | null;
+    macro_sub?: number | null;
     veto_active: boolean;
   };
   market: {
@@ -54,6 +58,10 @@ interface Telemetry {
     btc_change_24h_pct: number | null;
     btc_change_1h_pct: number | null;
     ofi: number | null;
+    cvd?: number | null;
+    vamp?: number | null;
+    max_pain?: number | null;
+    max_pain_distance?: number | null;
     funding_rate: number | null;
     put_call_ratio: number | null;
     fear_greed: number | null;
@@ -231,7 +239,7 @@ export default function Dashboard() {
     { label: "24h Change", value: fmt(telemetry?.market?.btc_change_24h_pct, 2) + "%", change: telemetry?.market?.btc_change_24h_pct },
     { label: "1h Change", value: fmt(telemetry?.market?.btc_change_1h_pct, 2) + "%", change: telemetry?.market?.btc_change_1h_pct },
     { label: "OFI", value: fmt(telemetry?.market?.ofi, 2), change: telemetry?.market?.ofi },
-    { label: "Funding", value: telemetry?.market?.funding_rate ? (telemetry.market.funding_rate * 100).toFixed(4) + "%" : "—", change: telemetry?.market?.funding_rate },
+    { label: "Max Pain", value: fmtPrice(telemetry?.market?.max_pain), detail: telemetry?.market?.max_pain_distance ? `${telemetry.market.max_pain_distance}%` : "" },
     { label: "VIX", value: fmt(telemetry?.market?.vix, 1), change: telemetry?.market?.vix ? -(telemetry.market.vix - 20) : 0 },
   ], [telemetry]);
 
@@ -446,12 +454,46 @@ export default function Dashboard() {
             <div className="space-y-3">
               {marketData.map((item) => (
                 <div key={item.label} className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">{item.label}</span>
+                  <div className="flex flex-col">
+                    <span className="text-xs text-slate-500">{item.label}</span>
+                    {item.detail && <span className="text-[10px] text-slate-600">{item.detail}</span>}
+                  </div>
                   <span className={`text-sm font-medium ${
                     item.change !== undefined && item.change !== null
                       ? item.change > 0 ? "text-emerald-400" : item.change < 0 ? "text-red-400" : "text-slate-300"
                       : "text-slate-300"
                   }`}>{item.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* GRSS v3 Breakdown */}
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-slate-300 mb-4">GRSS v3 Breakdown</h3>
+            <div className="space-y-3">
+              {[
+                { label: "Derivate", value: telemetry.grss.deriv_sub },
+                { label: "Institutional", value: telemetry.grss.inst_sub },
+                { label: "Sentiment", value: telemetry.grss.sent_sub },
+                { label: "Macro", value: telemetry.grss.macro_sub },
+              ].map((sub) => (
+                <div key={sub.label} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-500">{sub.label}</span>
+                    <span className={sub.value !== null && sub.value !== undefined && sub.value > 0 ? "text-emerald-400" : sub.value !== null && sub.value !== undefined && sub.value < 0 ? "text-red-400" : "text-slate-400"}>
+                      {sub.value !== null && sub.value !== undefined ? (sub.value > 0 ? "+" : "") + sub.value.toFixed(1) : "—"}
+                    </span>
+                  </div>
+                  <div className="h-1 w-full bg-slate-900 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full rounded-full ${sub.value && sub.value > 0 ? "bg-emerald-500" : "bg-red-500"}`}
+                      style={{ 
+                        width: `${Math.abs((sub.value || 0) / 25) * 100}%`,
+                        marginLeft: sub.value && sub.value < 0 ? "0" : "0" // Simplified for now
+                      }}
+                    />
+                  </div>
                 </div>
               ))}
             </div>

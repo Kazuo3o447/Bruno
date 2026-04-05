@@ -31,11 +31,26 @@ interface TradeReport {
   ofi_at_entry: number;
   veto_state: string;
   decision_context: Record<string, any>;
-  llm_analysis?: {
-    rating: number;
-    analysis: string;
-    recommendation: string;
+  debrief?: {
+    decision_quality: string;
+    key_signal: string;
+    improvement: string;
+    pattern: any;
+    regime_assessment: string;
+    raw_llm_response: any;
   };
+}
+
+interface DebriefSummary {
+  regime_performance: Record<string, { total: number; win_rate: number }>;
+  top_errors: Array<{ error: string; count: number }>;
+  accuracy_ranking: {
+    technical: number;
+    flow: number;
+    liquidity: number;
+    macro: number;
+  };
+  recent_history: any[];
 }
 
 interface LearningRun {
@@ -68,7 +83,8 @@ export default function ReportsPage() {
   const [trades, setTrades] = useState<TradeReport[]>([]);
   const [learningRuns, setLearningRuns] = useState<LearningRun[]>([]);
   const [performance, setPerformance] = useState<Record<string, PerformancePeriod>>({});
-  const [activeTab, setActiveTab] = useState<"trades" | "learning" | "performance">("trades");
+  const [debriefSummary, setDebriefSummary] = useState<DebriefSummary | null>(null);
+  const [activeTab, setActiveTab] = useState<"trades" | "learning" | "performance" | "debriefs">("trades");
   const [loading, setLoading] = useState(false);
   const [expandedTrade, setExpandedTrade] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState("24h");
@@ -80,7 +96,14 @@ export default function ReportsPage() {
       const tradesRes = await fetch("/api/v1/trades/history?limit=100");
       if (tradesRes.ok) {
         const data = await tradesRes.json();
-        setTrades(data.trades || []);
+        setTrades(data || []);
+      }
+
+      // Fetch debrief summary
+      const debriefRes = await fetch("/api/v1/debriefs/summary");
+      if (debriefRes.ok) {
+        const data = await debriefRes.json();
+        setDebriefSummary(data);
       }
 
       // Fetch performance metrics
@@ -196,6 +219,7 @@ export default function ReportsPage() {
       <div className="flex flex-wrap gap-2">
         {[
           { id: "trades", label: "Geschlossene Trades", icon: TrendingUp },
+          { id: "debriefs", label: "DeepSeek Debriefs", icon: Brain },
           { id: "learning", label: "Lern-Logs", icon: Brain },
           { id: "performance", label: "Performance", icon: BarChart3 },
         ].map((tab) => (
@@ -289,10 +313,10 @@ export default function ReportsPage() {
                         <td className="px-4 py-3 text-slate-400">{trade.grss_at_entry?.toFixed(1) || "—"}</td>
                         <td className="px-4 py-3 text-xs text-slate-400">{trade.duration_minutes}min</td>
                         <td className="px-4 py-3">
-                          {trade.llm_analysis ? (
+                          {trade.debrief ? (
                             <div className="flex items-center gap-1">
                               <Brain className="w-4 h-4 text-indigo-400" />
-                              <span className="text-xs">{trade.llm_analysis.rating}/10</span>
+                              <span className="text-xs">DeepSeek</span>
                             </div>
                           ) : (
                             <span className="text-xs text-slate-500">—</span>
@@ -323,15 +347,30 @@ export default function ReportsPage() {
                                 <div className="text-slate-300">{trade.ofi_at_entry?.toFixed(3) || "—"}</div>
                               </div>
                             </div>
-                            {trade.llm_analysis && (
+                            {trade.debrief && (
                               <div className="mt-4 p-3 bg-indigo-950/20 border border-indigo-800 rounded-lg">
                                 <div className="flex items-center gap-2 mb-2">
                                   <Brain className="w-4 h-4 text-indigo-400" />
-                                  <span className="text-sm font-medium text-indigo-400">LLM Analysis</span>
-                                  <span className="text-xs text-slate-500">Rating: {trade.llm_analysis.rating}/10</span>
+                                  <span className="text-sm font-medium text-indigo-400">DeepSeek V3 Debrief</span>
                                 </div>
-                                <p className="text-xs text-slate-300 mb-2">{trade.llm_analysis.analysis}</p>
-                                <p className="text-xs text-indigo-400">Recommendation: {trade.llm_analysis.recommendation}</p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                  <div>
+                                    <span className="text-slate-500">Decision Quality:</span>
+                                    <div className="text-slate-300">{trade.debrief.decision_quality}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Key Signal:</span>
+                                    <div className="text-slate-300">{trade.debrief.key_signal}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Improvement:</span>
+                                    <div className="text-slate-300">{trade.debrief.improvement}</div>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Regime Assessment:</span>
+                                    <div className="text-slate-300">{trade.debrief.regime_assessment}</div>
+                                  </div>
+                                </div>
                               </div>
                             )}
                             {trade.decision_context && Object.keys(trade.decision_context).length > 0 && (
@@ -421,6 +460,95 @@ export default function ReportsPage() {
               <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">Exports sind pro Tab direkt als JSON möglich.</div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* DeepSeek Debriefs Tab */}
+      {activeTab === "debriefs" && (
+        <div className="space-y-4">
+          {debriefSummary ? (
+            <>
+              {/* Summary Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+                  <h3 className="text-sm font-medium text-slate-300 mb-3">Regime Performance</h3>
+                  <div className="space-y-2">
+                    {Object.entries(debriefSummary.regime_performance).map(([regime, perf]) => (
+                      <div key={regime} className="flex justify-between text-xs">
+                        <span className="text-slate-500 capitalize">{regime}</span>
+                        <span className="text-slate-300">{perf.total} trades ({perf.win_rate}% WR)</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+                  <h3 className="text-sm font-medium text-slate-300 mb-3">Signal Accuracy Ranking</h3>
+                  <div className="space-y-2">
+                    {Object.entries(debriefSummary.accuracy_ranking)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([signal, accuracy]) => (
+                        <div key={signal} className="flex justify-between text-xs">
+                          <span className="text-slate-500 capitalize">{signal}</span>
+                          <span className="text-slate-300">{accuracy}%</span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+                <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+                  <h3 className="text-sm font-medium text-slate-300 mb-3">Top Error Patterns</h3>
+                  <div className="space-y-2">
+                    {debriefSummary.top_errors.slice(0, 5).map((error, i) => (
+                      <div key={i} className="flex justify-between text-xs">
+                        <span className="text-slate-500 truncate">{error.error}</span>
+                        <span className="text-slate-300">{error.count}x</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Debriefs */}
+              <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+                <h3 className="text-sm font-medium text-slate-300 mb-4">Recent DeepSeek Debriefs</h3>
+                <div className="space-y-3 max-h-[500px] overflow-y-auto">
+                  {debriefSummary.recent_history.map((debrief, idx) => (
+                    <div key={idx} className="p-3 bg-[#080810] rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-slate-500">
+                          {new Date(debrief.timestamp).toLocaleString("de-DE")}
+                        </span>
+                        <span className={`px-2 py-1 rounded text-xs ${
+                          debrief.outcome === "profitable" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"
+                        }`}>
+                          {debrief.outcome}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-slate-500">Decision Quality:</span>
+                          <div className="text-slate-300">{debrief.decision_quality}</div>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Key Signal:</span>
+                          <div className="text-slate-300">{debrief.key_signal}</div>
+                        </div>
+                        <div className="col-span-full">
+                          <span className="text-slate-500">Improvement:</span>
+                          <div className="text-slate-300">{debrief.improvement}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-center py-12 text-slate-500">
+              <Brain className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>Keine DeepSeek Debriefs verfügbar</p>
+              <p className="text-xs mt-2">Debriefs erscheinen hier nach geschlossenen Trades</p>
+            </div>
+          )}
         </div>
       )}
 

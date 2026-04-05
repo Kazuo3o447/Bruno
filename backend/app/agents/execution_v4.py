@@ -1,6 +1,8 @@
 from app.agents.base import StreamingAgent
 from app.agents.deps import AgentDependencies
 from app.core.exchange_manager import AuthenticatedExchangeClient
+from app.core.config_cache import ConfigCache
+from app.services.trade_debrief_v3 import TradeDebriefV3
 from app.schemas.models import TradeAuditLog
 from sqlalchemy import text
 import asyncio
@@ -41,16 +43,19 @@ class ExecutionAgentV4(StreamingAgent):
             db_session_factory=deps.db_session_factory,
         )
 
+        # ── Post-Trade Debrief (v3) ──────────────────────────────
+        self.debrief_service = TradeDebriefV3(deps.redis, deps.db_session_factory)
+
         self._portfolio_initialized = False
         
         # v2 Breakeven Stop
         self._breakeven_enabled = True
-        self._breakeven_trigger_pct = float(self._load_config_value("BREAKEVEN_TRIGGER_PCT", 0.005))
+        self._breakeven_trigger_pct = float(ConfigCache.get("BREAKEVEN_TRIGGER_PCT", 0.005))
         
         # v2.1 Slippage Protection
-        self._max_slippage_pct = float(self._load_config_value("MAX_SLIPPAGE_PCT", 0.001))  # 0.1%
+        self._max_slippage_pct = float(ConfigCache.get("MAX_SLIPPAGE_PCT", 0.001))  # 0.1%
         self._sweep_protection_enabled = True
-        self._limit_order_threshold_pct = float(self._load_config_value("LIMIT_ORDER_THRESHOLD_PCT", 0.002))  # 0.2%
+        self._limit_order_threshold_pct = float(ConfigCache.get("LIMIT_ORDER_THRESHOLD_PCT", 0.002))  # 0.2%
 
     def _load_config_value(self, key: str, default: float) -> float:
         """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
@@ -148,7 +153,7 @@ class ExecutionAgentV4(StreamingAgent):
 
         learning_mode_active = (
             self.deps.config.DRY_RUN
-            and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
+            and ConfigCache.get("LEARNING_MODE_ENABLED", 0.0) > 0
         )
         trade_mode = "learning" if learning_mode_active else "production"
 
@@ -336,6 +341,13 @@ class ExecutionAgentV4(StreamingAgent):
                     max_favorable_price=fill_price,
                     min_favorable_price=fill_price,
                     entry_trade_id=order["id"],
+                    # Sub-Scores für Debrief (v3)
+                    composite_score=signal.get("composite_score", 0.0),
+                    ta_score=signal.get("ta_score", 0.0),
+                    liq_score=signal.get("liq_score", 0.0),
+                    flow_score=signal.get("flow_score", 0.0),
+                    macro_score=signal.get("macro_score", 0.0),
+                    signals_active=signal.get("signals", []),
                     # Phase C Felder — aus Signal wenn vorhanden
                     grss_at_entry=signal.get("grss", 0.0),
                     layer1_output=signal.get("layer1_output"),
@@ -1000,7 +1012,7 @@ class ExecutionAgentV4(StreamingAgent):
             if self.deps.config.DRY_RUN:
                 learning_mode_active = (
                     self.deps.config.DRY_RUN
-                    and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
+                    and ConfigCache.get("LEARNING_MODE_ENABLED", 0.0) > 0
                 )
                 trade_mode = "learning" if learning_mode_active else "production"
                 trade_id = f"sim_exit_{int(datetime.now().timestamp())}"
@@ -1039,12 +1051,16 @@ class ExecutionAgentV4(StreamingAgent):
                 exit_trade_id=trade_id,
             )
 
-            if closed and self.deps.config.DRY_RUN:
-                await self._update_portfolio({
-                    "pnl_eur": closed.get("pnl_eur", 0.0),
-                    "fee_eur": qty * exit_price * 0.0004,
-                })
-                asyncio.create_task(self._update_profit_factor())
+            if closed:
+                # Trigger non-blocking Post-Trade Debrief
+                asyncio.create_task(self.debrief_service.debrief_trade(closed, trade_mode=trade_mode))
+
+                if self.deps.config.DRY_RUN:
+                    await self._update_portfolio({
+                        "pnl_eur": closed.get("pnl_eur", 0.0),
+                        "fee_eur": qty * exit_price * 0.0004,
+                    })
+                    asyncio.create_task(self._update_profit_factor())
 
             # Telegram-Notification
             from app.core.telegram_bot import get_telegram_bot

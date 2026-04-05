@@ -5,6 +5,7 @@ Nativer Scheduler für regelmäßige Systemtests.
 Verwaltet automatische Tests alle 30 Minuten mit Start/Stop/Pause Funktionalität.
 """
 
+from app.services.trade_debrief_v3 import TradeDebriefV3
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
@@ -50,8 +51,10 @@ class SystemtestScheduler:
             return
         self._initialized = True
         self._task: Optional[asyncio.Task] = None
+        self._phantom_task: Optional[asyncio.Task] = None
         self._running = False
         self._paused = False
+        self.debrief_service = TradeDebriefV3(redis_client)
     
     async def initialize(self):
         """Initialisiert den Scheduler aus Redis oder mit Defaults."""
@@ -143,6 +146,7 @@ class SystemtestScheduler:
             self._running = True
             self._paused = False
             self._task = asyncio.create_task(self._run_scheduler())
+            self._phantom_task = asyncio.create_task(self._run_phantom_evaluator())
             
             logger.info(f"Scheduler gestartet (Intervall: {config.interval_minutes} Minuten)")
             return {
@@ -173,6 +177,14 @@ class SystemtestScheduler:
                 except asyncio.CancelledError:
                     pass
                 self._task = None
+            
+            if self._phantom_task:
+                self._phantom_task.cancel()
+                try:
+                    await self._phantom_task
+                except asyncio.CancelledError:
+                    pass
+                self._phantom_task = None
             
             # Config aktualisieren
             config = await self._get_config()
@@ -329,34 +341,8 @@ class SystemtestScheduler:
                     phantom["status"] = "evaluated"
                     phantom["evaluated_at"] = now.isoformat()
 
-                    async with AsyncSessionLocal() as session:
-                        await session.execute(
-                            text("""
-                                INSERT INTO trade_debriefs (
-                                    id, trade_id, timestamp, decision_quality,
-                                    key_signal, improvement, pattern, regime_assessment,
-                                    trade_mode, raw_llm_response
-                                ) VALUES (
-                                    :id, :trade_id, :timestamp, :decision_quality,
-                                    :key_signal, :improvement, :pattern, :regime_assessment,
-                                    :trade_mode, :raw_llm_response
-                                )
-                                ON CONFLICT (id) DO NOTHING
-                            """),
-                            {
-                                "id": phantom_id,
-                                "trade_id": phantom_id,
-                                "timestamp": now,
-                                "decision_quality": "PHANTOM",
-                                "key_signal": f"phantom_long_pct={phantom['phantom_long_pct']}, phantom_short_pct={phantom['phantom_short_pct']}",
-                                "improvement": "N/A",
-                                "pattern": phantom.get("aborted_at", "hold_cycle"),
-                                "regime_assessment": phantom.get("regime", "unknown"),
-                                "trade_mode": "phantom",
-                                "raw_llm_response": json.dumps(phantom),
-                            },
-                        )
-                        await session.commit()
+                    # Trigger non-blocking Debrief
+                    asyncio.create_task(self.debrief_service.debrief_trade(phantom, trade_mode="phantom"))
 
                     await redis_client.redis.sadd(completed_key, phantom_id)
                     await redis_client.redis.lpush(
@@ -384,6 +370,20 @@ class SystemtestScheduler:
         except Exception as e:
             logger.error(f"Phantom Trade Evaluation Fehler: {e}")
     
+    async def _run_phantom_evaluator(self):
+        """Separate background task for phantom trade evaluation every 5 minutes."""
+        logger.info("Phantom Evaluator Task gestartet (5m Intervall)")
+        while self._running:
+            try:
+                if not self._paused:
+                    await self._evaluate_phantom_trades()
+                await asyncio.sleep(300) # 5 Minuten
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Fehler im Phantom Evaluator: {e}")
+                await asyncio.sleep(60)
+
     async def _run_scheduler(self):
         """
         Haupt-Scheduler-Loop.
@@ -414,7 +414,8 @@ class SystemtestScheduler:
                     logger.error(f"Fehler beim automatischen Systemtest: {test_error}")
 
                 try:
-                    await self._evaluate_phantom_trades()
+                    # await self._evaluate_phantom_trades() # REMOVED: Now in separate task
+                    pass
                 except Exception as phantom_error:
                     logger.error(f"Fehler bei der Phantom-Trade-Auswertung: {phantom_error}")
                 

@@ -7,7 +7,7 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2 Institutionelle Fixes & Complete Purge)
+> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2 Retail-Ready mit echtem CVD & GRSS v3)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
 
@@ -15,31 +15,17 @@
 
 ## STATUS UPDATE (April 2026)
 
-### ✅ BRUNO v2.2 — Institutionelle Fixes & Complete Purge
-- **LLM-Cascade entfernt** — 3-Layer LLM durch deterministischen Composite Scorer ersetzt
-- **Technical Analysis Engine** — EMA, RSI (Wilder), VWAP (Tages-Reset), ATR, S/R, MTF-Alignment, Wick-Detection, VPOC
-- **Liquidity Intelligence** — Cluster-Magneten, 3×-Sweep-Konfirmation (Spike+Wick+OI-Drop), CVD (aggTrades, last_trade_id Guard)
-- **Orderbuch-Walls** — depth=1000 als Live-Liquiditätsradar
-- **Institutionelle Daten** — Echte Deribit DVOL, Max Pain aus Options-Chain (864 Strikes), Put/Call Ratio
-- **Free-Tier Analytics** — Binance Top Trader / Taker Ratios + Blockchain.com / Glassnode On-Chain Daten
-- **Regime-adaptive Gewichtung** — Trending: TA 50%, Ranging: Liq 40%
-- **Risk: Veto Matrix** — GRSS Threshold (35/55), Daily Drawdown (3%), 3 Fehltrades → 24h Pause
-- **Execution V2.2** — 3-Phasen Exit (Fix SL/TP → Breakeven → ATR Trailing), TP1 Maker Fee (0.01%), Position-Specific State
-- **Composite Scorer** — Threshold-Fallback aus config.json, Null-Safe Signal Collection, Diagnostics Block
-- **Backtester V2.2** — 1-Minuten-Kerzen, Intrabar Pessimismus-Regel
-- **Complete Purge** — Keine veralteten Heuristiken (Google Trends, Fake Max Pain)
-- **60s Zykluszeit** — kein LLM-Overhead mehr
-- **Post-Trade Deepseek Analysis** — Professionelle Reasoning API nach jedem Trade → DB für Lernloop
-- **Binance API Integration v2.1** — Ollama entfernt, BinanceDataClient + MarketDataCollector
-- **Live Marktdaten** — Alle 30s: Ticker, Klines, Orderbook, Funding, OI, Liquidations
-- **Frontend v2.2** — 7 Seiten: Dashboard, Trading, Monitor, Logs, Reports, Einstellungen, Journey
-- **Dashboard** — Status-Cards, Entscheidungs-Timeline, Pipeline Gates, Agenten-Status, Performance
-- **Trading Page** — 6-Gate Kaskade-Visualisierung, Quant Micro Daten, GRSS Breakdown
-- **Monitor** — API-Health Tests, Agent Heartbeats, Scheduler Steuerung
-- **Logs** — Live WebSocket Logs mit Filter und Export
-- **Reports** — Trades, Lern-Logs, Performance-Perioden
-- **Settings** — 4 Presets, Parameter-Editor, Deepseek-Test
-- **Journey** — Dokumentation mit 7 Abschnitten
+### ✅ BRUNO v2.2 — Retail-Ready mit echtem CVD & GRSS v3
+- **Echtes CVD** — aggTrade Delta mit 1-Sekunden-Buckets und Redis Rolling Window (3600 Ticks)
+- **GRSS v3** — 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro) statt 25 additive Terme
+- **Max Pain Integration** — Deribit Options Chain mit 15% Gewichtung im Derivatives Sub-Score
+- **MTF-Filter Regime-Kopplung** — Entspannte Filter im Ranging (50%/80% vs 30%/70%)
+- **Adaptive Thresholds** — ATR-basiert mit Event Calendar Guardrails (FOMC/CPI/NFP)
+- **Retail Fees** — Realistische 5 BPS Taker / 2 BPS Maker / 3 BPS Slippage
+- **TA-Score im Ranging** — Produziert valide Werte (-25 bis +25) statt konstant 0.0
+- **Config Cache** — 1×/Minute Reload statt pro Zyklus für Performance
+- **Pipeline Backtest** — Echte CompositeScorer Pipeline mit Walk-Forward
+- **DeepSeek Debrief V3** — Automatische Post-Trade Analyse für Phantom Trades
 
 ## AGENT-PIPELINE v2
 
@@ -87,10 +73,11 @@ Regime-adaptive Gewichtung:
 | Regime | TA | Liq | Flow | Macro |
 |--------|-----|-----|------|-------|
 | Trending (bull/bear) | 50% | 15% | 20% | 15% |
-| Ranging/Mixed | 20% | 40% | 25% | 15% |
+| Ranging/Mixed | 40% | 25% | 20% | 15% |
 
 Sweep-Bonus: 3×-bestätigter Sweep senkt Threshold um 15 Punkte.
-MTF-Filter: Score ×0.3 wenn Multi-Timeframe nicht aligned.
+MTF-Filter: Score ×0.5 (Ranging) / ×0.3 (Trending) wenn Multi-Timeframe nicht aligned.
+Event Guard: FOMC ×1.5, CPI/NFP ×1.3 Threshold Multiplikator.
 
 ---
 

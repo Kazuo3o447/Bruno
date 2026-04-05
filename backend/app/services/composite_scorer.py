@@ -1,9 +1,11 @@
+import os
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 import json
 import logging
-import os
 from datetime import datetime, timezone
+from app.core.config_cache import ConfigCache
 
 # Regime-basierte Gewichtungs-Presets
 WEIGHT_PRESETS = {
@@ -47,6 +49,10 @@ class CompositeSignal:
             "position_size_hint_pct": self.position_size_pct,  # Hint für Execution
             "price": self.price,
             "composite_score": self.composite_score,
+            "ta_score": self.ta_score,
+            "liq_score": self.liq_score,
+            "flow_score": self.flow_score,
+            "macro_score": self.macro_score,
             "conviction": self.conviction,
             "stop_loss_pct": self.stop_loss_pct,
             "take_profit_pct": self.take_profit_pct,
@@ -89,6 +95,7 @@ class CompositeSignal:
             "tp1_size_pct": self.tp1_size_pct,
             "tp2_size_pct": self.tp2_size_pct,
             "breakeven_trigger_pct": self.breakeven_trigger_pct,
+            "diagnostics": self.diagnostics
         }
 
 
@@ -155,7 +162,8 @@ class CompositeScorer:
         result.sweep_confirmed = sweep.get("all_confirmed", False)
         
         # 7. Threshold + Bonus-Logik
-        threshold = self._get_threshold()
+        atr = float(ta_data.get("atr_14", 0.0) or 0.0)
+        threshold = self._get_threshold(atr, result.price, macro_data)
         abs_score = abs(composite)
         
         # Sweep-Bonus: Ein bestätigter 3×-Sweep senkt den Threshold um 15
@@ -173,7 +181,6 @@ class CompositeScorer:
             result.signals_active.append("Data Gap: DVOL/L-S missing")
         
         # 8. Position Sizing + SL/TP
-        atr = ta_data.get("atr_14", 0.0)
         session = ta_data.get("session", {})
         result.position_size_pct = self._calc_position_size(abs_score, atr, result.price, session)
         (
@@ -199,6 +206,10 @@ class CompositeScorer:
             "mtf_aligned": result.mtf_aligned,
             "mtf_alignment_score": float(ta_data.get("mtf", {}).get("alignment_score", 0)),
             "effective_threshold": effective_threshold,
+            "threshold_base": threshold,
+            "threshold_multiplier": round(threshold / max(1.0, float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 35) if ConfigCache.get("LEARNING_MODE_ENABLED", False) else ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 55))), 3),
+            "atr_14": atr,
+            "price": result.price,
             "abs_score": abs_score,
             "gap_to_threshold": round(effective_threshold - abs_score, 1),
             "regime": regime,
@@ -206,6 +217,11 @@ class CompositeScorer:
             "critical_data_gap": critical_data_gap,
             "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
         }
+
+        self.logger.debug(
+            f"Effective threshold: base={threshold:.1f} | ATR={atr:.2f} | price={result.price:.2f} | "
+            f"score={abs_score:.1f} | trade={result.should_trade}"
+        )
         
         return result
 
@@ -382,24 +398,30 @@ class CompositeScorer:
         # GRSS: 0-100, konvertiere zu -50 bis +50 (50 = neutral)
         return round(grss - 50, 1)
 
-    def _get_threshold(self) -> float:
-        """Lädt Threshold aus config.json."""
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
-        try:
-            with open(config_path) as f:
-                cfg = json.load(f)
-            
-            # Learning Mode Check
-            learning_enabled = cfg.get("LEARNING_MODE_ENABLED", False)
-            if learning_enabled:
-                return float(cfg.get("COMPOSITE_THRESHOLD_LEARNING", 35))
-            else:
-                return float(cfg.get("COMPOSITE_THRESHOLD_PROD", 55))
-        except Exception:
-            return 55.0  # Default
+    def _get_threshold(self, atr: float = 0.0, price: float = 0.0, macro_data: dict = None) -> float:
+        """Adaptiver Threshold: Basis × Volatilitäts-Multiplikator × Event-Multiplikator."""
+        learning_enabled = ConfigCache.get("LEARNING_MODE_ENABLED", False)
+        if learning_enabled:
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 35))
+        else:
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 55))
+
+        if atr <= 0 or price <= 0:
+            return base
+
+        atr_pct = atr / price
+        # Hohe Vola -> konservativer, niedrige Vola -> aggressiver
+        vol_mult = 0.5 + min(0.8, (atr_pct / 0.02) * 0.8)
+        
+        # Event Guard Logic
+        event_mult = 1.0
+        if macro_data:
+            active_event = macro_data.get("Active_Event")
+            if active_event:
+                event_mult = float(active_event.get("threshold_mult", 1.0))
+                self.logger.info(f"Event Guard: {active_event.get('name')} — Threshold ×{event_mult}")
+
+        return round(base * vol_mult * event_mult, 1)
 
     def _calc_sl_tp(self, atr: float, price: float, abs_score: float) -> tuple:
         """

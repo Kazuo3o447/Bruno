@@ -1,5 +1,6 @@
 from app.agents.base import StreamingAgent
 from app.agents.deps import AgentDependencies
+from app.core.config_cache import ConfigCache
 from app.core.exchange_manager import AuthenticatedExchangeClient
 from app.schemas.models import TradeAuditLog
 from sqlalchemy import text
@@ -48,9 +49,9 @@ class ExecutionAgentV3(StreamingAgent):
         
         # v2 Breakeven Stop & Trailing Stop - FIX: Kein globaler State mehr
         # self._breakeven_enabled = True  # REMOVED - State ist jetzt position-spezifisch
-        self._breakeven_trigger_pct = float(self._load_config_value("BREAKEVEN_TRIGGER_PCT", 0.005))
+        self._breakeven_trigger_pct = float(ConfigCache.get("BREAKEVEN_TRIGGER_PCT", 0.005))
         # ATR-based Trailing Stop (institutionell)
-        self._atr_trailing_multiplier = float(self._load_config_value("ATR_TRAILING_MULTIPLIER", 1.5))
+        self._atr_trailing_multiplier = float(ConfigCache.get("ATR_TRAILING_MULTIPLIER", 1.5))
         # self._atr_trailing_enabled = True  # REMOVED - State ist jetzt position-spezifisch
 
     def _position_state_key(self, pos: Dict[str, Any]) -> str:
@@ -242,7 +243,7 @@ class ExecutionAgentV3(StreamingAgent):
 
         learning_mode_active = (
             self.deps.config.DRY_RUN
-            and self._load_config_value("LEARNING_MODE_ENABLED", 0.0) > 0
+            and ConfigCache.get("LEARNING_MODE_ENABLED", 0.0) > 0
         )
         trade_mode = "learning" if learning_mode_active else "production"
 

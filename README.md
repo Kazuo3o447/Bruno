@@ -1,20 +1,15 @@
 # Bruno Trading Bot
 
-> **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.2**
+> **Medium-Frequency Bitcoin Trading Bot — Retail-Ready v2.2**
 > 
-> ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
-> ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, None-basierte Data-Gap-Behandlung
-> ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
-> ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
-> ✅ **Trading-Engine:** Deterministischer Composite Scorer mit V2.2 Features (VPOC, ATR Trailing, Multi-Level Exit)
-> ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out (Maker/Taker Fees), Live Trailing Stop
-> ✅ **Risk-Stack:** Daily Drawdown, MAE/MFE-Tracking, Data Gap Veto, Position-Specific State
-> ✅ **Backtester:** 1-Minuten-Kerzen mit Intrabar Pessimismus-Regel (SL vor TP1)
-> ✅ **Volume Profile:** 10-Step Price Buckets mit VPOC als primäres S/R Level
-> ✅ **Frontend:** ActivePositions UI mit TP1/TP2/Trailing Status, Settings mit Exit-Management
-> ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse und Phantom-Auswertung
-> ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
-> ✅ **Purge Complete:** Keine veralteten Heuristiken
+> ✅ **V2.2 Retail Features:** Echtes CVD, GRSS v3, Adaptive Thresholds, Event Calendar, Max Pain Integration
+> ✅ **MTF-Filter Regime-Kopplung:** Entspannte Filter im Ranging für bessere Signalqualität
+> ✅ **Realistische Retail Fees:** 5 BPS Taker / 2 BPS Maker / 3 BPS Slippage
+> ✅ **TA-Score im Ranging:** Produziert valide Werte (-25 bis +25) statt konstant 0.0
+> ✅ **DeepSeek Post-Trade Analyse:** Professionelle Trade-Evaluation für Phantom Trades
+> ✅ **Adaptive Thresholds:** ATR-basiert mit Event Calendar Guardrails (FOMC/CPI/NFP)
+> ✅ **Pipeline Backtest:** Walk-Forward mit echter CompositeScorer Pipeline
+> ✅ **Paper Trading Lock:** System ist auf Paper Trading beschränkt für sichere Tests
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -36,7 +31,7 @@
 | **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
 | **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
 
-**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. **V2.2 Features:** Multi-Level Exit, ATR Trailing, Volume Profile VPOC. **Post-Trade Analyse** mit professioneller Deepseek API. **Live Marktdaten** von Binance alle 30 Sekunden.
+**Primäre Ziele:** Stabilität & Transparenz vor Rendite. **V2.2 Retail-Ready:** Echtes CVD, GRSS v3, Adaptive Thresholds. **Paper Trading Lock** für sichere Tests. **Live Marktdaten** von Binance alle 30 Sekunden.
 
 > ⚠️ **WICHTIG:** Alle Architekturentscheidungen sind in `WINDSURF_MANIFEST.md` dokumentiert. Dieses Dokument überschreibt alle anderen bei Widerspruch.
 
@@ -52,13 +47,15 @@
 
 ### Trading Flow Highlights
 
-- **Liquidation Events:** Redis Pub/Sub triggert sofortiges Rescoring bei großen Force-Order-Spikes
-- **Position Management:** TP1 Teilverkauf (Maker Fee 0.0001), Breakeven-Stop, TP2 Final Exit, ATR Trailing Stop
-- **Multi-Level Exit:** TP1 (50% Scale-Out), TP2 (Final Exit), Live Trailing Stop nach TP1
-- **Volume Profile:** VPOC aus 1m Kerzen mit 10$ Preis-Buckets als primäres S/R Level
+- **Echtes CVD:** aggTrade Delta mit 1-Sekunden-Buckets und Redis Rolling Window
+- **GRSS v3:** 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro)
+- **Max Pain:** Deribit Options Chain mit 15% Gewichtung im Derivatives Sub-Score
+- **MTF-Filter:** Regime-abhängige Filter (50%/80% im Ranging vs 30%/70% in Trending)
+- **Adaptive Thresholds:** ATR-basiert mit Event Calendar Guardrails (FOMC ×1.5, CPI/NFP ×1.3)
+- **Event Calendar:** Automatische Threshold-Anpassung um FOMC/CPI/NFP Events
 - **Data Gap Veto:** DVOL & Long/Short Ratio = None → Conviction ↓, Risk Agent veto
-- **Signal Sources:** Binance Futures Analytics (Top Trader / Taker Ratios) + On-Chain Daten (Blockchain.com / Glassnode Free Tier)
-- **Learning Loop:** Deepseek analysiert geschlossene Trades und Phantom-Trades mit MAE/MFE
+- **Signal Sources:** Binance Futures Analytics + On-Chain Daten (Blockchain.com / Glassnode Free Tier)
+- **DeepSeek Debrief:** Automatische Post-Trade Analyse für Phantom Trades mit JSON-Output
 
 ---
 
@@ -450,4 +447,4 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health # Über Next.js Proxy
 **API-Dokumentation:** http://localhost:8000/docs  
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
-**Letztes Update:** 5. April 2026 - Bruno V2.2 mit institutionellen Fixes (Deribit DVOL/Max Pain, aggTrades CVD, Threshold-Fallback)
+**Letztes Update:** 5. April 2026 - Bruno V2.2 Retail-Ready mit echtem CVD, GRSS v3, Adaptive Thresholds

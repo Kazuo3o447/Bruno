@@ -800,7 +800,7 @@ class MarketDataCollector:
             logger.error(f"Fehler bei Datensammlung: {e}")
             return False
 
-    async def _fetch_ticker(self, symbol: str) -> Dict:
+    async def _fetch_ticker(self, symbol: str) -> dict:
         try:
             client = await self._get_client()
             response = await client.get(f"{self.base_url}/api/v3/ticker/price?symbol={symbol}")
@@ -810,7 +810,7 @@ class MarketDataCollector:
             logger.error(f"Ticker fetch error: {e}")
             return {"ticker": {}}
 
-    async def _fetch_klines(self, symbol: str, limit: int = 500) -> Dict:
+    async def _fetch_klines(self, symbol: str, limit: int = 500) -> dict:
         try:
             client = await self._get_client()
             response = await client.get(f"{self.base_url}/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}")
@@ -820,7 +820,7 @@ class MarketDataCollector:
             logger.error(f"Klines fetch error: {e}")
             return {"klines": []}
 
-    async def _fetch_orderbook(self, symbol: str, limit: int = 100) -> Dict:
+    async def _fetch_orderbook(self, symbol: str, limit: int = 100) -> dict:
         try:
             client = await self._get_client()
             response = await client.get(f"{self.base_url}/api/v3/depth?symbol={symbol}&limit={limit}")
@@ -842,7 +842,7 @@ class MarketDataCollector:
             logger.error(f"Orderbook fetch error: {e}")
             return {"orderbook": {}, "bids_volume": 0, "asks_volume": 0, "imbalance_ratio": 1.0}
 
-    async def _fetch_funding_rate(self, symbol: str) -> Dict:
+    async def _fetch_funding_rate(self, symbol: str) -> dict:
         try:
             client = await self._get_client()
             response = await client.get(f"{self.base_url}/fapi/v1/premiumIndex?symbol={symbol}")
@@ -852,7 +852,7 @@ class MarketDataCollector:
             logger.error(f"Funding rate fetch error: {e}")
             return {"funding_rate": {}}
 
-    async def _fetch_open_interest(self, symbol: str) -> Dict:
+    async def _fetch_open_interest(self, symbol: str) -> dict:
         try:
             client = await self._get_client()
             response = await client.get(f"{self.base_url}/fapi/v1/openInterest?symbol={symbol}")
@@ -862,7 +862,7 @@ class MarketDataCollector:
             logger.error(f"Open interest fetch error: {e}")
             return {"open_interest": {}}
 
-    async def _fetch_liquidations(self, symbol: str, limit: int = 100) -> Dict:
+    async def _fetch_liquidations(self, symbol: str, limit: int = 100) -> dict:
         try:
             client = await self._get_client()
             response = await client.get(f"{self.base_url}/fapi/v1/allForceOrders?symbol={symbol}&limit={limit}")
@@ -872,7 +872,7 @@ class MarketDataCollector:
             logger.error(f"Liquidations fetch error: {e}")
             return {"liquidations": []}
 
-    async def _save_to_redis(self, symbol: str, results: List[Dict]):
+    async def _save_to_redis(self, symbol: str, results: list[dict]):
         """Speichert alle Daten in Redis."""
         timestamp = datetime.now(timezone.utc).isoformat()
         

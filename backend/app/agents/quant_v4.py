@@ -3,6 +3,7 @@ from app.agents.deps import AgentDependencies
 from app.core.exchange_manager import PublicExchangeClient
 from app.services.liquidity_engine import LiquidityEngine
 from app.services.composite_scorer import CompositeScorer
+from app.core.config_cache import ConfigCache
 import asyncio
 import contextlib
 import httpx
@@ -52,9 +53,16 @@ class QuantAgentV4(PollingAgent):
                 f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f} | Last TS: {self._last_processed_ts}"
             )
         else:
-            self.cvd_cumulative = 0.0
+            # Versuche kumulatives CVD direkt aus Redis zu laden
+            cvd_cumulative_str = await self.deps.redis.redis.get("market:cvd:cumulative")
+            if cvd_cumulative_str:
+                self.cvd_cumulative = float(cvd_cumulative_str)
+                self.logger.info(f"CVD kumulativ aus Redis geladen: {self.cvd_cumulative:.2f}")
+            else:
+                self.cvd_cumulative = 0.0
+                self.logger.info("CVD State: Kein Cache — starte bei 0.0")
+            
             self._last_processed_ts = 0
-            self.logger.info("CVD State: Kein Cache — starte bei 0.0")
 
         await self.deps.redis.set_cache(
             "bruno:cvd:BTCUSDT",
@@ -156,49 +164,15 @@ class QuantAgentV4(PollingAgent):
                 self._last_price = best_bid_p
                 vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
 
-                # CVD - FIXED: Nutze 1m-Klines mit striktem Timestamp-Guard für Deduplizierung
+                # CVD - FIXED: Lese echtes CVD aus Redis (aggTrades)
                 try:
-                    klines = await self.exm.binance.fetch_ohlcv(self.symbol, timeframe="1m", limit=5)
-                    if klines:
-                        processed = 0.0
-                        latest_processed_ts = self._last_processed_ts
-
-                        for kline in klines:
-                            current_ts = int(kline[0])
-                            if current_ts <= self._last_processed_ts:
-                                continue
-
-                            open_price = float(kline[1])
-                            close_price = float(kline[4])
-                            volume = float(kline[5])
-                            direction = 1.0 if close_price > open_price else -1.0 if close_price < open_price else 0.0
-                            candle_delta = volume * direction
-
-                            processed += candle_delta
-                            latest_processed_ts = max(latest_processed_ts, current_ts)
-
-                        if latest_processed_ts > self._last_processed_ts:
-                            self.cvd_cumulative += processed
-                            self._last_processed_ts = latest_processed_ts
-
-                            await self.deps.redis.set_cache(
-                                "bruno:cvd:BTCUSDT",
-                                {
-                                    "value": self.cvd_cumulative,
-                                    "last_processed_ts": self._last_processed_ts,
-                                    "last_processed_kline_ts": self._last_processed_ts,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                },
-                                ttl=86400,
-                            )
-
-                            self.logger.debug(
-                                f"CVD Update (1m-kline): {processed:+.4f} -> {self.cvd_cumulative:.4f} | Last TS: {self._last_processed_ts}"
-                            )
-                        else:
-                            self.logger.debug("CVD 1m-Kline: keine neuen Kerzen")
+                    cvd_cumulative_str = await self.deps.redis.redis.get("market:cvd:cumulative")
+                    if cvd_cumulative_str:
+                        self.cvd_cumulative = float(cvd_cumulative_str)
+                    else:
+                        self.logger.debug("CVD: Kein kumulativer Wert in Redis")
                 except Exception as e:
-                    self.logger.warning(f"CVD 1m-Kline Fehler: {e}")
+                    self.logger.warning(f"CVD Redis Fehler: {e}")
 
                 # OFI Rolling (kopiere _fetch_ofi_rolling() 1:1 aus quant_v3.py)
                 ofi_data = await self._fetch_ofi_rolling()
@@ -249,7 +223,7 @@ class QuantAgentV4(PollingAgent):
                 # 6. Trade-Cooldown (event-driven sweeps dürfen sofort durchlaufen)
                 if signal.should_trade:
                     now = time.time()
-                    cooldown = 0.0 if trigger_reason == "sweep_event" else float(self._load_config_value("TRADE_COOLDOWN_SECONDS", 300))
+                    cooldown = 0.0 if trigger_reason == "sweep_event" else float(ConfigCache.get("TRADE_COOLDOWN_SECONDS", 300))
                     if cooldown > 0 and now - self._last_signal_time < cooldown:
                         self.logger.info(
                             f"Signal unterdrückt — Cooldown "
@@ -263,7 +237,7 @@ class QuantAgentV4(PollingAgent):
 
                 # Phantom Trade (Learning Mode)
                 if (not signal.should_trade and self.deps.config.DRY_RUN
-                    and self._load_config_value("LEARNING_MODE_ENABLED", 0) > 0
+                    and ConfigCache.get("LEARNING_MODE_ENABLED", 0) > 0
                     and abs(signal.composite_score) > 30):
                     await self._record_phantom_trade(signal, best_bid_p)
 
@@ -357,7 +331,7 @@ class QuantAgentV4(PollingAgent):
         try:
             import uuid
 
-            hold_duration = int(self._load_config_value("PHANTOM_HOLD_DURATION_MINUTES", 240.0))
+            hold_duration = int(ConfigCache.get("PHANTOM_HOLD_DURATION_MINUTES", 240.0))
             phantom_id = str(uuid.uuid4())
             evaluate_at = (
                 datetime.now(timezone.utc) + timedelta(minutes=hold_duration)

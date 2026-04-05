@@ -19,13 +19,14 @@ class IngestionAgentV2(StreamingAgent):
     """
     def __init__(self, deps: AgentDependencies):
         super().__init__("ingestion", deps)
-        # Streams für BTC/USDT: 1m K-Lines, Orderbook (20 level), Liquidations, Funding Rate
+        # Streams für BTC/USDT: 1m K-Lines, Orderbook (20 level), Liquidations, Funding Rate, aggTrades
         self.streams = [
             "btcusdt@kline_1m",
             "btcusdt@depth20@100ms",
             "btcusdt@forceOrder",
             "btcusdt@markPrice@1s",
-            "btcdomusdt@kline_1m"
+            "btcdomusdt@kline_1m",
+            "btcusdt@aggTrade"
         ]
         stream_param = "/".join(self.streams)
         self.ws_url = f"wss://fstream.binance.com/stream?streams={stream_param}"
@@ -35,6 +36,10 @@ class IngestionAgentV2(StreamingAgent):
         self.ob_buffer: List[Dict] = []
         self.liq_buffer: List[Dict] = []
         self.funding_buffer: List[Dict] = []
+        # CVD 1-Second Bucket Buffer
+        self.cvd_bucket: Dict[str, float] = {"delta": 0.0, "volume": 0.0, "price_sum": 0.0, "count": 0}
+        self.cvd_bucket_ts: int = 0
+        self.cvd_cumulative: float = 0.0
         self.last_flush = datetime.now(timezone.utc)
         self.flush_interval = 2.0  # Sekunden
 
@@ -228,6 +233,9 @@ class IngestionAgentV2(StreamingAgent):
             redis_fund = dict(fund_data)
             redis_fund["time"] = redis_fund["time"].isoformat()
             await self.deps.redis.set_cache(f"market:funding:{data['s']}", redis_fund, ttl=60)
+            
+        elif "@aggTrade" in stream:
+            await self._handle_agg_trade(data)
 
     async def _handle_kline(self, data: Dict[str, Any]) -> None:
         """Verarbeitet 1m K-Line."""
@@ -259,6 +267,72 @@ class IngestionAgentV2(StreamingAgent):
                 await self._flush_buffers()
         except Exception as e:
             self.logger.error(f"Fehler bei K-Line Verarbeitung: {e}")
+
+    async def _handle_agg_trade(self, data: Dict[str, Any]) -> None:
+        """Verarbeitet aggTrades für echtes CVD."""
+        try:
+            # aggTrade Format: {"e": "aggTrade", "E": epoch_ms, "s": "BTCUSDT", "p": "price", "q": "quantity", "m": true/false}
+            trade_time = int(data["E"])  # Event time in milliseconds
+            price = float(data["p"])
+            quantity = float(data["q"])
+            is_maker_sell = bool(data["m"])  # m: true = Maker is Sell (Taker is Buy)
+            
+            # Delta berechnen: Taker Buy = +, Taker Sell = -
+            delta = quantity if not is_maker_sell else -quantity
+            
+            # 1-Sekunden-Bucket-Logik
+            current_bucket_ts = trade_time // 1000  # Sekunden-Timestamp
+            
+            if self.cvd_bucket_ts == 0:
+                self.cvd_bucket_ts = current_bucket_ts
+            
+            # Wenn neue Sekunde: flush alten Bucket
+            if current_bucket_ts > self.cvd_bucket_ts:
+                await self._flush_cvd_bucket()
+                # Neuen Bucket starten
+                self.cvd_bucket = {"delta": delta, "volume": quantity, "price_sum": price * quantity, "count": 1}
+                self.cvd_bucket_ts = current_bucket_ts
+            else:
+                # Akkumulieren im aktuellen Bucket
+                self.cvd_bucket["delta"] += delta
+                self.cvd_bucket["volume"] += quantity
+                self.cvd_bucket["price_sum"] += price * quantity
+                self.cvd_bucket["count"] += 1
+                
+        except Exception as e:
+            self.logger.error(f"Fehler bei aggTrade Verarbeitung: {e}")
+    
+    async def _flush_cvd_bucket(self) -> None:
+        """Schreibt den CVD-Bucket nach Redis."""
+        if self.cvd_bucket["count"] == 0:
+            return
+            
+        try:
+            # Kumulativen CVD aktualisieren
+            self.cvd_cumulative += self.cvd_bucket["delta"]
+            
+            # 1h Rolling Window: Liste mit Ticks
+            tick_data = {
+                "ts": self.cvd_bucket_ts * 1000,  # Millisekunden
+                "delta": self.cvd_bucket["delta"],
+                "volume": self.cvd_bucket["volume"],
+                "price": self.cvd_bucket["price_sum"] / self.cvd_bucket["volume"] if self.cvd_bucket["volume"] > 0 else 0.0
+            }
+            
+            # In Redis List schreiben (LPUSH + LTRIM für Rolling Window)
+            pipe = self.deps.redis.redis.pipeline()
+            pipe.lpush("market:cvd:ticks", json.dumps(tick_data))
+            pipe.ltrim("market:cvd:ticks", 0, 3599)  # 3600 Ticks = 1h Rolling Window
+            pipe.set("market:cvd:cumulative", str(self.cvd_cumulative))
+            await pipe.execute()
+            
+            self.logger.debug(
+                f"CVD Bucket flushed: delta={self.cvd_bucket['delta']:+.4f}, "
+                f"cumulative={self.cvd_cumulative:.4f}, ts={self.cvd_bucket_ts}"
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Fehler beim CVD Bucket Flush: {e}")
 
     async def _flush_buffers(self):
         """Schreibt alle gesammelten Daten via Bulk-Insert in PostgreSQL."""

@@ -7,6 +7,7 @@ from sqlalchemy import text
 from typing import Dict, Any, List, Optional
 from app.agents.base import PollingAgent
 from app.agents.deps import AgentDependencies
+from app.core.config_cache import ConfigCache
 from app.core.contracts import SignalDirection
 from app.core.log_manager import LogManager, LogCategory, LogLevel
 
@@ -101,14 +102,14 @@ class RiskAgent(PollingAgent):
         Im DRY_RUN + LEARNING_MODE: niedrigere Schwelle für mehr Trainingsdaten.
         Im Live-Betrieb: immer Produktions-Schwelle, kein Learning Mode möglich.
         """
-        prod_threshold = self._load_config_value("GRSS_Threshold", 40.0)
+        prod_threshold = ConfigCache.get("GRSS_Threshold", 40.0)
 
         if not self.deps.config.DRY_RUN:
             return prod_threshold
 
-        learning_enabled = self._load_config_value("LEARNING_MODE_ENABLED", 0.0)
+        learning_enabled = ConfigCache.get("LEARNING_MODE_ENABLED", 0.0)
         if learning_enabled:
-            learning_threshold = self._load_config_value("LEARNING_GRSS_Threshold", 25.0)
+            learning_threshold = ConfigCache.get("LEARNING_GRSS_Threshold", 25.0)
             self.logger.debug(
                 f"Learning Mode aktiv: GRSS-Threshold {prod_threshold} → {learning_threshold}"
             )
@@ -173,7 +174,7 @@ class RiskAgent(PollingAgent):
         pnl_history = portfolio.get("trade_pnl_history_eur", [])
         
         # Bedingung 1: > 3% Tagesverlust
-        max_daily_loss = float(self._load_config_value("DAILY_MAX_LOSS_PCT", 3.0))
+        max_daily_loss = float(ConfigCache.get("DAILY_MAX_LOSS_PCT", 3.0))
         daily_loss_pct = abs(daily_pnl / initial * 100) if daily_pnl < 0 else 0
         
         if daily_loss_pct >= max_daily_loss:
@@ -187,7 +188,7 @@ class RiskAgent(PollingAgent):
             return {"blocked": True, "reason": f"DAILY BLOCK: {block_data['reason']}"}
         
         # Bedingung 2: 3 Fehltrades in Folge
-        max_consecutive = int(self._load_config_value("MAX_CONSECUTIVE_LOSSES", 3))
+        max_consecutive = int(ConfigCache.get("MAX_CONSECUTIVE_LOSSES", 3))
         if len(pnl_history) >= max_consecutive:
             recent = pnl_history[-max_consecutive:]
             if all(p < 0 for p in recent):
