@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     
     # Kapitalschutz — UNVERÄNDERLICH
     MAX_LEVERAGE: float = 1.0        # Kein Kredit. Niemals über 1.0.
-    SIMULATED_CAPITAL_EUR: float = 500.0  # Startkapital für DRY_RUN Portfolio
+    SIMULATED_CAPITAL_EUR: float = 1000.0  # Startkapital für DRY_RUN Portfolio (Paper Trading)
     
     model_config = ConfigDict(
         env_file=str(ROOT_ENV_FILE),

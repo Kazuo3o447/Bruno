@@ -39,6 +39,12 @@ interface Telemetry {
   veto_active: boolean;
   veto_reason: string;
   dry_run: boolean;
+  live_trading_approved: boolean;
+  portfolio?: {
+    capital_eur: number;
+    total_trades: number;
+    daily_pnl_eur: number;
+  };
   market: {
     btc_price: number | null;
     btc_change_24h_pct: number | null;
@@ -69,6 +75,11 @@ interface TradePipelineStatus {
     vix: number | null;
     data_freshness_active: boolean | null;
     context_timestamp: string | null;
+  };
+  portfolio: {
+    capital_eur: number;
+    total_trades: number;
+    daily_pnl_eur: number;
   };
   gates: Record<string, {
     blocked?: boolean;
@@ -310,6 +321,11 @@ export default function TradingPage() {
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3 min-w-[280px]">
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-emerald-400">Cash Balance</div>
+              <div className="mt-1 text-lg font-bold text-emerald-400">€{fmt(pipeline?.portfolio?.capital_eur || telemetry?.portfolio?.capital_eur, 0)}</div>
+              <div className="text-[10px] text-slate-500">Paper Trading</div>
+            </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
               <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Status</div>
               <div className={`mt-1 text-sm font-semibold ${armed ? "text-emerald-400" : "text-red-400"}`}>{armed ? "ARMED" : "HALTED"}</div>
@@ -319,12 +335,10 @@ export default function TradingPage() {
               <div className="mt-1 text-sm font-semibold text-indigo-400">{cadenceEstimate ? `${cadenceEstimate.remainingMinutes}m` : "—"}</div>
             </div>
             <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Signal Mix</div>
-              <div className="mt-1 text-sm font-semibold text-emerald-400">{decisions?.stats?.signals_generated ?? 0}</div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Last Update</div>
-              <div className="mt-1 text-sm font-semibold text-slate-200">{lastUpdate.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Daily P&L</div>
+              <div className={`mt-1 text-sm font-semibold ${(pipeline?.portfolio?.daily_pnl_eur || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                €{fmt(pipeline?.portfolio?.daily_pnl_eur || 0, 2)}
+              </div>
             </div>
           </div>
         </div>
@@ -495,6 +509,36 @@ export default function TradingPage() {
               Letztes Update: {timeAgo(pipeline?.quant_micro?.timestamp)}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Position Sizing Info */}
+      <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium text-slate-300">Paper Trading Setup</h3>
+          <span className="text-xs text-slate-500">2% Risk Model</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+            <div className="text-[10px] text-slate-500 uppercase">Start Capital</div>
+            <div className="text-lg font-bold text-emerald-400">€1,000.00</div>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+            <div className="text-[10px] text-slate-500 uppercase">Risk per Trade</div>
+            <div className="text-lg font-bold text-amber-400">€20.00 (2%)</div>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+            <div className="text-[10px] text-slate-500 uppercase">Max Leverage</div>
+            <div className="text-lg font-bold text-blue-400">1.0x</div>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-900/50 border border-slate-800">
+            <div className="text-[10px] text-slate-500 uppercase">Daily Loss Limit</div>
+            <div className="text-lg font-bold text-red-400">€20.00 (2%)</div>
+          </div>
+        </div>
+        <div className="mt-3 text-xs text-slate-500">
+          Position sizing is calculated dynamically based on ATR volatility, account balance, and risk parameters.
+          Minimum position: 0.001 BTC
         </div>
       </div>
 

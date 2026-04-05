@@ -25,7 +25,7 @@
 | Parameter | Wert |
 |---|---|
 | **Strategie** | Medium-Frequency (5–15 Minuten Signale) |
-| **Startkapital** | 500 EUR |
+| **Startkapital** | 1000 EUR |
 | **Execution-Börse** | **Bybit** (Futures, max 1.0× Leverage) |
 | **Daten-Börse** | **Binance** (WebSocket + REST + API Client) |
 | **LLM-Stack** | Deepseek Reasoning API (Cloud) für Post-Trade Analyse & Learning |
@@ -442,7 +442,7 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health # Über Next.js Proxy
 ❌ NIEMALS: API-Keys im Repository
 ```
 
-**Break-Even:** ~12–16% p.a. auf 500 EUR nach Kosten (~50–67 EUR/Monat)
+**Break-Even:** ~12–16% p.a. auf 1000 EUR nach Kosten (~100–130 EUR/Monat)
 
 ---
 
