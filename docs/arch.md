@@ -34,7 +34,7 @@
 
 | Route | Zweck | Features |
 |-------|-------|----------|
-| `/` (Dashboard) | **Übersicht & Status** | 6 Status-Cards, Entscheidungs-Timeline, Pipeline Gates, Agenten-Status, Performance-Widget, Marktdaten |
+| `/` (Dashboard) | **Übersicht & Status** | 4 Key Metrics (GRSS, OFI, VIX, Funding), Entscheidungszyklen-Bar-Chart, Agenten-Grid, Datenquellen-Badges, Market Sentiment Bars, Offene Position, Chart Placeholder |
 | `/trading` | **Trading Detailansicht** | 6-Gate Kaskade-Visualisierung, Quant Micro Daten, GRSS Breakdown, OFI/Metriken |
 | `/logic` | **Pipeline-Visualisierung** | 6-Gate Pipeline, Decision Timeline, Blocker-Analyse |
 | `/monitor` | **System-Überwachung** | API-Health Tests, Agent Heartbeats, Scheduler Steuerung, Datenquellen-Status |

@@ -37,6 +37,10 @@ Alle wichtigen Änderungen und Fixes pro Version.
 - Fixed CVD Double-Counting mit aggTrades
 - Fixed Syntaxfehler in ContextAgent nach Patch
 - Fixed None-Value crashes in Signal Collection
+- **Fixed OFI Display** — Redis Key Mapping korrigiert (OFI_Buy_Pressure statt OFI)
+- **Fixed Dockerfile** — Explizite Datei-Kopie für Tailwind/PostCSS Konfiguration
+- **Fixed Log Page** — WebSocket mit REST Fallback für Robustheit
+- **Fixed Dashboard** — Kompaktes Layout mit korrekten CSS Styles
 
 ### 📈 Performance
 - Worker stabil >5 Minuten ohne Crash

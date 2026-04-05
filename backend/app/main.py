@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import chat, backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export, backtest_api, debrief_api
+from app.routers import backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export, backtest_api, debrief_api
 from app.core.redis_client import redis_client
 from app.core.database import init_db, close_db
 from app.core.log_manager import log_manager
@@ -27,7 +27,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(backup.router, prefix="/api/v1", tags=["backup"])
 app.include_router(ws.router, tags=["WebSockets"])
 app.include_router(agents.router, prefix="/api/v1", tags=["agents"])

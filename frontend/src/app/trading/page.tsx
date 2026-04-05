@@ -210,7 +210,7 @@ export default function TradingPage() {
     { key: "gate_1_data_freshness", name: "Data Freshness", icon: Database, desc: "Prüft ob alle Datenquellen aktuell sind" },
     { key: "gate_2_grss_precheck", name: "GRSS Pre-Check", icon: Shield, desc: "Global Risk Stress Score über 20 Punkte" },
     { key: "gate_3_risk_veto", name: "Risk Veto", icon: Lock, desc: "Keine aktiven Risk-Vetos (VIX, Liquidation, etc.)" },
-    { key: "gate_4_llm_cascade", name: "LLM Cascade", icon: Brain, desc: "Zeitbasierte Kaskaden-Entscheidung" },
+    { key: "gate_4_composite_scorer", name: "Composite Scorer", icon: Brain, desc: "Deterministische Gewichtung von TA, Liq, Flow, Macro" },
     { key: "gate_5_position_guard", name: "Position Guard", icon: PauseCircle, desc: "Keine offene Position" },
     { key: "gate_6_daily_limit", name: "Daily Limit", icon: BarChart3, desc: "Tägliches Limit nicht erreicht" },
   ];

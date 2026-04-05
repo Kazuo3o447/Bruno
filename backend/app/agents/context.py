@@ -3,12 +3,14 @@ import asyncio
 import json
 import logging
 import time
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
 from app.agents.base import StreamingAgent
 from app.agents.deps import AgentDependencies
+from app.core.config_cache import ConfigCache
 
 class ContextAgent(StreamingAgent):
     """
@@ -19,6 +21,13 @@ class ContextAgent(StreamingAgent):
     def __init__(self, deps: AgentDependencies):
         super().__init__("context", deps)
         self.state.sub_state = "initializing"
+        
+        # Initialize ConfigCache
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        ConfigCache.init(config_path)
         
         # Makro-Werte (Cache)
         self.vix: float = 20.0
@@ -1057,13 +1066,7 @@ class ContextAgent(StreamingAgent):
 
     def _is_learning_mode(self) -> bool:
         """Prüft ob Learning Mode aktiv ist."""
-        import os
-        try:
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.json")
-            with open(config_path) as f:
-                return json.load(f).get("LEARNING_MODE_ENABLED", False)
-        except:
-            return False
+        return ConfigCache.get("LEARNING_MODE_ENABLED", False)
 
     async def _report_health(self, name: str, status: str, latency: float):
         curr = await self.deps.redis.get_cache("bruno:health:sources") or {}

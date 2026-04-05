@@ -188,9 +188,9 @@ async def trade_pipeline_debug():
             "veto_history": veto_history,
             "note": "Wenn True: ExecutionAgent blockiert ALLE Trades"
         },
-        "gate_4_llm_cascade": {
+        "gate_4_composite_scorer": {
             "last_5_decisions": decision_feed,
-            "note": "Prüfe outcome-Felder: OFI_BELOW_THRESHOLD/CASCADE_*/SIGNAL_BUY/SIGNAL_SELL"
+            "note": "Prüfe outcome-Felder: SIGNAL_BUY/SIGNAL_SELL/COMPOSITE_HOLD"
         },
         "gate_5_position_guard": {
             "has_open_position": bool(position and position.get("status") == "open"),

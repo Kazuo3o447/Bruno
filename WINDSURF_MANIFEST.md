@@ -26,6 +26,10 @@
 - **Config Cache** — 1×/Minute Reload statt pro Zyklus für Performance
 - **Pipeline Backtest** — Echte CompositeScorer Pipeline mit Walk-Forward
 - **DeepSeek Debrief V3** — Automatische Post-Trade Analyse für Phantom Trades
+- **Dashboard Redesign** — Modernes kompaktes Layout mit Entscheidungszyklen-Visualisierung, Agent Grid, Market Sentiment Bars
+- **Dockerfile Fix** — Explizite Datei-Kopie für Tailwind/PostCSS Konfiguration
+- **OFI Display Fix** — Korrekte Redis Key-Mapping (OFI_Buy_Pressure statt OFI)
+- **Log Page** — WebSocket-basierte Logs mit REST Fallback für Robustheit
 
 ## AGENT-PIPELINE v2
 

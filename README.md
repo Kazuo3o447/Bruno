@@ -10,6 +10,9 @@
 > ✅ **Adaptive Thresholds:** ATR-basiert mit Event Calendar Guardrails (FOMC/CPI/NFP)
 > ✅ **Pipeline Backtest:** Walk-Forward mit echter CompositeScorer Pipeline
 > ✅ **Paper Trading Lock:** System ist auf Paper Trading beschränkt für sichere Tests
+> ✅ **Dashboard Redesign:** Modernes kompaktes Layout mit Entscheidungszyklen-Visualisierung
+> ✅ **OFI Display Fix:** Korrekte Redis Key-Mapping für Order Flow Imbalance
+> ✅ **Log Page:** WebSocket-basierte Logs mit REST Fallback
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
