@@ -147,3 +147,7 @@ class ATRCalculator:
         atr_pct = self._atr_14 / current_price
         dynamic_sl = max(base_sl_pct, atr_pct * 1.5)
         return min(dynamic_sl, base_sl_pct * 2.0)
+
+    def get_current_atr(self, symbol: str = "BTCUSDT") -> float:
+        """Gibt den aktuellen ATR-Wert zurück."""
+        return self._atr_14

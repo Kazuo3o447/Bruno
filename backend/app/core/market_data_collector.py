@@ -758,7 +758,7 @@ class MarketDataCollector:
     
     def __init__(self, redis_client):
         self.redis = redis_client
-        self.base_url = "https://api.binance.com"
+        self.base_url = "https://fapi.binance.com"
         self.timeout = 30.0
         self._client: Optional[httpx.AsyncClient] = None
 

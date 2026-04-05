@@ -96,6 +96,7 @@ class TradeAuditLog(Base):
     filled_at = Column(DateTime(timezone=True))
     error_message = Column(Text)
     trade_mode = Column(String(20), default="production")
+    order_type = Column(String(20))  # market, limit, post_only
     
     # HFT Metrics & Telemetry (Phase 7.5 Audit)
     latency_exec_ms = Column(Float)

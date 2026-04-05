@@ -208,7 +208,7 @@
 | **E** | parallel | Frontend Cockpit |
 | **F** | Woche 5–7 | Lern-System |
 | **G** | Woche 7–9 | Backtest (6 Monate, PF > 1.5) |
-| **H** | Woche 9–10 | Live-Start (500 EUR, -2% Daily Loss Limit) |
+| **H** | Woche 9–10 | Live-Start (1000 EUR, -2% Daily Loss Limit) |
 
 ---
 

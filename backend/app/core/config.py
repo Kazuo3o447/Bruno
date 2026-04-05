@@ -14,14 +14,14 @@ load_dotenv(dotenv_path=ROOT_ENV_FILE, override=True, encoding="utf-8-sig")
 
 class Settings(BaseSettings):
     # Database
-    DB_HOST: str = "postgres"
+    DB_HOST: str = "bruno-postgres"
     DB_PORT: int = 5432
     DB_USER: str = "bruno"
     DB_PASS: str = "bruno_secret"
     DB_NAME: str = "bruno_trading"
     
     # Redis
-    REDIS_HOST: str = "redis"
+    REDIS_HOST: str = "bruno-redis"
     REDIS_PORT: int = 6379
     
     # Deepseek Reasoning API (Post-Trade Analyse & Learning)
