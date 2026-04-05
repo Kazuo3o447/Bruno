@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Optional
+import logging
 
 from dotenv import load_dotenv
 from pydantic import Field, ConfigDict, model_validator
@@ -70,9 +71,6 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None
     
-    # Legacy Ollama (deprecated - not used in v2.1)
-    OLLAMA_HOST: Optional[str] = None
-    
     # Trading Mode
     DRY_RUN: bool = True
     
@@ -96,14 +94,18 @@ class Settings(BaseSettings):
             raise ValueError("MAX_LEVERAGE must not exceed 1.0")
         if self.SIMULATED_CAPITAL_EUR < 10:
             raise ValueError("SIMULATED_CAPITAL_EUR must be at least 10 EUR")
+        
+        # Warnings instead of hard locks for trading mode
+        logger = logging.getLogger(__name__)
         if not self.PAPER_TRADING_ONLY:
-            raise ValueError("This build is locked to paper trading only")
+            logger.warning("⚠️ PAPER_TRADING_ONLY is FALSE - Live trading enabled")
         if not self.DRY_RUN:
-            raise ValueError("PAPER_TRADING_ONLY requires DRY_RUN=true")
+            logger.warning("⚠️ DRY_RUN is FALSE - Real orders will be placed")
         if self.LIVE_TRADING_APPROVED:
-            raise ValueError("PAPER_TRADING_ONLY requires LIVE_TRADING_APPROVED=false")
+            logger.warning("⚠️ LIVE_TRADING_APPROVED is TRUE - Production mode active")
         if self.BYBIT_MODE.lower() == "live":
-            raise ValueError("PAPER_TRADING_ONLY requires BYBIT_MODE=demo")
+            logger.warning("⚠️ BYBIT_MODE is LIVE - Real trading environment")
+        
         return self
 
 

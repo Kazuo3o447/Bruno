@@ -108,6 +108,13 @@ class CompositeScorer:
     def __init__(self, redis_client):
         self.redis = redis_client
         self.logger = logging.getLogger("composite_scorer")
+        
+        # Initialize ConfigCache
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        ConfigCache.init(config_path)
 
     async def score(self) -> CompositeSignal:
         """Haupteinstieg - berechnet Composite Score mit dynamischer Gewichtung."""
@@ -230,28 +237,18 @@ class CompositeScorer:
         Wählt Gewichtungs-Preset basierend auf Regime.
         Trending = TA dominiert, Ranging = Liq dominiert.
         
-        Kann via config.json überschrieben werden.
+        Kann via config.json überschrieben werden (mit OVERRIDE prefix).
         """
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
-        
-        # Config-Überschreibung prüfen
-        try:
-            with open(config_path) as f:
-                cfg = json.load(f)
-            if all(k in cfg for k in ["COMPOSITE_W_TA", "COMPOSITE_W_LIQ", 
-                                        "COMPOSITE_W_FLOW", "COMPOSITE_W_MACRO"]):
-                # Wenn ALLE 4 Keys in config → nutze config (manuelles Override)
-                return {
-                    "ta": float(cfg["COMPOSITE_W_TA"]),
-                    "liq": float(cfg["COMPOSITE_W_LIQ"]),
-                    "flow": float(cfg["COMPOSITE_W_FLOW"]),
-                    "macro": float(cfg["COMPOSITE_W_MACRO"]),
-                }
-        except Exception:
-            pass
+        # Config-Überschreibung prüfen (nur wenn explizit OVERRIDE_ Keys vorhanden)
+        if all(ConfigCache.get(k) is not None for k in ["COMPOSITE_W_OVERRIDE_TA", "COMPOSITE_W_OVERRIDE_LIQ", 
+                                                        "COMPOSITE_W_OVERRIDE_FLOW", "COMPOSITE_W_OVERRIDE_MACRO"]):
+            # Wenn ALLE 4 OVERRIDE Keys in config → nutze config (manuelles Override)
+            return {
+                "ta": float(ConfigCache.get("COMPOSITE_W_OVERRIDE_TA", 0.4)),
+                "liq": float(ConfigCache.get("COMPOSITE_W_OVERRIDE_LIQ", 0.25)),
+                "flow": float(ConfigCache.get("COMPOSITE_W_OVERRIDE_FLOW", 0.2)),
+                "macro": float(ConfigCache.get("COMPOSITE_W_OVERRIDE_MACRO", 0.15)),
+            }
 
         # Default: weiche Interpolation zwischen Trending und Ranging
         blend = self._regime_blend(regime, trend_strength)

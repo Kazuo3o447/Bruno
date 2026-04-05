@@ -40,6 +40,14 @@ class QuantAgentV4(PollingAgent):
         return 60.0
 
     async def setup(self) -> None:
+        # Initialize ConfigCache
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        ConfigCache.init(config_path)
+        
         self.logger.info(f"QuantAgentV4 für {self.symbol} gestartet.")
 
         # CVD-State aus Redis laden (überlebt Restarts)
@@ -378,19 +386,3 @@ class QuantAgentV4(PollingAgent):
 
         except Exception as e:
             self.logger.warning(f"Phantom Trade Fehler (nicht kritisch): {e}")
-
-    def _load_config_value(self, key: str, default: float) -> float:
-        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
-        import os
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
-        try:
-            with open(config_path, "r") as f:
-                value = json.load(f).get(key, default)
-                if isinstance(value, bool):
-                    return 1.0 if value else 0.0
-                return float(value)
-        except Exception:
-            return default

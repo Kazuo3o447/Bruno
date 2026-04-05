@@ -30,6 +30,14 @@ class ExecutionAgentV4(StreamingAgent):
         self._local_veto_active = True
         self._last_veto_reason = "Initialisierung..."
 
+        # Initialize ConfigCache
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        ConfigCache.init(config_path)
+
         # ── ATR Calculator ───────────────────────────────────────
         from app.services.atr_calculator import ATRCalculator
         self.atr_calc = ATRCalculator(deps.db_session_factory)
@@ -56,22 +64,6 @@ class ExecutionAgentV4(StreamingAgent):
         self._max_slippage_pct = float(ConfigCache.get("MAX_SLIPPAGE_PCT", 0.001))  # 0.1%
         self._sweep_protection_enabled = True
         self._limit_order_threshold_pct = float(ConfigCache.get("LIMIT_ORDER_THRESHOLD_PCT", 0.002))  # 0.2%
-
-    def _load_config_value(self, key: str, default: float) -> float:
-        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
-        import os
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
-        try:
-            with open(config_path, "r") as f:
-                value = json.load(f).get(key, default)
-                if isinstance(value, bool):
-                    return 1.0 if value else 0.0
-                return float(value)
-        except Exception:
-            return default
 
     async def setup(self) -> None:
         self.logger.info("ExecutionAgentV4 (Slippage Protection) gestartet.")

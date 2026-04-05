@@ -8,10 +8,7 @@
     "_comment_v2": "=== Bruno v2 Composite Scorer ===",
     "COMPOSITE_THRESHOLD_LEARNING": 35,
     "COMPOSITE_THRESHOLD_PROD": 55,
-    "COMPOSITE_W_TA": 0.4,
-    "COMPOSITE_W_LIQ": 0.25,
-    "COMPOSITE_W_FLOW": 0.2,
-    "COMPOSITE_W_MACRO": 0.15,
+    "_comment_weights": "Dynamic regime blending enabled - COMPOSITE_W_* removed to use adaptive weights",
     "TRADE_COOLDOWN_SECONDS": 300,
     "DAILY_MAX_LOSS_PCT": 5,
     "MAX_CONSECUTIVE_LOSSES": 4,
@@ -22,5 +19,7 @@
     "TP2_SIZE_PCT": 0.5,
     "ENABLE_ATR_TRAILING": true,
     "ENABLE_VOLUME_PROFILE": true,
-    "ENABLE_DELTA_ABSORPTION": true
+    "ENABLE_DELTA_ABSORPTION": true,
+    "_comment_risk": "=== Risk Agent Configuration ===",
+    "REQUIRE_INSTITUTIONAL_DATA_FOR_TRADE": false
 }

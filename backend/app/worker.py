@@ -15,7 +15,7 @@ from app.agents.technical import TechnicalAnalysisAgent
 from app.agents.context import ContextAgent
 from app.agents.sentiment import SentimentAgent
 from app.agents.risk import RiskAgent
-from app.agents.execution_v3 import ExecutionAgentV3
+from app.agents.execution_v4 import ExecutionAgentV4
 
 logging.basicConfig(
     level=logging.INFO,
@@ -131,7 +131,7 @@ async def main():
     orchestrator.register("context", ContextAgent(deps))
     orchestrator.register("sentiment", SentimentAgent(deps))
     orchestrator.register("risk", RiskAgent(deps))
-    orchestrator.register("execution", ExecutionAgentV3(deps))
+    orchestrator.register("execution", ExecutionAgentV4(deps))
 
     # 4. Agenten Starten
     await orchestrator.start_all()

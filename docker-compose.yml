@@ -60,8 +60,8 @@ services:
       - DB_NAME=${DB_NAME:-bruno_trading}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - FRED_API_KEY=${FRED_API_KEY}
-      - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
-      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
+      - CRYPTOCOMPARE_API_KEY=358e0b64e992fb02b2c791d5a6a95c6c766b77c8af3aaf9f819ae7ae6c514d72
+      - COINMARKETCAP_API_KEY=2ccfda6aa01c4516a5fe98fc8c131fd1
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-2f93b3854d8b4d1f8a42e2fc00d55da3}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
@@ -88,7 +88,6 @@ services:
     depends_on:
       - postgres
       - redis
-      - api-backend
     environment:
       - DB_PORT=${DB_PORT:-5432}
       - DB_USER=${DB_USER:-bruno}
@@ -96,8 +95,8 @@ services:
       - DB_NAME=${DB_NAME:-bruno_trading}
       - REDIS_PORT=${REDIS_PORT:-6379}
       - FRED_API_KEY=${FRED_API_KEY}
-      - CRYPTOCOMPARE_API_KEY=${CRYPTOCOMPARE_API_KEY}
-      - COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY}
+      - CRYPTOCOMPARE_API_KEY=358e0b64e992fb02b2c791d5a6a95c6c766b77c8af3aaf9f819ae7ae6c514d72
+      - COINMARKETCAP_API_KEY=2ccfda6aa01c4516a5fe98fc8c131fd1
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-2f93b3854d8b4d1f8a42e2fc00d55da3}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}

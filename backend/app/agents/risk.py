@@ -36,6 +36,15 @@ class RiskAgent(PollingAgent):
 
     async def setup(self) -> None:
         """Initialisierung der Risiko-Matrix."""
+        # Initialize ConfigCache
+        from app.core.config_cache import ConfigCache
+        import os
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__)))), "config.json"
+        )
+        ConfigCache.init(config_path)
+        
         self.logger.info("RiskAgent gestartet. Veto-Matrix aktiv.")
         await self.deps.log_manager.add_log(
             LogLevel.INFO,
@@ -49,19 +58,6 @@ class RiskAgent(PollingAgent):
         
         # Daily Reset initialisieren
         self._daily_reset_time = self._get_next_daily_reset()
-
-    def _load_config_value(self, key: str, default: float) -> float:
-        """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
-        import os
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__)))), "config.json"
-        )
-        try:
-            with open(config_path, "r") as f:
-                return float(json.load(f).get(key, default))
-        except Exception:
-            return default
 
     def _get_next_daily_reset(self) -> float:
         """Berechnet den nächsten täglichen Reset-Zeitpunkt (UTC 00:00)."""
@@ -218,12 +214,20 @@ class RiskAgent(PollingAgent):
             
             # ── 1.1 API Data Gap (institutionell) ───────────────────
             if not veto:
-                # Kritische API-Werte müssen vorhanden sein
-                dvol = context.get("DVOL")
-                ls_ratio = context.get("Long_Short_Ratio")
-                
-                if dvol is None or ls_ratio is None:
-                    veto, reason = True, f"DATA GAP: Critical API missing - DVOL={dvol}, L/S={ls_ratio}"
+                # Kritische API-Werte müssen vorhanden sein (nur wenn konfiguriert)
+                require_inst_data = ConfigCache.get("REQUIRE_INSTITUTIONAL_DATA_FOR_TRADE", False)
+                if require_inst_data:
+                    dvol = context.get("DVOL")
+                    ls_ratio = context.get("Long_Short_Ratio")
+                    
+                    if dvol is None or ls_ratio is None:
+                        veto, reason = True, f"DATA GAP: Critical API missing - DVOL={dvol}, L/S={ls_ratio}"
+                else:
+                    # Learning Mode: Missing data reduces conviction but doesn't hard veto
+                    dvol = context.get("DVOL")
+                    ls_ratio = context.get("Long_Short_Ratio")
+                    if dvol is None or ls_ratio is None:
+                        self.logger.warning(f"DATA GAP: Institutional data missing (DVOL={dvol}, L/S={ls_ratio}) - trading with reduced conviction")
             
             # ── 2. News Silence (ContextAgent tot) ─────────────
             if not veto:
