@@ -29,14 +29,17 @@ async def get_live_telemetry():
         health_data = await redis_client.get_cache("bruno:health:sources") or {}
         sources = [
             "Binance_REST",
+            "Binance_Analytics",
             "Deribit_Public",
             "yFinance_Macro",
             "Binance_OI_Trend",
-            "ETF_Flows_Farside",
             "CryptoCompare_News",
             "CryptoCompare_Market",
             "CoinMarketCap_BTC",
             "CoinMarketCap_Global",
+            "Blockchain_OnChain",
+            "TA_Engine",
+            "Liquidation_Cluster_SQL",
         ]
         normalized_sources = {
             name: health_data.get(name, {
@@ -95,7 +98,7 @@ async def get_live_telemetry():
             },
             "market": {
                 "btc_price": quant_data.get("price"),
-                "ofi": quant_data.get("OFI"),
+                "ofi": quant_data.get("OFI_Buy_Pressure"),
                 "cvd": quant_data.get("CVD"),
                 "vamp": quant_data.get("VAMP"),
                 "max_pain": grss_data.get("Max_Pain"),

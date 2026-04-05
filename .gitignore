@@ -58,7 +58,7 @@ out/
 *.sqlite3
 
 # Logs
-logs/
+#logs/
 *.log
 
 # Docker

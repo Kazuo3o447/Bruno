@@ -292,7 +292,19 @@ class QuantAgentV4(PollingAgent):
                 return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
 
             import json as _json
-            ratios = [_json.loads(t)["r"] for t in raw]
+            ratios = []
+            for t in raw:
+                try:
+                    parsed = _json.loads(t)
+                    if "r" in parsed and parsed["r"] is not None:
+                        ratios.append(float(parsed["r"]))
+                except Exception as e:
+                    self.logger.debug(f"OFI Tick Parse Fehler (übersprungen): {e}")
+                    continue
+            
+            if not ratios or len(ratios) < 10:
+                return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
+            
             mean_imb = sum(ratios) / len(ratios)
             buy_ticks = sum(1 for r in ratios if r > 1.0)
 

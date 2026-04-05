@@ -88,7 +88,7 @@ class ContextAgent(StreamingAgent):
         self.binance_analytics = BinanceAnalyticsService(redis_client=deps.redis)
         self.onchain_client = OnChainClient(redis_client=deps.redis, glassnode_api_key=getattr(deps.config, 'GLASSNODE_API_KEY', None))
 
-        self.macro_feeds = ["https://feeds.finance.yahoo.com/rss/2.0/headline"]
+        self.macro_feeds = ["https://feeds.bloomberg.com/markets/news.rss"]
         self.crypto_feeds = ["https://cointelegraph.com/rss"]
 
     async def setup(self) -> None:
@@ -111,14 +111,17 @@ class ContextAgent(StreamingAgent):
             health = await self.deps.redis.get_cache("bruno:health:sources") or {}
             sources_to_check = [
                 "Binance_REST",
+                "Binance_Analytics",
                 "Deribit_Public",
                 "yFinance_Macro",
                 "Binance_OI_Trend",
-                "ETF_Flows_Farside",
                 "CryptoCompare_News",
                 "CryptoCompare_Market",
                 "CoinMarketCap_BTC",
                 "CoinMarketCap_Global",
+                "Blockchain_OnChain",
+                "TA_Engine",
+                "Liquidation_Cluster_SQL",
             ]
             fresh_count = sum(
                 1 for s in sources_to_check
@@ -220,13 +223,29 @@ class ContextAgent(StreamingAgent):
         if cached: return cached
         start_t = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=15.0, headers={"User-Agent": self._user_agent}) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Cache-Control": "max-age=0",
+            }
+            async with httpx.AsyncClient(timeout=15.0, headers=headers, follow_redirects=True) as client:
                 r = await client.get("https://farside.co.uk/btc/")
-                if r.status_code != 200: return self._etf_flows_fallback()
+                if r.status_code != 200:
+                    self.logger.warning(f"ETF Flows HTTP {r.status_code}")
+                    return self._etf_flows_fallback()
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(r.text, "html.parser")
                 table = soup.find("table")
-                if not table: return self._etf_flows_fallback()
+                if not table:
+                    self.logger.warning("ETF Flows: Keine Tabelle gefunden")
+                    return self._etf_flows_fallback()
                 rows = table.find_all("tr")
                 daily_flows = []
                 for row in rows[-15:]:
@@ -236,7 +255,9 @@ class ContextAgent(StreamingAgent):
                     if not val or val == "-": continue
                     try: daily_flows.append(float(val))
                     except: continue
-                if not daily_flows: return self._etf_flows_fallback()
+                if not daily_flows:
+                    self.logger.warning("ETF Flows: Keine gültigen Flow-Werte")
+                    return self._etf_flows_fallback()
                 flow_today = daily_flows[-1]
                 flow_3d = sum(daily_flows[-3:]) if len(daily_flows) >= 3 else sum(daily_flows)
                 consecutive_in, consecutive_out = 0, 0
@@ -474,6 +495,7 @@ class ContextAgent(StreamingAgent):
 
     async def _fetch_binance_rest_data(self) -> None:
         """Binance Futures API für L/S Ratio - institutionell korrekt."""
+        start_t = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 # Global Long/Short Ratio
@@ -485,11 +507,15 @@ class ContextAgent(StreamingAgent):
                         self.long_short_ratio = float(data[-1]["longShortRatio"])
                     else:
                         self.long_short_ratio = None
+                    latency = (time.perf_counter() - start_t) * 1000
+                    await self._report_health("Binance_REST", "online", latency)
                 else:
                     self.long_short_ratio = None
+                    await self._report_health("Binance_REST", "offline", 0.0)
         except Exception as e:
             self.logger.warning(f"Binance L/S Ratio API Fehler: {e}")
             self.long_short_ratio = None
+            await self._report_health("Binance_REST", "error", 0.0)
 
     async def _fetch_deribit_data(self) -> None:
         """Deribit API für DVOL, PCR und Options-Chain - institutionell korrekt."""
@@ -1096,16 +1122,17 @@ class ContextAgent(StreamingAgent):
         
             sources = [
                 "Binance_REST",
-                "Binance_Analytics",  # NEU
+                "Binance_Analytics",
                 "Deribit_Public",
                 "yFinance_Macro",
                 "Binance_OI_Trend",
-                "ETF_Flows_Farside",
                 "CryptoCompare_News",
                 "CryptoCompare_Market",
                 "CoinMarketCap_BTC",
                 "CoinMarketCap_Global",
-                "Blockchain_OnChain",  # NEU
+                "Blockchain_OnChain",
+                "TA_Engine",
+                "Liquidation_Cluster_SQL",
             ]
             health = await self.deps.redis.get_cache("bruno:health:sources") or {}
             fresh_count = sum(
@@ -1259,6 +1286,7 @@ class ContextAgent(StreamingAgent):
                     "global_metrics": coinmarketcap_bundle.get("global_metrics", {}),
                 },
                 "Veto_Active": missing_critical_liquidity or self._grss_ema < veto_threshold,
+                "Data_Source_Status": self._get_data_source_summary(health, sources),
                 "timestamp": current_ts.isoformat()
             }
             await self.deps.redis.set_cache("bruno:context:grss", payload)
@@ -1276,3 +1304,117 @@ class ContextAgent(StreamingAgent):
                 return response.status_code == 200
         except Exception:
             return False
+
+    def _get_data_source_summary(self, health: dict, sources: list) -> dict:
+        """Erzeugt eine detaillierte Zusammenfassung des Datenquellen-Status."""
+        if not health:
+            return {
+                "total_sources": len(sources),
+                "online_count": 0,
+                "offline_count": len(sources),
+                "error_count": 0,
+                "status_percentage": 0.0,
+                "status_emoji": "🔴",
+                "status_text": "Keine Daten verfügbar",
+                "critical_issues": [],
+                "healthy_sources": [],
+                "problematic_sources": sources.copy(),
+                "last_update": None
+            }
+        
+        online_count = 0
+        offline_count = 0
+        error_count = 0
+        healthy_sources = []
+        problematic_sources = []
+        critical_issues = []
+        
+        for source in sources:
+            status_info = health.get(source, {})
+            status = status_info.get("status", "unknown")
+            latency = status_info.get("latency_ms", 0)
+            last_update = status_info.get("last_update")
+            
+            if status == "online":
+                online_count += 1
+                healthy_sources.append({
+                    "name": source,
+                    "status": status,
+                    "latency_ms": latency,
+                    "last_update": last_update
+                })
+            elif status == "error":
+                error_count += 1
+                problematic_sources.append({
+                    "name": source,
+                    "status": status,
+                    "latency_ms": latency,
+                    "last_update": last_update,
+                    "issue": "Fehler bei der Datenabfrage"
+                })
+                if source in ["TA_Engine", "Binance_OB", "Binance_OI_Trend"]:
+                    critical_issues.append(f"{source}: Technischer Fehler")
+            else:  # offline, warning, etc.
+                offline_count += 1
+                problematic_sources.append({
+                    "name": source,
+                    "status": status,
+                    "latency_ms": latency,
+                    "last_update": last_update,
+                    "issue": "Keine Verbindung"
+                })
+                if source in ["CoinMarketCap_BTC", "CoinMarketCap_Global", "CryptoCompare_News", "CryptoCompare_Market"]:
+                    critical_issues.append(f"{source}: API Key Problem")
+        
+        total = len(sources)
+        status_percentage = (online_count / total) * 100 if total > 0 else 0.0
+        
+        # Status-Emoji und Text basierend auf Verfügbarkeit
+        if status_percentage >= 80:
+            status_emoji = "🟢"
+            status_text = "Optimal"
+        elif status_percentage >= 60:
+            status_emoji = "🟡"
+            status_text = "Akzeptabel"
+        elif status_percentage >= 40:
+            status_emoji = "🟠"
+            status_text = "Eingeschränkt"
+        else:
+            status_emoji = "🔴"
+            status_text = "Kritisch"
+        
+        # Letzte Aktualisierung finden
+        latest_update = None
+        for source_info in health.values():
+            if source_info.get("last_update"):
+                if not latest_update or source_info["last_update"] > latest_update:
+                    latest_update = source_info["last_update"]
+        
+        return {
+            "total_sources": total,
+            "online_count": online_count,
+            "offline_count": offline_count,
+            "error_count": error_count,
+            "status_percentage": round(status_percentage, 1),
+            "status_emoji": status_emoji,
+            "status_text": status_text,
+            "critical_issues": critical_issues,
+            "healthy_sources": healthy_sources,
+            "problematic_sources": problematic_sources,
+            "last_update": latest_update,
+            "recommendation": self._get_data_source_recommendation(status_percentage, critical_issues)
+        }
+    
+    def _get_data_source_recommendation(self, status_percentage: float, critical_issues: list) -> str:
+        """Gibt eine Empfehlung basierend auf dem Datenquellen-Status."""
+        if status_percentage >= 80:
+            return "Alle Systeme optimal. Trading kann ohne Einschränkungen fortgesetzt werden."
+        elif status_percentage >= 60:
+            return "Die meisten Datenquellen verfügbar. Trading möglich, aber einige Indikatoren fehlen."
+        elif status_percentage >= 40:
+            return "Wichtige Datenquellen fehlen. Empfohlen: Trading mit Vorsicht oder manuelle Überprüfung."
+        else:
+            if "API Key Problem" in str(critical_issues):
+                return "Kritisch: API Keys fehlen oder sind ungültig. Bitte überprüfen Sie die Konfiguration."
+            else:
+                return "Kritisch: Viele Datenquellen nicht verfügbar. Trading nicht empfohlen."
