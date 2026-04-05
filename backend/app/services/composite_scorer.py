@@ -390,11 +390,11 @@ class CompositeScorer:
             # Learning Mode Check
             learning_enabled = cfg.get("LEARNING_MODE_ENABLED", False)
             if learning_enabled:
-                return float(cfg.get("COMPOSITE_THRESHOLD_LEARNING", 45))
+                return float(cfg.get("COMPOSITE_THRESHOLD_LEARNING", 35))
             else:
-                return float(cfg.get("COMPOSITE_THRESHOLD_PROD", 60))
+                return float(cfg.get("COMPOSITE_THRESHOLD_PROD", 55))
         except Exception:
-            return 60.0  # Default
+            return 55.0  # Default
 
     def _calc_sl_tp(self, atr: float, price: float, abs_score: float) -> tuple:
         """
@@ -454,14 +454,16 @@ class CompositeScorer:
             signals.append("Sweep Active (not confirmed)")
         
         # Flow Signale
-        ofi = float(flow_data.get("OFI_Buy_Pressure", 0.5))
+        ofi_raw = flow_data.get("OFI_Buy_Pressure")
+        ofi = float(ofi_raw) if ofi_raw is not None else 0.5
         if ofi > 0.65:
             signals.append("Strong OFI Buy Pressure")
         elif ofi < 0.35:
             signals.append("Strong OFI Sell Pressure")
         
         # Macro Signale
-        grss = float(macro_data.get("GRSS_Score", 50.0))
+        grss_raw = macro_data.get("GRSS_Score")
+        grss = float(grss_raw) if grss_raw is not None else 50.0
         if grss > 70:
             signals.append("High GRSS (Bullish)")
         elif grss < 30:

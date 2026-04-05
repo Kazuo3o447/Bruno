@@ -1,11 +1,15 @@
+from pathlib import Path
 from typing import Optional
-from pydantic import model_validator
-from pydantic_settings import BaseSettings
-from pydantic import Field, ConfigDict
-
 
 from dotenv import load_dotenv
-load_dotenv(override=True)
+from pydantic import Field, ConfigDict, model_validator
+from pydantic_settings import BaseSettings
+
+
+ROOT_DIR = Path(__file__).resolve().parents[3]
+ROOT_ENV_FILE = ROOT_DIR / ".env"
+
+load_dotenv(dotenv_path=ROOT_ENV_FILE, override=True, encoding="utf-8-sig")
 
 class Settings(BaseSettings):
     # Database
@@ -81,8 +85,8 @@ class Settings(BaseSettings):
     SIMULATED_CAPITAL_EUR: float = 500.0  # Startkapital für DRY_RUN Portfolio
     
     model_config = ConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
+        env_file=str(ROOT_ENV_FILE),
+        env_file_encoding="utf-8-sig",
         extra="ignore"
     )
 

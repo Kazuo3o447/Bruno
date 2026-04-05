@@ -156,49 +156,50 @@ class QuantAgentV4(PollingAgent):
                 self._last_price = best_bid_p
                 vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
 
-                # CVD - FIXED: Nutze 1m Klines mit striktem Timestamp-Guard für Deduplizierung
+                # CVD - FIXED: Nutze aggTrades mit striktem Trade-ID-Guard für Deduplizierung
                 try:
                     async with httpx.AsyncClient(timeout=5.0) as client:
-                        # Hole 1m Klines mit Taker-Buy-Volume (baseVolume)
-                        params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 2}
+                        params = {"symbol": self.symbol, "limit": 1000}
+                        if self._last_trade_id > 0:
+                            params["fromId"] = self._last_trade_id + 1
                         r = await client.get(
-                            "https://fapi.binance.com/fapi/v1/klines", params=params)
+                            "https://fapi.binance.com/fapi/v1/aggTrades", params=params)
                         if r.status_code == 200:
-                            klines = r.json()
-                            if len(klines) >= 2:
-                                # Letzte abgeschlossene Minute verwenden
-                                latest = klines[-2]  # -2 = letzte volle Minute
-                                kline_ts = int(latest[0])  # Timestamp in Millisekunden
-                                
-                                # FIX: Strikter Timestamp-Guard - verarbeite nur neue Klines
-                                if kline_ts > self._last_processed_kline_ts:
-                                    # Format: [time, open, high, low, close, volume, close_time, quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore]
-                                    taker_buy_volume = float(latest[9])
-                                    total_volume = float(latest[5])
-                                    taker_sell_volume = total_volume - taker_buy_volume
-                                    
-                                    # Delta = Taker Buy - Taker Sell
-                                    minute_delta = taker_buy_volume - taker_sell_volume
-                                    self.cvd_cumulative += minute_delta
-                                    
-                                    # FIX: Update last processed timestamp
-                                    self._last_processed_kline_ts = kline_ts
-                                    
+                            trades = r.json() or []
+                            if trades:
+                                processed = 0.0
+                                latest_trade_id = self._last_trade_id
+                                for trade in trades:
+                                    trade_id = int(trade.get("a", 0))
+                                    if trade_id <= self._last_trade_id:
+                                        continue
+                                    qty = float(trade.get("q", 0.0) or 0.0)
+                                    is_buyer_maker = bool(trade.get("m", False))
+                                    minute_delta = -qty if is_buyer_maker else qty
+                                    processed += minute_delta
+                                    latest_trade_id = max(latest_trade_id, trade_id)
+
+                                if latest_trade_id > self._last_trade_id:
+                                    self.cvd_cumulative += processed
+                                    self._last_trade_id = latest_trade_id
+
                                     await self.deps.redis.set_cache(
                                         "bruno:cvd:BTCUSDT",
                                         {
-                                            "value": self.cvd_cumulative, 
-                                            "last_processed_kline_ts": self._last_processed_kline_ts,
-                                            "timestamp": datetime.now(timezone.utc).isoformat()
+                                            "value": self.cvd_cumulative,
+                                            "last_trade_id": self._last_trade_id,
+                                            "timestamp": datetime.now(timezone.utc).isoformat(),
                                         },
                                         ttl=86400,
                                     )
-                                    
-                                    self.logger.debug(f"CVD Update: +{minute_delta:.2f} -> {self.cvd_cumulative:.2f} (TS: {kline_ts})")
-                                else:
-                                    self.logger.debug(f"CVD Kline bereits verarbeitet: TS {kline_ts} <= Last {self._last_processed_kline_ts}")
+
+                                    self.logger.debug(
+                                        f"CVD Update (aggTrades): {processed:+.4f} -> {self.cvd_cumulative:.4f} | Last Trade ID: {self._last_trade_id}"
+                                    )
+                            else:
+                                self.logger.debug("CVD aggTrades leer — keine neuen Trades")
                 except Exception as e:
-                    self.logger.warning(f"CVD Klines Fehler: {e}")
+                    self.logger.warning(f"CVD aggTrades Fehler: {e}")
 
                 # OFI Rolling (kopiere _fetch_ofi_rolling() 1:1 aus quant_v3.py)
                 ofi_data = await self._fetch_ofi_rolling()

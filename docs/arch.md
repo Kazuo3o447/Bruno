@@ -2,6 +2,7 @@
 
 > **Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
+> ✅ **V2.2 Institutionelle Fixes:** Echte Deribit DVOL & Max Pain, aggTrades CVD, Threshold-Fallback, 3-Phasen Exit
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
@@ -323,10 +324,13 @@ ADD COLUMN layer3_output JSONB;
 - [x] **Frontend Integration**: Frische Daten für Dashboard und Trading-Seite
 
 ### Geplant: Phasen v2.1–v2.2
-- [ ] Trailing Stops, Multi-Symbol Support
+- [x] **V2.2 Institutionelle Fixes**: Deribit DVOL/Max Pain, aggTrades CVD, Threshold-Fallback
+- [x] **V2.2 3-Phasen Exit**: Fix SL/TP → Breakeven → ATR Trailing
+- [x] **V2.2 Veto Matrix**: GRSS Threshold (35/55), Daily Drawdown Circuit Breaker
 - [ ] Advanced Regimes, ML Integration
 - [ ] Portfolio Management, Advanced Risk Analytics
 
 ---
 
-*Referenz: WINDSURF_MANIFEST.md v2.0 — Einzige Quelle der Wahrheit*
+*Referenz: WINDSURF_MANIFEST.md v2.2 — Einzige Quelle der Wahrheit*
+*V2.2 Review abgeschlossen: 2026-04-05 – Alle institutionellen Fixes validiert*

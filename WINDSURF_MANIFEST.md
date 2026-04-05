@@ -7,25 +7,27 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2 Institutionelle Mathematik & Complete Purge)
+> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2 Institutionelle Fixes & Complete Purge)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
+
 ---
 
 ## STATUS UPDATE (April 2026)
 
-### ✅ BRUNO v2.2 — Institutionelle Mathematik & Complete Purge
+### ✅ BRUNO v2.2 — Institutionelle Fixes & Complete Purge
 - **LLM-Cascade entfernt** — 3-Layer LLM durch deterministischen Composite Scorer ersetzt
-- **Technical Analysis Engine** — EMA, RSI, VWAP (Tages-Reset), ATR, S/R, MTF-Alignment, Wick-Detection, VPOC
-- **Liquidity Intelligence** — Cluster-Magneten, 3×-Sweep-Konfirmation (Spike+Wick+OI-Drop), CVD (Dedupliziert)
+- **Technical Analysis Engine** — EMA, RSI (Wilder), VWAP (Tages-Reset), ATR, S/R, MTF-Alignment, Wick-Detection, VPOC
+- **Liquidity Intelligence** — Cluster-Magneten, 3×-Sweep-Konfirmation (Spike+Wick+OI-Drop), CVD (aggTrades, last_trade_id Guard)
 - **Orderbuch-Walls** — depth=1000 als Live-Liquiditätsradar
+- **Institutionelle Daten** — Echte Deribit DVOL, Max Pain aus Options-Chain (864 Strikes), Put/Call Ratio
 - **Free-Tier Analytics** — Binance Top Trader / Taker Ratios + Blockchain.com / Glassnode On-Chain Daten
 - **Regime-adaptive Gewichtung** — Trending: TA 50%, Ranging: Liq 40%
-- **Risk: Daily Drawdown Limit** — 3% Tagesverlust oder 3 Fehltrades → 24h Pause
-- **Execution V2.2** — TP1 Maker Fee (0.01%), Position-Specific State, Global State Bug Fix
+- **Risk: Veto Matrix** — GRSS Threshold (35/55), Daily Drawdown (3%), 3 Fehltrades → 24h Pause
+- **Execution V2.2** — 3-Phasen Exit (Fix SL/TP → Breakeven → ATR Trailing), TP1 Maker Fee (0.01%), Position-Specific State
+- **Composite Scorer** — Threshold-Fallback aus config.json, Null-Safe Signal Collection, Diagnostics Block
 - **Backtester V2.2** — 1-Minuten-Kerzen, Intrabar Pessimismus-Regel
-- **Complete Purge** — Keine Max Pain oder Google Trends Referenzen im System
-- **Breakeven- & Trailing-Stop** — TP1/TP2 Scaling-Out, Breakeven und ATR Trailing Stop
+- **Complete Purge** — Keine veralteten Heuristiken (Google Trends, Fake Max Pain)
 - **60s Zykluszeit** — kein LLM-Overhead mehr
 - **Post-Trade Deepseek Analysis** — Professionelle Reasoning API nach jedem Trade → DB für Lernloop
 - **Binance API Integration v2.1** — Ollama entfernt, BinanceDataClient + MarketDataCollector
@@ -923,3 +925,4 @@ Das System gilt als produktionsbereit wenn:
 
 *Dieses Dokument wird gepflegt. Bei Änderungen der Strategie: zuerst hier dokumentieren, dann Code ändern.*
 *Repository: https://github.com/Kazuo3o447/Bruno*
+*V2.2 Review abgeschlossen: 2026-04-05 – Alle institutionellen Fixes validiert*

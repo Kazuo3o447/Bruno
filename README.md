@@ -2,6 +2,7 @@
 
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
+> ✅ **V2.2 Institutionelle Fixes:** Echte Deribit DVOL & Max Pain, aggTrades CVD, Threshold-Fallback, 3-Phasen Exit
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
 > ✅ **Trading-Engine:** Deterministischer Composite Scorer mit institutioneller Mathematik (VWAP Reset, CVD Deduplizierung, VPOC)
 > ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out (0.01% Maker Fee), Breakeven-Stop
@@ -9,7 +10,7 @@
 > ✅ **Backtester:** 1-Minuten-Kerzen mit Intrabar Pessimismus-Regel
 > ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse und Phantom-Auswertung
 > ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
-> ✅ **Purge Complete:** Keine Max Pain oder Google Trends Referenzen
+> ✅ **Purge Complete:** Keine veralteten Heuristiken
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -442,4 +443,4 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health # Über Next.js Proxy
 **API-Dokumentation:** http://localhost:8000/docs  
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
-**Letztes Update:** 5. April 2026 - Bruno V2.2 mit institutioneller Mathematik und Complete Purge
+**Letztes Update:** 5. April 2026 - Bruno V2.2 mit institutionellen Fixes (Deribit DVOL/Max Pain, aggTrades CVD, Threshold-Fallback)
