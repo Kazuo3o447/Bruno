@@ -969,7 +969,7 @@ class TechnicalAnalysisAgent(PollingAgent):
             await self.deps.redis.redis.setex("bruno:ta:snapshot", 300, snapshot_json)
             
             # NEU: Orderbuch-Walls auch separat für LiquidityEngine + ExecutionAgent
-            await self.deps.redis.redis.setex("bruno:ta:ob_walls", 60, json.dumps(ob_walls, default=datetime_handler))
+            await self.deps.redis.set_cache("bruno:ta:ob_walls", ob_walls, ttl=60)
             
             latency = (time.perf_counter() - start_time) * 1000
             await self._report_health("TA_Engine", "online", latency)
