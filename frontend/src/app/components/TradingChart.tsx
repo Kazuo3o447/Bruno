@@ -6,6 +6,8 @@ import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries, Candl
 interface TradingChartProps {
   symbol?: string;
   data?: CandlestickData[];
+  height?: number;
+  compact?: boolean;
 }
 
 // Demo-Daten Generator
@@ -31,7 +33,7 @@ function generateDemoData(): CandlestickData[] {
   return data;
 }
 
-export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: TradingChartProps) {
+export default function TradingChart({ symbol = "BTCUSDT", data: initialData, height = 400, compact = false }: TradingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -158,21 +160,21 @@ export default function TradingChart({ symbol = "BTCUSDT", data: initialData }: 
 
   return (
     <div className="bg-[#1a1a2e] rounded-lg p-4 h-full">
-      <div className="flex justify-between items-center mb-4">
+      <div className={`flex justify-between items-center ${compact ? "mb-2" : "mb-4"}`}>
         <div>
-          <h3 className="text-lg font-semibold text-white">{symbol}</h3>
-          <p className="text-sm text-gray-400">Live Chart</p>
+          <h3 className={`${compact ? "text-base" : "text-lg"} font-semibold text-white`}>{symbol}</h3>
+          <p className={`${compact ? "text-xs" : "text-sm"} text-gray-400`}>Live Chart</p>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-bold text-white">
+          <p className={`${compact ? "text-lg" : "text-2xl"} font-bold text-white`}>
             {currentPrice ? `$${currentPrice.toLocaleString()}` : "Loading..."}
           </p>
-          <p className={`text-sm ${priceChange >= 0 ? "text-green-400" : "text-red-400"}`}>
+          <p className={`${compact ? "text-xs" : "text-sm"} ${priceChange >= 0 ? "text-green-400" : "text-red-400"}`}>
             {priceChange >= 0 ? "+" : ""}{priceChange.toFixed(2)}%
           </p>
         </div>
       </div>
-      <div ref={chartContainerRef} className="w-full h-[400px]" />
+      <div ref={chartContainerRef} className="w-full" style={{ height }} />
     </div>
   );
 }

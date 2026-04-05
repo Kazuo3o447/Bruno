@@ -42,9 +42,12 @@ class ExecutionAgentV3(StreamingAgent):
 
         self._portfolio_initialized = False
         
-        # v2 Breakeven Stop
-        self._breakeven_enabled = True
+        # v2 Breakeven Stop & Trailing Stop - FIX: Kein globaler State mehr
+        # self._breakeven_enabled = True  # REMOVED - State ist jetzt position-spezifisch
         self._breakeven_trigger_pct = float(self._load_config_value("BREAKEVEN_TRIGGER_PCT", 0.005))
+        # ATR-based Trailing Stop (institutionell)
+        self._atr_trailing_multiplier = float(self._load_config_value("ATR_TRAILING_MULTIPLIER", 1.5))
+        # self._atr_trailing_enabled = True  # REMOVED - State ist jetzt position-spezifisch
 
     def _load_config_value(self, key: str, default: float) -> float:
         """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
@@ -106,6 +109,65 @@ class ExecutionAgentV3(StreamingAgent):
                     f"Simulated Portfolio geladen: "
                     f"{portfolio.get('capital_eur', 0):.2f} EUR "
                     f"(P&L: {portfolio.get('realized_pnl_eur', 0):.2f} EUR)"
+                )
+
+    async def _update_atr_trailing_stop(self, pos: dict, current_price: float) -> None:
+        """
+        ATR-basierter Trailing Stop (Chandelier Exit) - institutionelle Logik.
+        
+        Nur nach TP1-Hit aktiv. Wandert nur in Profit-Richtung.
+        Formel: Stop = Höchstkurs(seit Entry) - (ATR(14) * Multiplier)
+        """
+        # FIX: Prüfe position-spezifischen State statt globalen State
+        if not pos or not pos.get("atr_trailing_enabled", False):
+            return
+            
+        side = pos.get("side", "long")
+        entry_price = float(pos.get("entry_price", 0))
+        current_sl = float(pos.get("stop_loss_price", 0))
+        
+        # ATR(14) holen
+        atr = await self.atr_calc.get_current_atr("BTCUSDT")
+        if atr <= 0:
+            return
+            
+        trailing_distance = atr * self._atr_trailing_multiplier
+        
+        if side == "long":
+            # Höchstkurs seit Entry aktualisieren
+            max_favorable = float(pos.get("max_favorable_price", entry_price))
+            new_max = max(max_favorable, current_price)
+            
+            # Neuer Trailing Stop
+            new_sl = new_max - trailing_distance
+            
+            # Nur wandern wenn neuer Stop höher als alter Stop (Profit Protection)
+            if new_sl > current_sl:
+                await self.position_tracker.update_position("BTCUSDT", {
+                    "stop_loss_price": round(new_sl, 2),
+                    "max_favorable_price": new_max
+                })
+                self.logger.info(
+                    f"TRAILING STOP (Long): {new_sl:,.0f} (alt: {current_sl:,.0f}) | "
+                    f"ATR={atr:.0f} | Max={new_max:,.0f}"
+                )
+        else:  # short
+            # Tiefstkurs seit Entry aktualisieren
+            min_favorable = float(pos.get("min_favorable_price", entry_price))
+            new_min = min(min_favorable, current_price)
+            
+            # Neuer Trailing Stop
+            new_sl = new_min + trailing_distance
+            
+            # Nur wandern wenn neuer Stop niedriger als alter Stop
+            if new_sl < current_sl:
+                await self.position_tracker.update_position("BTCUSDT", {
+                    "stop_loss_price": round(new_sl, 2),
+                    "min_favorable_price": new_min
+                })
+                self.logger.info(
+                    f"TRAILING STOP (Short): {new_sl:,.0f} (alt: {current_sl:,.0f}) | "
+                    f"ATR={atr:.0f} | Min={new_min:,.0f}"
                 )
 
     async def _listen_to_risk_veto(self):
@@ -561,6 +623,7 @@ class ExecutionAgentV3(StreamingAgent):
         Hintergrund-Task: SL/TP Watcher.
         30s Intervall — ausreichend für Medium-Frequency Trading.
         Phase D Fix: nutzt PositionTracker, kein direkter Redis-Zugriff mehr.
+        CRITICAL FIX: Kein globaler State mehr - Position-State ist trade-spezifisch.
         """
         self.logger.info("Position-Monitor gestartet (30s Intervall).")
         while self.state.running:
@@ -585,20 +648,23 @@ class ExecutionAgentV3(StreamingAgent):
                     side = pos["side"]
                     current_pnl_pct = pos.get("current_pnl_pct", 0)
                     
-                    # TP1 / Breakeven: Teilverkauf bei erstem Ziel, dann Stop auf Entry ziehen
-                    if pos and self._breakeven_enabled and not pos.get("tp1_hit"):
+                    # TP1 / Breakeven: Teilverkauf bei erstem Ziel, dann Trailing Stop
+                    # FIX: Trade-spezifischer State - prüfe Position-Objekt, nicht globalen State
+                    if pos and not pos.get("tp1_hit", False):
                         entry_price = float(pos.get("entry_price", 0))
                         position_side = pos.get("side", "long")
                         tp1_size_pct = float(pos.get("tp1_size_pct", 0.5))
                         breakeven_trigger = float(pos.get("breakeven_trigger_pct", self._breakeven_trigger_pct))
                         
                         if entry_price > 0 and current_price > 0:
+                            # FIX: Exakter Preis-Trigger statt PnL-Trigger
+                            tp1_hit = False
                             if position_side == "long":
-                                pnl_pct = (current_price - entry_price) / entry_price
+                                tp1_hit = current_price >= tp1_price
                             else:
-                                pnl_pct = (entry_price - current_price) / entry_price
+                                tp1_hit = current_price <= tp1_price
                             
-                            if pnl_pct >= max(self._breakeven_trigger_pct, breakeven_trigger):
+                            if tp1_hit:
                                 scale_reason = "take_profit_1"
                                 scaled = await self.position_tracker.scale_out_position(
                                     symbol="BTCUSDT",
@@ -609,16 +675,22 @@ class ExecutionAgentV3(StreamingAgent):
                                     exit_trade_id=f"tp1_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
                                 )
                                 if scaled:
-                                    pos = scaled
+                                    # FIX: Setze tp1_hit direkt im Positions-Objekt
+                                    pos["tp1_hit"] = True
                                     sl_price = pos["stop_loss_price"]
                                     tp1_price = float(pos.get("take_profit_1_price", tp1_price))
                                     tp2_price = float(pos.get("take_profit_2_price", tp2_price))
                                     self.logger.info(
                                         f"TP1 erreicht für BTCUSDT — Scale-Out {tp1_size_pct:.0%} und SL auf Breakeven gezogen"
                                     )
+                                    
+                                    # FIX: Kein globaler State mehr - speichere aktualisierte Position
+                                    await self.position_tracker.update_position("BTCUSDT", pos)
 
-                                # Disable breakeven after activation to prevent constant updates
-                                self._breakeven_enabled = False
+                    # ATR-based Trailing Stop (nach TP1)
+                    # FIX: Prüfe position-spezifischen State statt globalen State
+                    if pos and pos.get("tp1_hit", False) and pos.get("atr_trailing_enabled", False):
+                        await self._update_atr_trailing_stop(pos, current_price)
 
                     self.logger.debug(
                         f"Monitor: {current_price:,.0f} | SL={sl_price:,.0f} | "
@@ -641,8 +713,8 @@ class ExecutionAgentV3(StreamingAgent):
                             await self._close_position("take_profit", current_price)
                     
                 else:
-                    # No open position, reset breakeven flag
-                    self._breakeven_enabled = True
+                    # No open position - kein State-Reset nötig, da State jetzt position-spezifisch ist
+                    pass
 
             except Exception as e:
                 self.logger.error(f"Position-Monitor Fehler: {e}")

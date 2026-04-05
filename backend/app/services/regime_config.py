@@ -26,6 +26,11 @@ class RegimeConfig:
     take_profit_pct: float = 0.020    # 2.0%
     max_position_size_pct: float = 0.10  # 10% vom Kapital
     
+    # FIX: V2.2 Multi-Level-Exit Parameter
+    tp1_size_pct: float = 0.5          # 50% bei TP1
+    atr_multiplier: float = 1.5        # ATR Multiplier für Trailing SL
+    breakeven_trigger_pct: float = 0.005  # 0.5% für Breakeven
+    
     # Regime-spezifische Anpassungen
     volatility_multiplier: float = 1.0
     confidence_threshold: float = 0.65
@@ -39,6 +44,10 @@ REGIME_CONFIGS: Dict[str, RegimeConfig] = {
         stop_loss_pct=0.012,
         take_profit_pct=0.025,
         max_position_size_pct=0.15,
+        # FIX: V2.2 Parameter für Bull-Regime
+        tp1_size_pct=0.6,              # 60% Scale-Out bei TP1
+        atr_multiplier=1.8,            # Aggressiver Trailing
+        breakeven_trigger_pct=0.004,   # Früher Breakeven
         volatility_multiplier=1.2,
         confidence_threshold=0.60,
     ),
@@ -48,6 +57,23 @@ REGIME_CONFIGS: Dict[str, RegimeConfig] = {
         stop_loss_pct=0.008,
         take_profit_pct=0.016,
         max_position_size_pct=0.08,
+        # FIX: V2.2 Parameter für Ranging-Regime
+        tp1_size_pct=0.4,              # 40% Scale-Out bei TP1
+        atr_multiplier=1.2,            # Konservativer Trailing
+        breakeven_trigger_pct=0.006,   # Später Breakeven
+        volatility_multiplier=1.0,
+        confidence_threshold=0.70,
+    ),
+    "crash": RegimeConfig(
+        allow_longs=False,
+        allow_shorts=True,
+        stop_loss_pct=0.015,
+        take_profit_pct=0.030,
+        max_position_size_pct=0.05,
+        # FIX: V2.2 Parameter für Crash-Regime
+        tp1_size_pct=0.3,              # 30% Scale-Out bei TP1
+        atr_multiplier=2.0,            # Sehr aggressiver Trailing
+        breakeven_trigger_pct=0.008,   # Sehr später Breakeven
         volatility_multiplier=0.8,
         confidence_threshold=0.70,
     ),
@@ -57,6 +83,10 @@ REGIME_CONFIGS: Dict[str, RegimeConfig] = {
         stop_loss_pct=0.015,
         take_profit_pct=0.030,
         max_position_size_pct=0.05,
+        # FIX: V2.2 Parameter für High-Vola-Regime
+        tp1_size_pct=0.2,              # 20% Scale-Out bei TP1
+        atr_multiplier=1.5,            # Moderater Trailing
+        breakeven_trigger_pct=0.010,   # Sehr später Breakeven
         volatility_multiplier=1.5,
         confidence_threshold=0.75,
     ),
@@ -66,6 +96,10 @@ REGIME_CONFIGS: Dict[str, RegimeConfig] = {
         stop_loss_pct=0.010,
         take_profit_pct=0.020,
         max_position_size_pct=0.10,
+        # FIX: V2.2 Parameter für Bear-Regime
+        tp1_size_pct=0.5,              # 50% Scale-Out bei TP1
+        atr_multiplier=1.3,            # Moderater Trailing
+        breakeven_trigger_pct=0.006,   # Später Breakeven
         volatility_multiplier=1.0,
         confidence_threshold=0.65,
     ),
@@ -75,6 +109,10 @@ REGIME_CONFIGS: Dict[str, RegimeConfig] = {
         stop_loss_pct=0.010,
         take_profit_pct=0.020,
         max_position_size_pct=0.05,
+        # FIX: V2.2 Parameter für Unknown-Regime
+        tp1_size_pct=0.3,              # 30% Scale-Out bei TP1
+        atr_multiplier=1.0,            # Standard Trailing
+        breakeven_trigger_pct=0.010,   # Sehr später Breakeven
         volatility_multiplier=1.0,
         confidence_threshold=0.80,
     ),

@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import TradingChart from "../components/TradingChart";
 import {
   ResponsiveContainer,
-  BarChart,
-  Bar,
   LineChart,
   Line,
   XAxis,
@@ -128,6 +126,15 @@ interface DecisionTimelinePoint {
   reason: string;
 }
 
+type Tone = "emerald" | "amber" | "red" | "zinc";
+
+interface SummaryItem {
+  label: string;
+  value: string;
+  hint?: string;
+  tone: Tone;
+}
+
 function fmt(n: number | null | undefined, digits = 2): string {
   if (n === null || n === undefined) return "—";
   return n.toFixed(digits);
@@ -144,13 +151,6 @@ function timeAgo(isoStr: string | null | undefined): string {
   if (diff < 60) return `${diff}s`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m`;
   return `${Math.floor(diff / 3600)}h`;
-}
-
-function chartColor(value: number, active = false): string {
-  if (active) return "#f97316";
-  if (value >= 1) return "#ef4444";
-  if (value === 0) return "#10b981";
-  return "#64748b";
 }
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
@@ -312,6 +312,35 @@ function DataFreshnessBar({ sources }: { sources: Record<string, { status: strin
   );
 }
 
+function MiniStatCard({ label, value, hint, tone = "zinc" }: { label: string; value: string; hint?: string; tone?: Tone }) {
+  const toneMap = {
+    emerald: "text-emerald-400 border-emerald-900/70 bg-emerald-950/20",
+    amber: "text-amber-400 border-amber-900/70 bg-amber-950/20",
+    red: "text-red-400 border-red-900/70 bg-red-950/20",
+    zinc: "text-zinc-200 border-zinc-800 bg-[#0c0c18]",
+  } as const;
+
+  return (
+    <div className={`rounded-xl border p-3 ${toneMap[tone]}`}>
+      <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500 mb-1">{label}</div>
+      <div className={`text-sm font-bold ${tone === "zinc" ? "text-white" : toneMap[tone].split(" ")[0]}`}>{value}</div>
+      {hint && <div className="text-[10px] text-slate-500 mt-1">{hint}</div>}
+    </div>
+  );
+}
+
+function CascadeStep({ idx, label, active, blocked }: { idx: number; label: string; active: boolean; blocked: boolean }) {
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${blocked ? "border-red-800 bg-red-950/15" : active ? "border-emerald-800 bg-emerald-950/15" : "border-zinc-800 bg-[#0c0c18]"}`}>
+      <div className="flex items-center gap-2">
+        <span className={`w-2 h-2 rounded-full ${blocked ? "bg-red-400" : active ? "bg-emerald-400" : "bg-zinc-600"}`} />
+        <span className="text-[10px] font-bold text-slate-500">{idx + 1}</span>
+      </div>
+      <div className={`mt-1 text-xs font-semibold ${blocked ? "text-red-300" : active ? "text-emerald-300" : "text-slate-300"}`}>{label}</div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const [telemetry, setTelemetry] = useState<Telemetry | null>(null);
   const [position, setPosition] = useState<Position | null>(null);
@@ -397,27 +426,60 @@ export default function Dashboard() {
     });
   }, [decisionFeed]);
 
-  const gateHealthData = useMemo(() => {
-    const gates = tradePipeline?.gates ?? {};
-    return Object.entries(gates).map(([key, gate]) => ({
-      name: key.replace(/^gate_\d+_/, "").replaceAll("_", " "),
-      blocked: gate.blocked ? 1 : 0,
-      note: String(gate.note ?? ""),
-    }));
-  }, [tradePipeline]);
+  const decisionMixData = useMemo(() => {
+    const signal = (decisionFeed?.events ?? []).filter((event) => String(event.outcome ?? "").toUpperCase().includes("SIGNAL_")).length;
+    const blocked = (decisionFeed?.events ?? []).filter((event) => {
+      const outcome = String(event.outcome ?? "").toUpperCase();
+      const reason = String(event.reason ?? "").toUpperCase();
+      return outcome.includes("HOLD") || outcome.includes("BLOCK") || outcome.includes("VETO") || outcome.includes("LIMIT") || reason.includes("VETO");
+    }).length;
+    const neutral = Math.max((decisionFeed?.count ?? 0) - signal - blocked, 0);
+    return [
+      { name: "Signal", value: signal },
+      { name: "Blocked", value: blocked },
+      { name: "Neutral", value: neutral },
+    ].filter((item) => item.value > 0);
+  }, [decisionFeed]);
 
-  const platformSummary = useMemo(() => {
+  const cadenceEstimate = useMemo(() => {
+    const timestamps = (decisionFeed?.events ?? [])
+      .map((event) => event.ts)
+      .filter((ts): ts is string => Boolean(ts))
+      .map((ts) => new Date(ts).getTime())
+      .sort((a, b) => a - b);
+
+    if (timestamps.length < 2) return null;
+
+    const recent = timestamps.slice(-6);
+    const gaps = recent.slice(1).map((ts, idx) => ts - recent[idx]);
+    const avgGap = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+    const last = recent[recent.length - 1];
+
+    return {
+      averageMinutes: avgGap / 60000,
+      lastAt: new Date(last),
+      nextAt: new Date(last + avgGap),
+      remainingMinutes: Math.max(Math.round((last + avgGap - Date.now()) / 60000), 0),
+    };
+  }, [decisionFeed]);
+
+  const platformSummary = useMemo<SummaryItem[]>(() => {
     const freshCount = Object.values(phaseA?.checks ?? {}).filter(Boolean).length;
     const blocking = tradePipeline?.summary.blocking_gates?.length ?? 0;
+    const sourceCount = Object.keys(telemetry?.data_sources ?? {}).length;
+    const healthySources = Object.values(telemetry?.data_sources ?? {}).filter((source) => ["online", "ok", "healthy", "connected", "success", "running"].includes((source.status || "offline").toLowerCase())).length;
+    const agentCount = Object.keys(telemetry?.agents ?? {}).length;
+    const healthyAgents = Object.values(telemetry?.agents ?? {}).filter((agent) => agent.healthy).length;
     return [
       { label: "Platform", value: telemetry?.status ?? "—", tone: telemetry?.status === "ARMED" ? "emerald" : "red" },
-      { label: "Dry Run", value: telemetry?.dry_run ? "ON" : "OFF", tone: telemetry?.dry_run ? "amber" : "emerald" },
-      { label: "Live Approved", value: telemetry?.live_trading_approved ? "YES" : "NO", tone: telemetry?.live_trading_approved ? "emerald" : "red" },
-      { label: "Fresh Checks", value: `${freshCount}/${Object.keys(phaseA?.checks ?? {}).length || 0}`, tone: freshCount >= 5 ? "emerald" : "amber" },
-      { label: "Blocking Gates", value: String(blocking), tone: blocking > 0 ? "red" : "emerald" },
-      { label: "Current Veto", value: telemetry?.veto_active ? "ACTIVE" : "CLEAR", tone: telemetry?.veto_active ? "red" : "emerald" },
+      { label: "APIs", value: `${healthySources}/${sourceCount || 0}`, hint: "Reachable Quellen", tone: healthySources === sourceCount && sourceCount > 0 ? "emerald" : healthySources > 0 ? "amber" : "red" },
+      { label: "Agents", value: `${healthyAgents}/${agentCount || 0}`, hint: "Laufende Agenten", tone: healthyAgents === agentCount && agentCount > 0 ? "emerald" : healthyAgents > 0 ? "amber" : "red" },
+      { label: "Fresh Checks", value: `${freshCount}/${Object.keys(phaseA?.checks ?? {}).length || 0}`, hint: "Phase A Daten", tone: freshCount >= 5 ? "emerald" : "amber" },
+      { label: "Blocking Gates", value: String(blocking), hint: tradePipeline?.summary.trade_possible ? "Handel möglich" : "Trade blockiert", tone: blocking > 0 ? "red" : "emerald" },
+      { label: "Next Cycle", value: cadenceEstimate ? `${cadenceEstimate.remainingMinutes}m` : "—", hint: cadenceEstimate ? `Ø ${cadenceEstimate.averageMinutes.toFixed(1)}m` : "Kein Verlauf", tone: cadenceEstimate && cadenceEstimate.remainingMinutes <= 1 ? "amber" : "zinc" },
+      { label: "Current Veto", value: telemetry?.veto_active ? "ACTIVE" : "CLEAR", hint: telemetry?.veto_reason || "Veto state", tone: telemetry?.veto_active ? "red" : "emerald" },
     ];
-  }, [phaseA, telemetry, tradePipeline]);
+  }, [cadenceEstimate, phaseA, telemetry, tradePipeline]);
 
   useEffect(() => {
     refresh();
@@ -425,7 +487,6 @@ export default function Dashboard() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  // ... (rest of the code remains the same)
   if (error) return <div className="min-h-screen bg-[#0a0a0f] text-white p-8 text-red-400">Error: {error}</div>;
   if (!telemetry) return <div className="min-h-screen bg-[#0a0a0f] text-white p-8">Loading...</div>;
 
@@ -436,167 +497,140 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#0a0a0f] text-white p-4 lg:p-6 space-y-4">
       <HeaderBar telemetry={telemetry} />
 
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 xl:grid-cols-6 gap-3">
         {platformSummary.map((item) => (
-          <div key={item.label} className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-3">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 mb-1">{item.label}</div>
-            <div className={`text-sm font-bold ${item.tone === "emerald" ? "text-emerald-400" : item.tone === "amber" ? "text-amber-400" : "text-red-400"}`}>
-              {item.value}
-            </div>
-          </div>
+          <MiniStatCard key={item.label} label={item.label} value={item.value} hint={item.hint} tone={item.tone} />
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Main Chart - Left Side */}
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          <div className="h-[380px] bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-3">
-            <TradingChart symbol="BTCUSDT" />
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+        <div className="xl:col-span-2 flex flex-col gap-4">
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-3">
+            <TradingChart symbol="BTCUSDT" height={280} compact />
           </div>
-          
-          {/* Position Panel - Below Chart */}
+
           {position?.status === "open" ? (
-            <div className={`flex items-center justify-between p-4 rounded-xl border ${position.side === "long" ? "border-emerald-800 bg-emerald-950/20" : "border-red-800 bg-red-950/20"}`}>
-              <div className="flex items-center gap-4">
-                <span className={`px-2 py-1 rounded text-xs font-bold ${position.side === "long" ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
-                  {position.side.toUpperCase()}
-                </span>
-                <span className="font-mono text-sm">{position.symbol}</span>
-                <span className="text-xs text-slate-500">Entry: {fmtPrice(position.entry_price)}</span>
-              </div>
-              <div className="flex items-center gap-4 text-sm">
-                {currentPrice && (
-                  <span className={`font-bold ${((currentPrice - position.entry_price) / position.entry_price * 100) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    P&L {fmt((currentPrice - position.entry_price) / position.entry_price * 100, 2)}%
-                  </span>
-                )}
-                <span className="text-xs text-slate-500">SL: {fmtPrice(position.stop_loss_price)}</span>
-                <span className="text-xs text-slate-500">TP: {fmtPrice(position.take_profit_price)}</span>
-              </div>
+            <div className={`grid grid-cols-2 lg:grid-cols-4 gap-3 p-4 rounded-xl border ${position.side === "long" ? "border-emerald-800 bg-emerald-950/15" : "border-red-800 bg-red-950/15"}`}>
+              <MiniStatCard label="Open Trade" value={`${position.side.toUpperCase()} ${position.symbol}`} hint={`Qty ${position.quantity}`} tone={position.side === "long" ? "emerald" : "red"} />
+              <MiniStatCard label="Entry" value={fmtPrice(position.entry_price)} hint={`SL ${fmtPrice(position.stop_loss_price)}`} />
+              <MiniStatCard label="Take Profit" value={fmtPrice(position.take_profit_price)} hint={currentPrice ? `Mark ${fmtPrice(currentPrice)}` : "Kein Marktpreis"} />
+              <MiniStatCard
+                label="P&L"
+                value={currentPrice ? `${fmt(((currentPrice - position.entry_price) / position.entry_price) * 100, 2)}%` : "—"}
+                hint="Aktuelle Position"
+                tone={currentPrice && ((currentPrice - position.entry_price) / position.entry_price) >= 0 ? "emerald" : "red"}
+              />
             </div>
           ) : (
-            <div className="p-4 rounded-xl border border-zinc-800 bg-[#0c0c18] text-center">
-              <span className="text-sm text-slate-500">No open position</span>
+            <div className="p-4 rounded-xl border border-zinc-800 bg-[#0c0c18] text-center text-sm text-slate-500">
+              Keine offene Position
             </div>
           )}
         </div>
 
-        {/* Sidebar - Right Side */}
         <div className="flex flex-col gap-4">
-          {/* Market Data */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Market Data</div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">24h</span>
-                <span className={market.btc_change_24h_pct && market.btc_change_24h_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
-                  {fmt(market.btc_change_24h_pct, 2)}%
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">1h</span>
-                <span className={market.btc_change_1h_pct && market.btc_change_1h_pct >= 0 ? "text-emerald-400" : "text-red-400"}>
-                  {fmt(market.btc_change_1h_pct, 2)}%
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">OFI</span>
-                <span className={market.ofi && market.ofi > 0.3 ? "text-emerald-400" : market.ofi && market.ofi < -0.3 ? "text-red-400" : "text-slate-400"}>
-                  {fmt(market.ofi, 2)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Funding</span>
-                <span className={market.funding_rate && market.funding_rate > 0.01 ? "text-red-400" : market.funding_rate && market.funding_rate < 0 ? "text-emerald-400" : "text-slate-400"}>
-                  {market.funding_rate ? (market.funding_rate * 100).toFixed(4) : "—"}%
-                </span>
-              </div>
+          <MarketOverview market={market} grss={grss} />
+          <DataFreshnessBar sources={telemetry.data_sources} />
+          <AgentStatusRow agents={telemetry.agents} />
+          <div className="rounded-xl border border-zinc-800 bg-[#0c0c18] p-4 font-mono text-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-zinc-500 uppercase tracking-widest">Cascade Snapshot</span>
+              <span className={`px-2 py-0.5 rounded-full border ${tradePipeline?.summary.trade_possible ? "border-emerald-800 text-emerald-400" : "border-red-800 text-red-400"}`}>
+                {tradePipeline?.summary.trade_possible ? "READY" : "BLOCKED"}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { idx: 1, label: "Data", active: !tradePipeline?.gates?.gate_1_data_freshness?.blocked, blocked: !!tradePipeline?.gates?.gate_1_data_freshness?.blocked },
+                { idx: 2, label: "Context", active: !tradePipeline?.gates?.gate_2_context?.blocked, blocked: !!tradePipeline?.gates?.gate_2_context?.blocked },
+                { idx: 3, label: "Sentiment", active: !tradePipeline?.gates?.gate_3_sentiment?.blocked, blocked: !!tradePipeline?.gates?.gate_3_sentiment?.blocked },
+                { idx: 4, label: "Quant", active: !tradePipeline?.gates?.gate_4_quant_micro?.blocked, blocked: !!tradePipeline?.gates?.gate_4_quant_micro?.blocked },
+                { idx: 5, label: "Risk", active: !tradePipeline?.gates?.gate_5_risk_veto?.blocked, blocked: !!tradePipeline?.gates?.gate_5_risk_veto?.blocked },
+                { idx: 6, label: "Portfolio", active: !tradePipeline?.gates?.gate_6_portfolio?.blocked, blocked: !!tradePipeline?.gates?.gate_6_portfolio?.blocked },
+              ].map((gate) => (
+                <CascadeStep key={gate.label} idx={gate.idx} label={gate.label} active={gate.active} blocked={gate.blocked} />
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <MiniStatCard label="Last Decision" value={decisionFeed?.events?.[0]?.outcome ?? "—"} hint={decisionFeed?.events?.[0]?.reason ?? "Neueste Kaskade"} tone={decisionFeed?.events?.[0]?.outcome?.includes("SIGNAL_") ? "emerald" : "amber"} />
+              <MiniStatCard label="Next Cycle" value={cadenceEstimate ? cadenceEstimate.nextAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "—"} hint={cadenceEstimate ? `${cadenceEstimate.averageMinutes.toFixed(1)}m cadence` : "Kein Verlauf"} />
             </div>
           </div>
 
-          {/* Sentiment */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Sentiment & Bias</div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">News</span>
-                <span className={grss?.sentiment && grss.sentiment > 0.2 ? "text-emerald-400" : grss?.sentiment && grss.sentiment < -0.2 ? "text-red-400" : "text-slate-400"}>
-                  {grss?.sentiment?.toFixed(2) ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Retail</span>
-                <span className={grss?.retail_score && grss.retail_score > 60 ? "text-red-400" : "text-emerald-400"}>
-                  {grss?.retail_score?.toFixed(0) ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">F&G</span>
-                <span className={market.fear_greed && market.fear_greed > 75 ? "text-red-400" : market.fear_greed && market.fear_greed < 25 ? "text-emerald-400" : "text-slate-400"}>
-                  {market.fear_greed ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">P/C</span>
-                <span className={market.put_call_ratio && market.put_call_ratio > 0.9 ? "text-emerald-400" : market.put_call_ratio && market.put_call_ratio < 0.5 ? "text-red-400" : "text-slate-400"}>
-                  {market.put_call_ratio?.toFixed(2) ?? "—"}
-                </span>
-              </div>
-            </div>
+          <div className="grid grid-cols-2 gap-3">
+            <MiniStatCard label="GRSS" value={fmt(telemetry.grss.score, 1)} hint="Live score" tone={telemetry.grss.score && telemetry.grss.score >= 48 ? "emerald" : telemetry.grss.score && telemetry.grss.score >= 35 ? "amber" : "red"} />
+            <MiniStatCard label="Velocity" value={fmt(telemetry.grss.velocity_30min, 2)} hint="30m change" tone={telemetry.grss.velocity_30min && telemetry.grss.velocity_30min > 0 ? "emerald" : "amber"} />
+            <MiniStatCard label="BTC 24h" value={`${fmt(market.btc_change_24h_pct, 2)}%`} hint="Direction" tone={(market.btc_change_24h_pct ?? 0) >= 0 ? "emerald" : "red"} />
+            <MiniStatCard label="VIX" value={fmt(grss?.vix ?? market.vix, 1)} hint="Risk climate" tone={(grss?.vix ?? market.vix ?? 0) > 30 ? "red" : (grss?.vix ?? market.vix ?? 0) > 20 ? "amber" : "emerald"} />
           </div>
 
-          {/* GRSS */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">GRSS Components</div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">VIX</span>
-                <span className={grss?.vix && grss.vix > 30 ? "text-red-400" : grss?.vix && grss.vix > 20 ? "text-amber-400" : "text-emerald-400"}>
-                  {grss?.vix?.toFixed(1) ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Macro</span>
-                <span className={grss?.ndx === "risk_off" ? "text-red-400" : grss?.ndx === "risk_on" ? "text-emerald-400" : "text-amber-400"}>
-                  {grss?.ndx ?? "—"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Yields</span>
-                <span className="text-slate-300">{grss?.yields?.toFixed(2) ?? "—"}%</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">DVOL</span>
-                <span className="text-slate-300">{grss?.dvol?.toFixed(1) ?? "—"}</span>
-              </div>
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4 font-mono text-xs">
+            <div className="text-zinc-500 uppercase tracking-widest mb-3">Market Bias</div>
+            <div className="grid grid-cols-2 gap-2">
+              <MiniStatCard label="News" value={fmt(grss?.sentiment ?? market.sentiment, 2)} tone={(grss?.sentiment ?? market.sentiment ?? 0) > 0.2 ? "emerald" : (grss?.sentiment ?? market.sentiment ?? 0) < -0.2 ? "red" : "amber"} />
+              <MiniStatCard label="Retail" value={fmt(grss?.retail_score ?? market.retail_score, 0)} tone={(grss?.retail_score ?? market.retail_score ?? 0) > 60 ? "red" : "emerald"} />
+              <MiniStatCard label="Funding" value={market.funding_rate !== null ? `${(market.funding_rate * 100).toFixed(4)}%` : "—"} tone={(market.funding_rate ?? 0) > 0.01 ? "red" : (market.funding_rate ?? 0) < 0 ? "emerald" : "zinc"} />
+              <MiniStatCard label="PCR" value={market.put_call_ratio?.toFixed(2) ?? "—"} tone={(market.put_call_ratio ?? 1) > 0.9 ? "emerald" : (market.put_call_ratio ?? 1) < 0.5 ? "red" : "zinc"} />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Section 3: Decision Analysis */}
       <div className="border-t border-zinc-800 pt-6">
-        <SectionHeader title="Decision Analysis" subtitle="Why trades are blocked" />
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Top Blockers */}
+        <SectionHeader title="Decision Transparency" subtitle="Was der Bot wann warum getan hat" />
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Outcome Mix</div>
+            <div className="h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={decisionMixData} dataKey="value" nameKey="name" innerRadius={42} outerRadius={60} paddingAngle={2}>
+                    {decisionMixData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.name === "Signal" ? "#10b981" : entry.name === "Blocked" ? "#ef4444" : "#64748b"} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex justify-center gap-4 mt-2 text-xs">
+              {decisionMixData.map((entry) => (
+                <span key={entry.name} className="flex items-center gap-1 text-slate-300">
+                  <span className={`w-2 h-2 rounded-full ${entry.name === "Signal" ? "bg-emerald-400" : entry.name === "Blocked" ? "bg-red-400" : "bg-slate-400"}`} />
+                  {entry.name} {entry.value}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Decision Rhythm</div>
+            <div className="h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={blockerTimelineData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f1f33" />
+                  <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 8 }} axisLine={false} tickLine={false} interval={2} />
+                  <YAxis tick={false} axisLine={false} domain={[0, 1]} />
+                  <Tooltip contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }} labelFormatter={(_, p: any) => p?.[0]?.payload?.reason || ""} />
+                  <Line type="step" dataKey="blocked" stroke="#ef4444" strokeWidth={2} dot={false} />
+                  <Line type="step" dataKey="signal" stroke="#10b981" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Top Blockers</div>
             {topNoTradeReasons.length > 0 ? (
               <div className="space-y-3">
                 {topNoTradeReasons.map((reason, idx) => (
-                  <div key={reason.name} className="flex items-center gap-3">
-                    <span className={`text-xs font-bold w-5 ${idx === 0 ? "text-red-400" : idx === 1 ? "text-amber-400" : "text-slate-500"}`}>#{idx + 1}</span>
-                    <div className="flex-1">
-                      <div className="flex justify-between text-sm mb-1">
-                        <span className="text-slate-300">{reason.name}</span>
-                        <span className="text-slate-500 font-mono">{reason.value}</span>
-                      </div>
-                      <div className="h-1.5 bg-[#1a1a2e] rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full rounded-full ${idx === 0 ? "bg-red-500" : idx === 1 ? "bg-amber-500" : "bg-slate-500"}`}
-                          style={{ width: `${Math.round((reason.value / (topNoTradeReasons[0]?.value || 1)) * 100)}%` }}
-                        />
-                      </div>
+                  <div key={reason.name} className="rounded-lg border border-[#1f1f33] p-3">
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-slate-300">{reason.name}</span>
+                      <span className="text-slate-500 font-mono">{reason.value}</span>
+                    </div>
+                    <div className="h-1.5 bg-[#1a1a2e] rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${idx === 0 ? "bg-red-500" : idx === 1 ? "bg-amber-500" : "bg-slate-500"}`} style={{ width: `${Math.round((reason.value / (topNoTradeReasons[0]?.value || 1)) * 100)}%` }} />
                     </div>
                   </div>
                 ))}
@@ -604,57 +638,18 @@ export default function Dashboard() {
             ) : (
               <div className="text-sm text-slate-500">No blocker data</div>
             )}
-          </div>
-
-          {/* Blocker Distribution Chart */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Distribution</div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={tradeReasonData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f1f33" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 9 }} axisLine={false} tickLine={false} interval={0} />
-                  <Tooltip contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }} />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {tradeReasonData.map((entry) => (
-                      <Cell key={entry.name} fill={chartColor(entry.value, entry.name === "Risk/Veto" || entry.name === "Daily Limit")} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Timeline */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Recent (20)</div>
-            <div className="h-48">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={blockerTimelineData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f1f33" />
-                  <XAxis dataKey="label" tick={{ fill: "#94a3b8", fontSize: 8 }} axisLine={false} tickLine={false} interval={2} />
-                  <YAxis tick={false} axisLine={false} domain={[0, 1]} />
-                  <Tooltip 
-                    contentStyle={{ background: "#090913", border: "1px solid #1f1f33", color: "#e2e8f0" }}
-                    labelFormatter={(_, p: any) => p?.[0]?.payload?.reason || ""}
-                  />
-                  <Line type="step" dataKey="blocked" stroke="#ef4444" strokeWidth={2} dot={false} />
-                  <Line type="step" dataKey="signal" stroke="#10b981" strokeWidth={2} dot={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex justify-center gap-4 mt-2 text-xs">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"/> Signal</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"/> Blocked</span>
-            </div>
+            {tradePipeline?.summary.blocking_gates && tradePipeline.summary.blocking_gates.length > 0 && (
+              <div className="mt-4 p-3 bg-red-950/20 border border-red-800 rounded-lg text-xs text-red-300 font-mono">
+                {tradePipeline.summary.blocking_gates.join(" → ")}
+              </div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Section 4: Pipeline Status */}
       <div className="border-t border-zinc-800 pt-6">
         <SectionHeader title="Pipeline Status" subtitle="6-Gate decision cascade" />
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
           {[
             { name: "Data", status: !tradePipeline?.gates?.gate_1_data_freshness?.blocked, info: "Fresh" },
             { name: "Context", status: !tradePipeline?.gates?.gate_2_context?.blocked, info: "GRSS" },
@@ -663,7 +658,7 @@ export default function Dashboard() {
             { name: "Risk", status: !tradePipeline?.gates?.gate_5_risk_veto?.blocked, info: "Vetos" },
             { name: "Portfolio", status: !tradePipeline?.gates?.gate_6_portfolio?.blocked, info: "Limits" },
           ].map((gate, idx) => (
-            <div key={gate.name} className={`p-3 rounded-xl border ${gate.status ? "border-emerald-800 bg-emerald-950/10" : "border-red-800 bg-red-950/10"}`}>
+            <div key={gate.name} className={`rounded-xl border p-3 ${gate.status ? "border-emerald-800 bg-emerald-950/10" : "border-red-800 bg-red-950/10"}`}>
               <div className="flex items-center gap-2 mb-1">
                 <span className={`w-2 h-2 rounded-full ${gate.status ? "bg-emerald-400" : "bg-red-400"}`} />
                 <span className="text-[10px] font-bold text-slate-400">Gate {idx + 1}</span>
@@ -675,52 +670,10 @@ export default function Dashboard() {
         </div>
 
         {tradePipeline?.summary.blocking_gates && tradePipeline.summary.blocking_gates.length > 0 && (
-          <div className="mt-3 p-3 bg-red-950/20 border border-red-800 rounded-xl">
-            <span className="text-xs text-red-400 font-bold">Active: </span>
-            <span className="text-sm text-red-300 font-mono">{tradePipeline.summary.blocking_gates.join(" → ")}</span>
+          <div className="mt-3 p-3 bg-red-950/20 border border-red-800 rounded-xl text-xs text-red-300 font-mono">
+            Active: {tradePipeline.summary.blocking_gates.join(" → ")}
           </div>
         )}
-      </div>
-
-      {/* Section 5: System Health */}
-      <div className="border-t border-zinc-800 pt-6">
-        <SectionHeader title="System Health" subtitle="Agents & data sources" />
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Agents */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Agents</div>
-            <div className="flex flex-wrap gap-2">
-              {["ingestion", "technical", "quant", "context", "risk", "execution"].map((id) => {
-                const a = telemetry.agents[id];
-                if (!a) return null;
-                return (
-                  <div key={id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${a.healthy ? "border-emerald-800 bg-emerald-950/10" : "border-red-800 bg-red-950/10"}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${a.healthy ? "bg-emerald-400" : "bg-red-400"}`} />
-                    <span className="text-xs font-medium capitalize text-slate-300">{id}</span>
-                    <span className="text-[10px] text-slate-500">{timeAgo(a.age_seconds ? new Date(Date.now() - a.age_seconds * 1000).toISOString() : null)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Data Sources */}
-          <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Data Sources</div>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(telemetry.data_sources).map(([name, data]) => {
-                const ok = ["online", "ok", "healthy", "connected", "success", "running"].includes((data.status || "offline").toLowerCase());
-                return (
-                  <div key={name} className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs border ${ok ? "border-emerald-800 text-emerald-400" : "border-red-800 text-red-400"}`}>
-                    <span>{ok ? "✓" : "✗"}</span>
-                    <span className="text-slate-300">{name}</span>
-                    <span className="text-slate-500">{timeAgo(data.last_update)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

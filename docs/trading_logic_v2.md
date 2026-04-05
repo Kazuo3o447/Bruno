@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Bruno v2.2 replaces the LLM-based decision chain with a deterministic, regime-adaptive trading stack. The system is designed for medium-frequency Bitcoin trading and uses three primary decision layers:
+Bruno v2.2 replaces the LLM-based decision chain with a deterministic, regime-adaptive trading system featuring institutional-grade mathematical precision. The system is designed for medium-frequency Bitcoin trading and uses three primary decision layers:
 
 1. **Technical Analysis** for trend, structure, and timing.
 2. **Liquidity Intelligence** for sweep opportunities and cluster magnetism.
@@ -25,7 +25,7 @@ CompositeScorer → trade decision
     ↓
 RiskAgent → veto state
     ↓
-ExecutionAgentV3 → order / position management
+ExecutionAgentV4 → order / position management
 ```
 
 ### 2.1 Binance API Integration (v2.1)
@@ -94,11 +94,20 @@ Threshold interpretation:
 - `60 < RSI <= 70` → weak overbought
 - `RSI > 70` → overbought
 
-#### VWAP (intraday, 15m)
+#### VWAP (institutional, with daily reset)
 
 ```text
-VWAP = Σ(close_i * volume_i) / Σ(volume_i)
+VWAP = Σ(typical_price_i * volume_i) / Σ(volume_i)
+typical_price_i = (high_i + low_i + close_i) / 3
 ```
+
+**Daily Reset Logic:**
+- VWAP accumulators reset at 00:00 UTC
+- `_last_vwap_date` tracks the current trading day
+- When `current_candle.timestamp.date() > last_vwap_date`, reset:
+  - `cumulative_typical_volume = 0`
+  - `cumulative_volume = 0`
+  - `last_vwap_date = current_candle.timestamp.date()`
 
 #### ATR(14)
 
@@ -216,7 +225,24 @@ Each session returns:
 - `volatility_bias`
 - `trend_expected`
 
-### 3.8 Orderbook Walls
+### 3.10 VPOC (Volume Point of Control)
+
+**Volume-at-Price Matrix:**
+- Uses fixed tick size buckets ($10 for BTC)
+- Builds exact volume distribution: `price_level -> cumulative_volume`
+- VPOC = price level with maximum volume in the matrix
+
+**Implementation:**
+```python
+volume_at_price = {}
+for candle in candles:
+    price_bucket = round(candle["close"] / tick_size) * tick_size
+    volume_at_price[price_bucket] = volume_at_price.get(price_bucket, 0) + candle["volume"]
+    
+vpoc_price = max(volume_at_price, key=volume_at_price.get)
+```
+
+### 3.11 Orderbook Walls
 
 Binance depth endpoint:
 
@@ -243,7 +269,24 @@ The engine also calculates `wall_imbalance`:
 wall_imbalance = total_bid_wall_size / total_ask_wall_size
 ```
 
-### 3.9 TA Score
+### 3.12 CVD (Cumulative Volume Delta)
+
+**Deduplication Logic:**
+- Uses 1-minute klines for precise delta calculation
+- Strict timestamp guard prevents double processing:
+  - `_last_processed_kline_ts` stores last processed timestamp
+  - Only processes klines with `timestamp > _last_processed_kline_ts`
+- Cumulative delta: `CVD += (taker_buy_volume - taker_sell_volume)`
+
+**Implementation:**
+```python
+if latest_kline_ts > self._last_processed_kline_ts:
+    minute_delta = taker_buy_volume - taker_sell_volume
+    self.cvd_cumulative += minute_delta
+    self._last_processed_kline_ts = latest_kline_ts
+```
+
+### 3.13 TA Score
 
 TA score range:
 
@@ -409,12 +452,14 @@ Wall imbalance interpretation:
 
 ### 5.1 Score Inputs
 
-The composite score consumes four inputs:
+The composite score consumes four core inputs plus auxiliary analytics data:
 
 - `ta_score` in `[-100, +100]`
 - `liq_score` in `[-50, +50]`
 - `flow_score` in `[-50, +50]`
 - `macro_score` in `[-50, +50]`
+
+Auxiliary flow sources now include Binance Futures analytics (`bruno:binance:analytics`) and on-chain context (`bruno:onchain:data`) feeding the ContextAgent / CompositeScorer pipeline.
 
 ### 5.2 Regime Detection
 
@@ -483,8 +528,8 @@ Direction:
 
 Thresholds from config:
 
-- learning: `COMPOSITE_THRESHOLD_LEARNING = 45`
-- production: `COMPOSITE_THRESHOLD_PROD = 60`
+- learning: `COMPOSITE_THRESHOLD_LEARNING = 35`
+- production: `COMPOSITE_THRESHOLD_PROD = 55`
 
 Sweep bonus:
 
@@ -496,7 +541,7 @@ applies when `sweep_confirmed = true`.
 
 ### 5.6 MTF Filter
 
-If MTF is not aligned, the TA contribution is already reduced at the TA layer. The composite layer still records `mtf_aligned` and uses it as a trade-quality flag.
+If MTF is not aligned, the TA contribution is already reduced at the TA layer. The composite layer still records `mtf_aligned` and uses it as a trade-quality flag. The TA layer now uses a graded alignment score (0.3× / 0.6× / 1.0×) instead of a binary pass/fail.
 
 ### 5.7 Position Sizing
 
@@ -600,6 +645,11 @@ If a trade is more than `0.5%` in profit, the first take-profit is hit and the s
 
 This locks in a small positive expected value and prevents turning winners into losers. After TP1, the remaining size continues toward TP2 or the adjusted stop.
 
+**Position-Specific State:**
+- Each position tracks its own `tp1_hit` and `breakeven_active` flags
+- No global state variables interfere between multiple positions
+- State is stored in the position dictionary via PositionTracker
+
 ### 6.5 Trade Cooldown
 
 Minimum cooldown:
@@ -612,14 +662,19 @@ No new signal is published before this cooldown has expired.
 
 ## 7. Execution and Portfolio Handling
 
-ExecutionAgentV3 performs:
+ExecutionAgentV4 performs:
 
-- SL / TP monitoring
 - TP1 scale-out
 - breakeven adjustment
+- ATR-based trailing stop (Chandelier Exit)
 - TP2 final exit
 - position closing
 - portfolio updates in DRY_RUN
+
+**TP1 Scale-Out Fee Model:**
+- Uses **0.01% maker fee** for limit order simulation
+- `fee_estimate = (qty_to_close * exit_price) * 0.0001`
+- Reflects institutional fee structure for passive liquidity provision
 
 PositionTracker stores the live state for:
 
@@ -631,6 +686,7 @@ PositionTracker stores the live state for:
 - `breakeven_trigger_pct`
 - `realized_pnl_eur` / `realized_pnl_pct`
 - `tp1_hit` / `breakeven_active`
+- `max_favorable_price` / `min_favorable_price`
 
 Portfolio state keys include:
 
@@ -640,7 +696,33 @@ Portfolio state keys include:
 - `peak_capital_eur`
 - `max_drawdown_eur`
 
-## 8. Redis Keys
+## 8. Backtester Realitäts-Check
+
+### 8.1 1-Minute Candle Iteration
+The backtester now iterates over **1-minute candles** instead of hourly candles for realistic simulation:
+```python
+for candle in candles_1m:
+    # Check intrabar high/low conditions
+    # Apply pessimism rule for SL/TP conflicts
+```
+
+### 8.2 Intrabar High/Low Checks
+Each candle checks both price extremes:
+- **High**: Tests for take-profit triggers
+- **Low**: Tests for stop-loss triggers
+- Enables realistic intrabar price action simulation
+
+### 8.3 Pessimismus-Regel (SL Priority)
+If both SL and TP are touched in the same candle:
+```python
+if low_price <= stop_loss and high_price >= take_profit:
+    # SL wins - assume stop-loss hit first
+    exit_price = stop_loss
+    exit_reason = "stop_loss"
+```
+This conservative approach reflects real-world execution where stop-loss orders typically execute faster than take-profit orders.
+
+## 9. Redis Keys
 
 ### Technical Analysis
 
@@ -657,6 +739,17 @@ Portfolio state keys include:
   - OI delta
   - sweep confirmation
   - liquidity score
+
+### Free-Tier Analytics / On-Chain
+
+- `bruno:binance:analytics`
+- `bruno:onchain:data`
+- `bruno:cvd:BTCUSDT`
+
+### Execution / Positions
+
+- `bruno:position:BTCUSDT`
+- `bruno:risk:daily_block`
 
 ### Quant / Decisions
 
@@ -682,7 +775,7 @@ Portfolio state keys include:
 - `bruno:phantom_trades:pending`
 - `market_candles` scan for MAE/MFE evaluation
 
-## 9. Configuration Keys
+## 10. Configuration Keys
 
 ```json
 {
@@ -705,7 +798,7 @@ Portfolio state keys include:
 
 If all four `COMPOSITE_W_*` keys are present, config override can replace the default presets. Otherwise the regime defaults apply.
 
-## 10. Post-Trade Analysis with Deepseek API
+## 11. Post-Trade Analysis with Deepseek API
 
 The LLM is no longer part of live trade execution but is used exclusively for post-trade analysis.
 
@@ -725,7 +818,7 @@ The LLM is no longer part of live trade execution but is used exclusively for po
 
 This is preserved for research, diagnostics, and continuous strategy improvement.
 
-## 11. Migration Notes
+## 12. Migration Notes
 
 ### Replaced
 
@@ -754,15 +847,19 @@ This is preserved for research, diagnostics, and continuous strategy improvement
 - Legacy LLM debrief tables remain available
 - Deepseek API replaces Ollama for post-trade analysis only
 
-## 12. Summary
+## 13. Summary
 
-Bruno v2 is a deterministic, regime-adaptive trading system. The primary trade decision is based on the combination of technical structure, liquidity pressure, and macro flow, with strict risk controls and **Deepseek Reasoning API** for post-trade debriefing and learning.
+Bruno v2.2 is a deterministic, regime-adaptive trading system with institutional-grade mathematical precision. The primary trade decision is based on the combination of technical structure, liquidity pressure, and macro flow, with strict risk controls and **Deepseek Reasoning API** for post-trade debriefing and learning.
 
-**Key Features:**
+**V2.2 Key Features:**
 - **Live Trading:** 100% deterministic without LLM interference
 - **Post-Trade Analysis:** Professional Deepseek API integration
 - **Risk Management:** 6 hard vetos with circuit breakers
 - **Learning System:** Cloud-based intelligence for continuous improvement
 - **Performance:** Sub-2s response times for trade analysis
+- **Institutional Math:** VWAP daily reset, CVD deduplication, true VPOC
+- **Backtester:** 1-minute candles with intrabar pessimism rule
+- **Execution:** Position-specific state, TP1 maker fee (0.01%), multi-level exits
+- **Purge Complete:** No Max Pain or Google Trends references in system
 
-This document is the canonical reference for trading logic in v2.
+This document is the canonical reference for trading logic in v2.2.

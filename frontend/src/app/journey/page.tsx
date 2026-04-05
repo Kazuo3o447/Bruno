@@ -21,6 +21,72 @@ import {
 
 const SECTIONS = [
   {
+    id: "control",
+    title: "Transparenz & Kontrolle",
+    icon: Shield,
+    render: () => (
+      <div className="space-y-6">
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-[0.28em] text-indigo-400 font-bold">Leitbild</p>
+          <h2 className="text-3xl font-bold text-white">Bruno soll jederzeit erklärbar, prüfbar und kontrollierbar sein.</h2>
+          <p className="text-slate-300 leading-relaxed max-w-3xl">
+            Diese Seite ist kein Marketing-Text, sondern die Bedienungsanleitung der Plattform. Du siehst hier,
+            <strong className="text-white"> welche Daten genutzt werden</strong>, <strong className="text-white">wie Entscheidungen entstehen</strong>,
+            <strong className="text-white"> welche Schutzmechanismen greifen</strong> und <strong className="text-white">wo du das System anpassen kannst</strong>.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="p-4 rounded-2xl border border-[#1a1a2e] bg-[#080810]">
+            <div className="text-xs uppercase tracking-[0.24em] text-slate-500 mb-2">Beobachten</div>
+            <div className="text-lg font-semibold text-white mb-2">Was ist gerade los?</div>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              Dashboard und Monitor zeigen API-Status, Agenten, offene Trades, Marktdaten und den aktuellen Zustand der Kaskade in Echtzeit.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl border border-[#1a1a2e] bg-[#080810]">
+            <div className="text-xs uppercase tracking-[0.24em] text-slate-500 mb-2">Verstehen</div>
+            <div className="text-lg font-semibold text-white mb-2">Warum hat Bruno so entschieden?</div>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              Trading und Reports erklären jede Kaskade: frische Daten, GRSS, Quant, Risk-Vetos, Positionsregeln und den finalen Signal- oder Hold-Zweig.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl border border-[#1a1a2e] bg-[#080810]">
+            <div className="text-xs uppercase tracking-[0.24em] text-slate-500 mb-2">Kontrollieren</div>
+            <div className="text-lg font-semibold text-white mb-2">Was kann ich beeinflussen?</div>
+            <p className="text-sm text-slate-400 leading-relaxed">
+              Einstellungen enthalten Presets, Schwellen, Risikogrenzen, Deepseek-Test und Betriebsmodi – damit du die Plattform bewusst steuern kannst.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { label: "Agenten", value: "6", hint: "Spezialisierte Module" },
+            { label: "Entscheidungsgates", value: "6", hint: "Jeder Schritt sichtbar" },
+            { label: "Speicher", value: "DB + Redis", hint: "Kurzfristig + dauerhaft" },
+            { label: "Mode", value: "Paper Only", hint: "Keine Live-Orders" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-xl border border-[#1a1a2e] bg-[#0c0c18] p-4">
+              <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{item.label}</div>
+              <div className="text-xl font-bold text-white mt-1">{item.value}</div>
+              <div className="text-xs text-slate-500 mt-1">{item.hint}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 rounded-2xl border border-indigo-800 bg-indigo-950/15">
+          <div className="text-xs uppercase tracking-[0.24em] text-indigo-400 mb-3">Transparenter Datenfluss</div>
+          <pre className="text-xs text-slate-300 overflow-x-auto leading-6">{`Datenquellen → Context/GRSS → Technical/Quant → Risk Vetos → Portfolio Guard → Execution → Reports/Deepseek
+
+Jede Stufe schreibt nachvollziehbare Zustände in Redis/DB und wird im UI sichtbar gemacht.`}</pre>
+        </div>
+      </div>
+    )
+  },
+  {
     id: "overview",
     title: "Übersicht",
     icon: BookOpen,
@@ -496,7 +562,7 @@ Gate 6: Portfolio Limits
 ];
 
 export default function JourneyPage() {
-  const [activeSection, setActiveSection] = useState("overview");
+  const [activeSection, setActiveSection] = useState("control");
 
   const activeContent = SECTIONS.find(s => s.id === activeSection);
 
@@ -559,15 +625,48 @@ export default function JourneyPage() {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex-1 overflow-y-auto p-6 lg:p-8">
           {activeContent && (
-            <div className="max-w-4xl">
-              <div className="flex items-center gap-3 mb-6">
-                <activeContent.icon className="w-8 h-8 text-indigo-400" />
-                <h1 className="text-3xl font-bold">{activeContent.title}</h1>
+            <div className="max-w-5xl space-y-6">
+              <div className="rounded-3xl border border-[#1a1a2e] bg-gradient-to-br from-indigo-950/30 via-[#0c0c18] to-[#080810] p-6 lg:p-8 shadow-2xl shadow-black/20">
+                <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+                  <div className="space-y-3 max-w-3xl">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.28em] text-slate-500 font-bold">
+                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                      Journey · Bruno verstehen
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <activeContent.icon className="w-9 h-9 text-indigo-400" />
+                      <h1 className="text-3xl lg:text-4xl font-bold">{activeContent.title}</h1>
+                    </div>
+                    <p className="text-slate-300 leading-relaxed max-w-3xl">
+                      Dieser Bereich erklärt die Plattform so, dass du Entscheidungen, Risiken, Datenflüsse und Kontrollpunkte wirklich nachvollziehen kannst.
+                      Fokus: maximale Transparenz, klare Kontrolle und eine saubere Trennung zwischen Live-Entscheidung und Lernen.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 min-w-[260px]">
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Status</div>
+                      <div className="mt-1 text-sm font-semibold text-white">Operative Dokumentation</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Modus</div>
+                      <div className="mt-1 text-sm font-semibold text-amber-400">Paper Only</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Kern</div>
+                      <div className="mt-1 text-sm font-semibold text-emerald-400">6 Agenten · 6 Gates</div>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                      <div className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Ziel</div>
+                      <div className="mt-1 text-sm font-semibold text-indigo-400">Warum jede Entscheidung?</div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-6">
+              <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-2xl p-6 lg:p-7">
                 {activeContent.render()}
               </div>
 

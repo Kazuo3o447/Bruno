@@ -36,13 +36,15 @@ class CompositeSignal:
     price: float = 0.0
     mtf_aligned: bool = False         # NEU: aus TA-Snapshot
     sweep_confirmed: bool = False     # NEU: aus Liq-Intelligence
+    diagnostics: dict = field(default_factory=dict)  # NEU: Decision Diagnostics
     
     def to_signal_dict(self, symbol: str = "BTCUSDT") -> dict:
         """Signal-Dict kompatibel mit ExecutionAgentV3."""
         return {
             "symbol": symbol,
             "side": "buy" if self.direction == "long" else "sell",
-            "amount": 0.001,
+            "amount": 0.0,  # ExecutionAgent berechnet die echte Positionsgröße
+            "position_size_hint_pct": self.position_size_pct,  # Hint für Execution
             "price": self.price,
             "composite_score": self.composite_score,
             "conviction": self.conviction,
@@ -117,7 +119,8 @@ class CompositeScorer:
         # 2. Einzelscores
         ta_score = self._score_ta(ta_data)
         liq_score = self._score_liq(liq_data)
-        flow_score = self._score_flow(flow_data, macro_data)
+        analytics_data = await self.redis.get_cache("bruno:binance:analytics") or {}
+        flow_score = await self._score_flow(flow_data, macro_data, analytics_data)
         macro_score = self._score_macro(macro_data)
         
         result.ta_score = ta_score
@@ -181,6 +184,23 @@ class CompositeScorer:
         
         # 9. Signale sammeln
         result.signals_active += self._collect_signals(ta_data, liq_data, flow_data, macro_data)
+        
+        # 10. Diagnostik-Block (immer loggen, nicht nur bei should_trade)
+        result.diagnostics = {
+            "grss_raw": float(macro_data.get("GRSS_Score_Raw", 0)),
+            "grss_ema": float(macro_data.get("GRSS_Score", 0)),
+            "veto_active": bool(macro_data.get("Veto_Active", True)),
+            "ta_score_pre_mtf": float(ta_data.get("ta_score", {}).get("score", 0)) if ta_data.get("ta_score") else 0,
+            "ta_score_post_mtf": result.ta_score,
+            "mtf_aligned": result.mtf_aligned,
+            "mtf_alignment_score": float(ta_data.get("mtf", {}).get("alignment_score", 0)),
+            "effective_threshold": effective_threshold,
+            "abs_score": abs_score,
+            "gap_to_threshold": round(effective_threshold - abs_score, 1),
+            "regime": regime,
+            "weights_used": weights,
+            "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
+        }
         
         return result
 
@@ -265,7 +285,8 @@ class CompositeScorer:
         
         return round(min(2.0, base_risk * score_mult * vol_mult * session_mult), 2)
 
-    def _score_flow(self, flow_data: dict, macro_data: dict) -> float:
+    async def _score_flow(self, flow_data: dict, macro_data: dict, 
+                        analytics_data: dict = None) -> float:
         """
         Orderflow-Score mit Funding-Rate Integration.
         Range: -50 bis +50
@@ -273,14 +294,41 @@ class CompositeScorer:
         score = 0.0
         
         # OFI (±20)
-        ofi = float(flow_data.get("OFI_Buy_Pressure", 0.5))
-        if ofi > 0.65: score += 20 * min(1.0, (ofi - 0.5) * 4)
-        elif ofi < 0.35: score -= 20 * min(1.0, (0.5 - ofi) * 4)
+        ofi_raw = flow_data.get("OFI_Buy_Pressure")
+        if ofi_raw is not None:
+            ofi = float(ofi_raw)
+            if ofi > 0.65: score += 20 * min(1.0, (ofi - 0.5) * 4)
+            elif ofi < 0.35: score -= 20 * min(1.0, (0.5 - ofi) * 4)
         
         # CVD Direction (±10)
-        cvd = float(flow_data.get("CVD", 0.0))
-        if cvd > 100: score += 10
-        elif cvd < -100: score -= 10
+        cvd_raw = flow_data.get("CVD")
+        if cvd_raw is not None:
+            cvd = float(cvd_raw)
+            if cvd > 100: score += 10
+            elif cvd < -100: score -= 10
+        
+        # Taker Buy/Sell Ratio (±10)
+        analytics_data = analytics_data or {}
+        taker_ratio_raw = analytics_data.get("taker_buy_sell_ratio")
+        if taker_ratio_raw is not None:
+            taker_ratio = float(taker_ratio_raw)
+            if taker_ratio > 1.3:  # Starker Kaufdruck
+                score += 10
+            elif taker_ratio > 1.1:
+                score += 5
+            elif taker_ratio < 0.7:  # Starker Verkaufsdruck
+                score -= 10
+            elif taker_ratio < 0.9:
+                score -= 5
+        
+        # Top Trader Contrarian Signal (±8)
+        top_ls_raw = analytics_data.get("top_trader_ls_ratio")
+        if top_ls_raw is not None:
+            top_ls = float(top_ls_raw)
+            if top_ls > 2.0:  # Top Trader extrem Long → contrarian bearish
+                score -= 8
+            elif top_ls < 0.5:  # Top Trader extrem Short → contrarian bullish
+                score += 8
         
         # Funding Rate: nicht als harter Additiv-Block, sondern als Multiplikator
         funding = float(macro_data.get("Funding_Rate", 0.0))
@@ -293,9 +341,11 @@ class CompositeScorer:
         funding_multiplier = max(0.75, min(1.20, funding_multiplier))
 
         # OFI Imbalance (±5)
-        imbalance = float(flow_data.get("OFI_Mean_Imbalance", 1.0))
-        if imbalance > 1.15: score += 5
-        elif imbalance < 0.85: score -= 5
+        imbalance_raw = flow_data.get("OFI_Mean_Imbalance")
+        if imbalance_raw is not None:
+            imbalance = float(imbalance_raw)
+            if imbalance > 1.15: score += 5
+            elif imbalance < 0.85: score -= 5
 
         score = score * funding_multiplier
         return round(max(-50, min(50, score)), 1)
@@ -418,6 +468,18 @@ class CompositeScorer:
             signals.append("Low GRSS (Bearish)")
         
         return signals[:5]  # Max 5 Signale
+
+    def _get_block_reason(self, result, threshold, macro_data) -> str:
+        """Gibt den primären Grund zurück warum NICHT getradet wird."""
+        if macro_data.get("Veto_Active"):
+            return f"GRSS_VETO (GRSS={macro_data.get('GRSS_Score', 0):.1f} < threshold)"
+        if abs(result.composite_score) < threshold:
+            gap = threshold - abs(result.composite_score)
+            biggest_drag = "ta" if abs(result.ta_score) < 20 else "liq" if abs(result.liq_score) < 5 else "flow"
+            return f"SCORE_TOO_LOW (Score={result.composite_score:+.1f}, Gap={gap:.1f}, weakest={biggest_drag})"
+        if not result.mtf_aligned:
+            return "MTF_NOT_ALIGNED"
+        return "NONE"
 
     async def get_health_status(self) -> dict:
         """Health-Check für den Composite Scorer."""

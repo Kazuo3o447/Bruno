@@ -35,7 +35,6 @@ async def get_live_telemetry():
             "ETF_Flows_Farside",
             "CryptoCompare_News",
             "CryptoCompare_Market",
-            "CoinMarketCap_Content",
             "CoinMarketCap_BTC",
             "CoinMarketCap_Global",
         ]

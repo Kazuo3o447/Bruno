@@ -1,6 +1,6 @@
 # Architektur-Manifest
 
-> **Referenz: WINDSURF_MANIFEST.md v2.0**
+> **Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
 
@@ -147,6 +147,13 @@ bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
 market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]  # 300 Ticks
 ```
 
+### Free-Tier Macro / Flow Extensions
+
+- `bruno:binance:analytics` — Top Trader Long/Short, Taker Buy/Sell, Global Long/Short Ratio
+- `bruno:onchain:data` — Blockchain.com Hash Rate / Mempool + Glassnode Exchange Balance (wenn Key vorhanden)
+- `bruno:cvd:BTCUSDT` — aggTrades-basierter CVD-State mit `last_trade_id`
+- Refresh: Binance Analytics 5m, On-Chain 6h, CVD kontinuierlich im Quant-Agent
+
 ---
 
 ## Börsen-Architektur (Manifest v2.1)
@@ -156,7 +163,7 @@ Binance WS/REST  ──► IngestionAgent + ContextAgent ──► Redis
                                                            │
                                                       alle Agenten
                                                            │
-Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
+Bybit REST  ◄── ExecutionAgentV4 ◄── RiskAgent (RAM-Veto) ◄─┘
                         │
                         └──► PositionTracker (Redis Live-State + DB Audit)
 ```
@@ -166,6 +173,7 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 | **Binance** | Daten & Analyse | WebSocket (5 Streams), REST (OI, Funding, Perp-Basis) |
 | **Bybit** | **Execution** | Unified Account Futures (max 1.0× Leverage) |
 | **Deribit** | Options-Daten | Put/Call Ratio, DVOL (kostenlos, kein Key) |
+| **Free-Tier Analytics** | Context + Flow | Binance Analytics (Top Trader / Taker Ratios) + On-Chain (Blockchain.com / Glassnode Free) |
 
 **Bybit Order-Format:**
 ```python
@@ -198,9 +206,9 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 |---------|-------|-------------|
 | **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls | QuantAgent |
 | **LiquidityEngine** | OI-Delta, Sweep Detection, Entry Confirmation | QuantAgent |
-| **CompositeScorer** | Dynamic Weighting, Regime Detection | QuantAgent |
-| **TradeDebriefV2** | Post-Trade Debrief mit Deepseek Reasoning API | ExecutionAgentV3 |
-| **PositionTracker / PositionMonitor** | MAE/MFE, TP1-Scale-Out, Breakeven, SL/TP2 Runtime | ExecutionAgentV3 |
+| **CompositeScorer** | Dynamic Weighting, Regime Detection, Binance Analytics Flow Hooks | QuantAgent |
+| **TradeDebriefV2** | Post-Trade Debrief mit Deepseek Reasoning API | ExecutionAgentV4 |
+| **PositionTracker / PositionMonitor** | MAE/MFE, TP1-Scale-Out, Breakeven, ATR Trailing, SL/TP2 Runtime | ExecutionAgentV4 |
 
 ---
 
@@ -211,7 +219,7 @@ Bybit REST  ◄── ExecutionAgentV3 ◄── RiskAgent (RAM-Veto) ◄─┘
 - **AuthenticatedExchangeClient** (Execution): Nur Bybit API-Keys
 
 ### DRY_RUN Protection
-- Hardware-naher Block in ExecutionAgentV3
+- Hardware-naher Block in ExecutionAgentV4
 - Bei `DRY_RUN=True`: Keine echten Orders möglich
 - Shadow-Trading mit Fee-Simulation (0.04% Taker, plus Slippage-Logging)
 
@@ -288,15 +296,22 @@ ADD COLUMN layer3_output JSONB;
 - [x] Telegram Notifications
 - [x] Erweiterte Daten-Quellen (Funding Rates, Liquidations)
 
-### Phase v2 — Prompt Kaskade (April 2026) ✅ COMPLETED
-- [x] **TechnicalAnalysisEngine**: MTF-Alignment, Wick Detection, Session Awareness
-- [x] **LiquidityEngine**: OI-Delta, Sweep Detection, Entry Confirmation
-- [x] **CompositeScorer**: Dynamic Weighting, Regime Detection
-- [x] **QuantAgentV4**: Service Integration, Daily Limits, Trade Cooldowns
-- [x] **RiskAgentV2**: Enhanced Risk Management, Breakeven Stops
-- [x] **ExecutionAgentV3**: Breakeven Stop Logic, Position Management
-- [x] **Configuration**: v2 Parameters, Dynamic Thresholds
-- [x] **Documentation**: Complete v2 Architecture Documentation
+### Phase v2.2 — Institutionelle Mathematik & Complete Purge (April 2026) ✅ COMPLETED
+- [x] Phase 1 ✅ COMPLETED — Execution & State-Bugs (global state fix, TP1 price trigger)
+- [x] Phase 2 ✅ COMPLETED — Mathematische Kernlogik (VWAP Tages-Reset, CVD Deduplizierung, VPOC)
+- [x] Phase 3 ✅ COMPLETED — Backtester Realitäts-Check (1m-Kerzen, Intrabar High/Low)
+- [x] Phase 4 ✅ COMPLETED — The True Purge (Max Pain & Google Trends eliminieren)
+- [x] Phase 5 ✅ COMPLETED — Full-Stack Synchronisation (regime_config.py, UI Multi-Level-Exit)
+- [x] **TechnicalAnalysisEngine**: MTF-Alignment, Wick Detection, Session Awareness, VWAP Daily Reset, VPOC
+- [x] **LiquidityEngine**: OI-Delta, Sweep Detection, Entry Confirmation, CVD Deduplication
+- [x] **CompositeScorer**: Dynamic Weighting, Regime Detection, None-Safe Flow Scoring
+- [x] **QuantAgentV4**: Service Integration, Daily Limits, Trade Cooldowns, Timestamp Guard
+- [x] **RiskAgentV2**: Enhanced Risk Management, Breakeven Stops, Missing Data Veto
+- [x] **ExecutionAgentV4**: Breakeven Stop Logic, Position Management, TP1/TP2 Scaling (0.01% Maker), ATR Trailing, Position-Specific State
+- [x] **BacktesterV2**: 1-Minute Candles, Intrabar High/Low, Pessimism Rule
+- [x] **Configuration**: v2.2 Parameters, Dynamic Thresholds, Multi-Level Exit
+- [x] **Documentation**: Complete v2.2 Architecture Documentation
+- [x] **Purge**: No Max Pain or Google Trends references in system
 
 ### Phase v2.1 — Ollama Entfernung & Binance API Integration (April 2026) ✅ COMPLETED
 - [x] **Ollama komplett entfernt**: Keine lokalen LLMs mehr im System

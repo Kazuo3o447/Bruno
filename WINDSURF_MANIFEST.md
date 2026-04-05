@@ -7,21 +7,25 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-06 (Bruno v2.2 Frontend Neuaufbau - 7 Seiten)
+> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2 Institutionelle Mathematik & Complete Purge)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
 ---
 
 ## STATUS UPDATE (April 2026)
 
-### ✅ BRUNO v2 — Deterministic Composite Scoring
+### ✅ BRUNO v2.2 — Institutionelle Mathematik & Complete Purge
 - **LLM-Cascade entfernt** — 3-Layer LLM durch deterministischen Composite Scorer ersetzt
-- **Technical Analysis Engine** — EMA, RSI, VWAP, ATR, S/R, MTF-Alignment, Wick-Detection
-- **Liquidity Intelligence** — Cluster-Magneten, 3×-Sweep-Konfirmation (Spike+Wick+OI-Drop)
+- **Technical Analysis Engine** — EMA, RSI, VWAP (Tages-Reset), ATR, S/R, MTF-Alignment, Wick-Detection, VPOC
+- **Liquidity Intelligence** — Cluster-Magneten, 3×-Sweep-Konfirmation (Spike+Wick+OI-Drop), CVD (Dedupliziert)
 - **Orderbuch-Walls** — depth=1000 als Live-Liquiditätsradar
+- **Free-Tier Analytics** — Binance Top Trader / Taker Ratios + Blockchain.com / Glassnode On-Chain Daten
 - **Regime-adaptive Gewichtung** — Trending: TA 50%, Ranging: Liq 40%
 - **Risk: Daily Drawdown Limit** — 3% Tagesverlust oder 3 Fehltrades → 24h Pause
-- **Breakeven-Stop** — SL auf Entry wenn Trade > 0.5% im Plus
+- **Execution V2.2** — TP1 Maker Fee (0.01%), Position-Specific State, Global State Bug Fix
+- **Backtester V2.2** — 1-Minuten-Kerzen, Intrabar Pessimismus-Regel
+- **Complete Purge** — Keine Max Pain oder Google Trends Referenzen im System
+- **Breakeven- & Trailing-Stop** — TP1/TP2 Scaling-Out, Breakeven und ATR Trailing Stop
 - **60s Zykluszeit** — kein LLM-Overhead mehr
 - **Post-Trade Deepseek Analysis** — Professionelle Reasoning API nach jedem Trade → DB für Lernloop
 - **Binance API Integration v2.1** — Ollama entfernt, BinanceDataClient + MarketDataCollector
@@ -206,9 +210,9 @@ Jede Datenquelle hat eine Priorität (P1 = sofort, P2 = Phase B, P3 = Phase C):
 | `btcusdt@forceOrder` WS | Liquidations Real-time | P1 | ✅ implementiert |
 | `btcusdt@markPrice@1s` WS | Funding Rate, Mark Price | P1 | ✅ implementiert |
 | `btcdomusdt@kline_1m` WS | BTC Dominanz | P1 | ✅ implementiert |
-| Binance REST `/fapi/v1/openInterest` | Open Interest aktuell | P1 | ❌ fehlt |
+| Binance REST `/fapi/v1/openInterest` | Open Interest aktuell | P1 | ✅ implementiert |
 | Binance REST `/fapi/v1/openInterestHist` | OI History → OI-Delta berechnen | P1 | ❌ fehlt |
-| Binance REST `/fapi/v1/globalLongShortAccountRatio` | Long/Short Ratio | P1 | ❌ fehlt |
+| Binance REST `/fapi/v1/globalLongShortAccountRatio` | Long/Short Ratio | P1 | ✅ implementiert |
 | Binance Spot REST `/api/v3/ticker/price?symbol=BTCUSDT` | Spot-Preis für Perp-Basis | P1 | ❌ fehlt |
 | Binance REST `/fapi/v1/ticker/price?symbol=BTCUSDT` | Futures-Preis für Perp-Basis | P1 | ❌ fehlt |
 
@@ -244,7 +248,7 @@ pcr = puts_oi / calls_oi
 
 **Paradigma-Wechsel:** Event-gesteuert → Zeitbasiert
 
-Der QuantAgent evaluiert JEDEN 300s-Zyklus — unabhängig vom OFI-Wert.
+Der QuantAgent evaluiert JEDEN 60s-Zyklus — unabhängig vom OFI-Wert.
 OFI ist Input für den LLM, nicht Trigger für die Evaluation.
 
 **Pre-Gate (QuantAgent):**
@@ -253,7 +257,7 @@ OFI ist Input für den LLM, nicht Trigger für die Evaluation.
 - Alles andere → LLM Cascade läuft
 
 **GRSS-Gate (innerhalb LLM Cascade, unverändert):**
-- GRSS < effective_threshold (regime-spezifisch, 45–60) → CASCADE_GRSS_HOLD
+- GRSS < effective_threshold (regime-spezifisch, 35–55) → CASCADE_GRSS_HOLD
 - Dieser Gate ist korrekt und bleibt erhalten
 
 **OFI-Metrik (neu):**
@@ -265,12 +269,12 @@ OFI ist Input für den LLM, nicht Trigger für die Evaluation.
 **Decision Feed:**
 - Redis Key: `bruno:decisions:feed` (LPUSH, LTRIM 144)
 - API: GET /api/v1/decisions/feed (bestehender Router, unverändert)
-- Einträge: alle 300s, format-kompatibel mit bestehendem Frontend Interface
+- Einträge: alle 60s plus event-driven Sweep-Rescoring, format-kompatibel mit bestehendem Frontend Interface
 
 **Fixierte Bugs:**
 - `grss_score` Key: war "score" → jetzt korrekt "GRSS_Score"
 - `grss_components`: war leeres {} → jetzt volles GRSS-Payload
-- `fresh_source_count == 0` → war return 0.0 → jetzt Penalty -20 (Minimum 10)
+- `fresh_source_count == 0` → war return 0.0 → jetzt Penalty -20 (Minimum 25)
 
 #### BEZAHLT — CoinGlass API (Hobbyist: $29/Monat — optional / später)
 | Endpoint | Signal | Priorität |
@@ -289,6 +293,16 @@ divergence = abs(binance_funding - bybit_funding)
 ```
 
 **Hinweis:** Cross-Exchange Funding Divergenz wird jetzt kostenlos über Bybit + OKX Public APIs berechnet und benötigt keinen CoinGlass-Key mehr.
+
+#### KOSTENLOS — Binance Futures Analytics + On-Chain (neu)
+| Quelle | Signal | Priorität | Status |
+|--------|--------|-----------|--------|
+| Binance Futures `/futures/data/topLongShortPositionRatio` | Top Trader Long/Short Ratio | P1 | ✅ implementiert |
+| Binance Futures `/futures/data/takerlongshortRatio` | Taker Buy/Sell Ratio | P1 | ✅ implementiert |
+| Binance Futures `/futures/data/globalLongShortAccountRatio` | Global Long/Short Ratio | P1 | ✅ implementiert |
+| Blockchain.com Charts | Hash Rate, Mempool Size | P2 | ✅ implementiert |
+| Glassnode Free Tier | Exchange Balance BTC | P3 | ✅ optional / wenn Key vorhanden |
+| Binance aggTrades `/fapi/v1/aggTrades` | CVD ohne Double-Counting | P1 | ✅ implementiert |
 
 #### KOSTENLOS — Bestehende Quellen (bereits geplant/implementiert)
 | Quelle | Signal | Status |
@@ -322,41 +336,57 @@ def calculate_grss(data: dict) -> float:
 
     # === 1. DERIVATIVES LAYER (40% Gewicht) ===
     # Funding Rate (Binance)
-    if -0.01 <= data['funding_rate'] <= 0.03: score += 10.0
-    elif data['funding_rate'] > 0.05: score -= 15.0
+    if -0.01 <= data['funding_rate'] <= 0.03: score += 12.0
+    elif data['funding_rate'] > 0.05: score -= 12.0
     
     # OI-Delta + Preis-Richtung
-    if data['oi_delta_pct'] > 0 and data['price_change_1h'] > 0: score += 10.0
+    if data['oi_delta_pct'] > 0 and data['btc_change_1h'] > 0: score += 8.0
     # Put/Call Ratio
     if data['put_call_ratio'] < 0.45: score += 10.0
     elif data['put_call_ratio'] > 0.85: score -= 10.0
 
     # === 2. INSTITUTIONAL LAYER (20% Gewicht) ===
     # ETF Flows (Farside Investors)
-    if data['etf_flow_3d_m'] > 300: score += 10.0
-    elif data['etf_flow_3d_m'] < -300: score -= 15.0
+    if data['etf_flow_3d_m'] > 500: score += 12.0
+    elif data['etf_flow_3d_m'] < -500: score -= 12.0
     # OI-Trend 7d
-    if data['oi_7d_change_pct'] > 5: score += 5.0
+    if data['oi_7d_change_pct'] > 5: score += 7.0
     # Stablecoin Delta
-    if data['stablecoin_delta_bn'] > 1.0: score += 5.0
+    if data['stablecoin_delta_bn'] > 2.0: score += 8.0
 
     # === 3. SENTIMENT LAYER (20% Gewicht) ===
     score += ((data['fear_greed'] - 50) / 50) * 10.0
-    score += data['llm_news_sentiment'] * 10.0
+    score += data['llm_news_sentiment'] * 8.0
 
     # === 4. MAKRO LAYER (20% Gewicht) — RELAXED ===
-    if data['vix'] < 15: score += 5.0
-    elif data['vix'] > 30: score -= 10.0  # Kein Veto mehr bei 25!
-    if data['ndx_status'] == 'BULLISH': score += 5.0
+    if data['vix'] < 15: score += 8.0
+    elif data['vix'] < 20: score += 4.0
+    elif data['vix'] < 35: score -= 7.0
+    elif data['vix'] < 45: score -= 14.0
+    if data['ndx_status'] == 'BULLISH': score += 8.0
+    elif data['ndx_status'] == 'BEARISH': score -= 10.0
 
     # === 5. PATTERN BONUS (Additive) ===
     score += data.get('pattern_score', 0)
 
+    # === 6. ON-CHAIN TIER (neue freie Datenquellen) ===
+    onchain = data.get('onchain', {})
+    if onchain:
+        if onchain.get('hash_rate_7d_change_pct', 0) > 5:
+            score += 3.0
+        elif onchain.get('hash_rate_7d_change_pct', 0) < -10:
+            score -= 3.0
+        if onchain.get('exchange_outflow'):
+            score += 4.0
+        elif onchain.get('exchange_balance_change_btc', 0) > 5000:
+            score -= 4.0
+
     # === HARD VETOES (Nur Extreme) ===
-    if data['vix'] > 45: return 5.0
-    if data['news_silence_seconds'] > 3600: return 0.0
+    if data['vix'] > 45: return 10.0
+    if data['news_silence_seconds'] > 7200: score -= 15.0
+    elif data['news_silence_seconds'] > 3600: score -= 8.0
     
-    return max(0.0, min(100.0, score))
+    return max(25.0, min(100.0, score))
 ```
 
 **VOLATILITY-ADAPTIVE SIZING (RiskAgent):**
@@ -684,7 +714,7 @@ Woche: +$127.80           Daily Loss Limit: -$XX (XX% verbleibend)
 | **CoinGlass API** | Funding, OI, ETF Flows, Liq Maps | $29/Monat (Hobbyist) | P1 | `COINGLASS_API_KEY` |
 | **Telegram Bot Token** | Notifications | Kostenlos | P2 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
 
-**Keine weiteren kostenpflichtigen APIs nötig.** Deribit, Binance REST (für OI, L/S-Ratio, Basis) und Yahoo Finance sind kostenlos zugänglich.
+**Keine weiteren kostenpflichtigen APIs nötig.** Deribit, Binance REST (für OI, L/S-Ratio, Basis), Binance Futures Analytics und die On-Chain Quellen sind kostenlos zugänglich.
 
 ---
 
@@ -787,7 +817,7 @@ Ziel erreicht: Der Bot ist ehrlich. Kein Trade auf Basis von Zufallsdaten.
 4. Debrief-Analyse im MLOps-Dashboard ist noch offen
 
 **PHASE G.0 — Learning Mode (DRY_RUN only) ✅ COMPLETED (2026-04-03)**
-1. DRY_RUN-aware GRSS-Threshold (25 statt 40 im Learning Mode)
+1. DRY_RUN-aware GRSS-Veto-Threshold (30 statt 40 im Learning Mode)
 2. DRY_RUN-aware LLM Confidence-Schwellen (0.50/0.55 statt 0.60/0.65)
 3. `trade_mode` Flag in `trade_audit_logs` und `trade_debriefs`
 4. Phantom Trade System für HOLD-Zyklen (240min Outcome-Tracking)
@@ -841,11 +871,11 @@ Ziel erreicht: Mehr Paper-Trades/Tag + deutlich mehr Trainingsdaten, ohne Produk
 ### ✅ PHASE v2.2 - Trade-Cascade Runtime Upgrade (2026-04-04)
 - **Event-Driven Liquidation Trigger**: Force-Order-Spikes triggern sofortiges Quant-Rescoring via Redis Pub/Sub
 - **Sweep Detection erweitert**: Liquidation-Events fließen direkt in die LiquidityEngine ein
-- **TP1/TP2 Scaling-Out**: ExecutionAgentV3 und PositionTracker unterstützen Teilverkauf + Final Exit
-- **Breakeven-Logik**: Nach TP1 wird der Stop auf Entry/Breakeven gezogen
+- **TP1/TP2 Scaling-Out**: ExecutionAgentV4 und PositionTracker unterstützen Teilverkauf + Final Exit
+- **Breakeven + ATR Trailing**: Nach TP1 wird der Stop auf Entry+0.1% gezogen, danach Chandelier-Trailing
 - **MAE/MFE Tracking**: Positions- und Phantom-Trade-Auswertung berücksichtigen Extremwerte während der Haltedauer
 - **Deepseek Debrief**: Post-Trade Analyse bleibt Deepseek-only, inklusive Phantom-/Hold-Auswertung
-- **Position Monitor**: Hintergrundüberwachung für SL/TP2 und offene Positionen ist Teil des Runtime-Flows
+- **Position Monitor**: Hintergrundüberwachung für SL/TP1/TP2 und ATR-Trailing ist Teil des Runtime-Flows
 - **Dokumentation aktualisiert**: Phase D, trading_logic_v2.md, arch.md, README.md
 
 ---
@@ -857,7 +887,7 @@ Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
 | Entscheidung | Begründung |
 |---|---|
 | Medium-Frequency (5–15min Intervall) | Keine redundante Leitung, LLM-Latenz, Windows-Hybrid (Ryzen 7 7800X3D + RX 7900 XT) |
-| **Binance API Integration (v2.1)** | **Keine API Keys für öffentliche Daten, 30s Updates, Redis Storage mit TTLs** |
+| **Binance API Integration (v2.1)** | **Keine API Keys für öffentliche Daten, 30s Updates, Redis Storage mit TTLs, Binance Analytics + On-Chain Erweiterung** |
 | **Ollama entfernt (v2.1)** | **Keine lokalen LLMs mehr, nur Deepseek für Post-Trade Analyse** |
 | Deepseek Cloud (Post-Trade) | Professionelle Reasoning API, keine lokalen Ressourcen nötig |
 | Composite Scoring (deterministisch) | 100% reproduzierbare Entscheidungen, keine LLM-Latenz |
@@ -867,7 +897,7 @@ Diese Entscheidungen wurden bewusst getroffen und sind nicht verhandelbar:
 | TimescaleDB für Zeitreihendaten | Native Hypertable-Performance für OHLCV-Queries |
 | Redis als Kommunikationsbus | Sub-Millisekunde Pub/Sub zwischen Agenten |
 | Event-Driven Liquidation Rescoring | Force-Order-Spikes dürfen den normalen 60s-Zyklus überspringen |
-| TP1/TP2 Scaling-Out + Breakeven | Realistischere Exit-Logik, kein Single-Target-only Verhalten |
+| TP1/TP2 Scaling-Out + Breakeven + ATR Trailing | Realistischere Exit-Logik, kein Single-Target-only Verhalten |
 | MAE/MFE für Live + Phantom | Trade-Qualität wird über Extremwerte und nicht nur Endpreis beurteilt |
 | Reasoning Trail für jeden Trade | Transparenz ist Voraussetzung für Vertrauen und Lernen |
 | Learning Mode nur in DRY_RUN | Produktions-Schwellen werden niemals durch Lernmodus kontaminiert. Trennung über trade_mode Flag in DB. |

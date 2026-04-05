@@ -79,12 +79,22 @@ class PositionTracker:
         tp1_size_pct: float = 0.50,
         tp2_size_pct: float = 0.50,
         breakeven_trigger_pct: float = 0.0,
+        # NEU: Scaling-Out Felder
+        take_profit_1_pct: float = 0.012,
+        take_profit_2_pct: float = 0.025,
+        tp1_hit: bool = False,
+        max_favorable_price: float = 0.0,
+        min_favorable_price: float = 0.0,
         # Phase-C Felder — optional, werden nach LLM-Cascade befüllt
         grss_at_entry: float = 0.0,
         layer1_output: Optional[dict] = None,
         layer2_output: Optional[dict] = None,
         layer3_output: Optional[dict] = None,
         regime: str = "unknown",
+        order_type: str = "market",
+        slippage_bps: float = 0.0,
+        market_conditions: Optional[dict] = None,
+        **kwargs  # Alle zusätzlichen Felder durchreichen
     ) -> str:
         """
         Eröffnet eine neue Position.
@@ -116,23 +126,32 @@ class PositionTracker:
             "tp1_size_pct": tp1_size_pct,
             "tp2_size_pct": tp2_size_pct,
             "breakeven_trigger_pct": breakeven_trigger_pct,
+            # NEU: Scaling-Out Felder
+            "take_profit_1_pct": take_profit_1_pct,
+            "take_profit_2_pct": take_profit_2_pct,
+            "tp1_hit": tp1_hit,
+            "max_favorable_price": max_favorable_price or entry_price,
+            "min_favorable_price": min_favorable_price or entry_price,
             # LLM Context (Phase C)
             "grss_at_entry": grss_at_entry,
             "layer1_output": layer1_output or {},
             "layer2_output": layer2_output or {},
             "layer3_output": layer3_output or {},
             "regime": regime,
+            "order_type": order_type,
+            "slippage_bps": slippage_bps,
+            "market_conditions": market_conditions or {},
             # Excursion Tracking
             "mae_pct": 0.0,   # Max Adverse Excursion (negativ = schlecht)
             "mfe_pct": 0.0,   # Max Favorable Excursion (positiv = gut)
             "current_pnl_pct": 0.0,
             "realized_pnl_pct": 0.0,
             "realized_pnl_eur": 0.0,
-            "tp1_hit": False,
             "breakeven_active": False,
             # Status
             "status": "open",
             "created_at": now,
+            **kwargs  # Alle zusätzlichen Felder durchreichen
         }
 
         await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), position)
@@ -211,7 +230,7 @@ class PositionTracker:
         else:
             pnl_pct = (entry_price - exit_price) / entry_price
 
-        fee_estimate = (qty_to_close * exit_price) * 0.0004
+        fee_estimate = (qty_to_close * exit_price) * 0.0001
         realized_pnl_eur = pnl_pct * entry_price * qty_to_close - fee_estimate
 
         pos["quantity"] = round(max(0.0, remaining_quantity - qty_to_close), 8)
@@ -224,7 +243,10 @@ class PositionTracker:
         pos["tp1_hit_reason"] = reason
 
         if move_stop_to_breakeven:
-            pos["stop_loss_price"] = entry_price
+            if side == "long":
+                pos["stop_loss_price"] = round(entry_price * 1.001, 2)
+            else:
+                pos["stop_loss_price"] = round(entry_price * 0.999, 2)
 
         await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
 
@@ -261,7 +283,7 @@ class PositionTracker:
         self,
         symbol: str,
         exit_price: float,
-        reason: str,   # "stop_loss" | "take_profit" | "signal" | "manual" | "emergency"
+        reason: str,   # "stop_loss" | "take_profit" | "breakeven_stop" | "trailing_stop" | "tp1_scaling" | "manual_close" | "daily_drawdown" | "regime_change"
         exit_trade_id: Optional[str] = None,
     ) -> Optional[dict]:
         """

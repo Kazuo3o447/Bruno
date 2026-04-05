@@ -3,11 +3,13 @@
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
-> ✅ **Trading-Engine:** Deterministischer Composite Scorer mit TA + Liquidity + Macro
-> ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out, Breakeven-Stop
-> ✅ **Risk-Stack:** Daily Drawdown, MAE/MFE-Tracking, Trade-Cooldown
+> ✅ **Trading-Engine:** Deterministischer Composite Scorer mit institutioneller Mathematik (VWAP Reset, CVD Deduplizierung, VPOC)
+> ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out (0.01% Maker Fee), Breakeven-Stop
+> ✅ **Risk-Stack:** Daily Drawdown, MAE/MFE-Tracking, Trade-Cooldown, Position-Specific State
+> ✅ **Backtester:** 1-Minuten-Kerzen mit Intrabar Pessimismus-Regel
 > ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse und Phantom-Auswertung
 > ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
+> ✅ **Purge Complete:** Keine Max Pain oder Google Trends Referenzen
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -22,7 +24,7 @@
 | **Execution-Börse** | **Bybit** (Futures, max 1.0× Leverage) |
 | **Daten-Börse** | **Binance** (WebSocket + REST + API Client) |
 | **LLM-Stack** | Deepseek Reasoning API (Cloud) für Post-Trade Analyse & Learning |
-| **API Integration** | BinanceDataClient + MarketDataCollector (30s Updates) |
+| **API Integration** | BinanceDataClient + MarketDataCollector + BinanceAnalyticsService + OnChainClient |
 | **Dev-Umgebung** | Windows + Ryzen 7 7800X3D + RX 7900 XT (Cloud API Integration) |
 | **Dashboard** | Next.js 14 mit aktuellen Seiten: Dashboard, Trading, Logic, Monitor, Logs, Reports, Einstellungen/Journey |
 | **Ports** | Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/* |
@@ -47,6 +49,7 @@
 
 - **Liquidation Events:** Redis Pub/Sub triggert sofortiges Rescoring bei großen Force-Order-Spikes
 - **Position Management:** TP1 Teilverkauf, Breakeven-Stop, TP2 Final Exit
+- **Signal Sources:** Binance Futures Analytics (Top Trader / Taker Ratios) + On-Chain Daten (Blockchain.com / Glassnode Free Tier)
 - **Learning Loop:** Deepseek analysiert geschlossene Trades und Phantom-Trades mit MAE/MFE
 
 ---
@@ -360,24 +363,23 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health  # Über Next.js Prox
 
 ---
 
-## 🎯 Implementierungs-Phasen (Manifest v2.0)
+## 🎯 Implementierungs-Phasen (Manifest v2.2)
 
-**Aktuell: Phase v2.2 — Deterministic Composite Scoring & Deepseek Debrief (COMPLETED)**
-- [x] Phase A ✅ COMPLETED — Fundament & Ehrlichkeit (alle `random.uniform()` entfernt)
-- [x] Phase B ✅ COMPLETED — Daten-Erweiterung & Hardening
-- [x] Phase C ✅ COMPLETED — Legacy LLM-Kaskade (3 Layer, nur für Post-Trade-Debrief) & Bruno Pulse
-- [x] Phase D ✅ COMPLETED — Position Tracker + Stop-Loss im Worker verdrahtet
-- [x] Phase E ✅ COMPLETED — Frontend Cockpit (Bruno Pulse Dashboard Integration)
-- [x] Phase E ✅ COMPLETED — Port-Architektur & WebSocket-Optimierung
-- [ ] Phase F — Lern-System
-- [ ] Phase G — Backtest (6 Monate, PF > 1.5)
-- [ ] Phase H — Live-Start (500 EUR, -2% Daily Loss Limit)
+**Aktuell: Phase v2.2 — Institutionelle Mathematik & Complete Purge (COMPLETED)**
+- [x] Phase 1 ✅ COMPLETED — Execution & State-Bugs (global state fix, TP1 price trigger)
+- [x] Phase 2 ✅ COMPLETED — Mathematische Kernlogik (VWAP Tages-Reset, CVD Deduplizierung, VPOC)
+- [x] Phase 3 ✅ COMPLETED — Backtester Realitäts-Check (1m-Kerzen, Intrabar High/Low)
+- [x] Phase 4 ✅ COMPLETED — The True Purge (Max Pain & Google Trends eliminieren)
+- [x] Phase 5 ✅ COMPLETED — Full-Stack Synchronisation (regime_config.py, UI Multi-Level-Exit)
 
-**Neuste Implementierungen (April 2026):**
+**V2.2 Kern-Implementierungen (April 2026):**
 - ✅ **Deterministische Entscheidungslogik:** Composite Scorer ersetzt LLM-Cascade in der Trade-Entscheidung
-- ✅ **Technical Analysis Engine:** EMA, RSI, VWAP, ATR, MTF, Wick, S/R
-- ✅ **Liquidity Intelligence:** Cluster-Magneten, OI-Delta, 3× Sweep-Konfirmation
-- ✅ **Risk Stack:** Daily Drawdown, Trade-Cooldown, Breakeven-Stop
+- ✅ **Technical Analysis Engine:** EMA, RSI, VWAP (Tages-Reset), ATR, MTF, Wick, S/R, VPOC
+- ✅ **Liquidity Intelligence:** Cluster-Magneten, OI-Delta, 3× Sweep-Konfirmation, CVD (Dedupliziert)
+- ✅ **Risk Stack:** Daily Drawdown, Trade-Cooldown, Breakeven-Stop, Position-Specific State
+- ✅ **Execution:** TP1 Maker Fee (0.01%), Multi-Level-Exit, Global State Bug Fix
+- ✅ **Backtester:** 1-Minuten-Iteration, Intrabar Pessimismus-Regel
+- ✅ **Purge:** Keine Max Pain oder Google Trends Referenzen im System
 - ✅ **Decision Feed:** Deterministische Score-Ausgabe für Dashboard und Execution
 
 ---
@@ -440,4 +442,4 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health # Über Next.js Proxy
 **API-Dokumentation:** http://localhost:8000/docs  
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
-**Letztes Update:** 4. April 2026 - Dashboard v2.1 mit Logic Page, 4 Sections, GRSS Composition
+**Letztes Update:** 5. April 2026 - Bruno V2.2 mit institutioneller Mathematik und Complete Purge

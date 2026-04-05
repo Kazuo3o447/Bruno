@@ -5,6 +5,7 @@ from app.services.liquidity_engine import LiquidityEngine
 from app.services.composite_scorer import CompositeScorer
 import asyncio
 import contextlib
+import httpx
 import json
 import logging
 import time
@@ -24,6 +25,10 @@ class QuantAgentV4(PollingAgent):
         self.exm = PublicExchangeClient(redis=deps.redis)
         self._last_price: float = 0.0
         self._last_signal_time: float = 0.0  # NEU: Cooldown-Tracking
+        
+        # FIX: Strikter Timestamp-Guard für CVD Deduplizierung
+        self._last_processed_kline_ts = 0
+        self._last_trade_id: int = 0  # CVD Trade ID Tracking
         self._score_lock = asyncio.Lock()
         self._liquidation_listener_task: Optional[asyncio.Task] = None
         self._liquidation_spike_threshold_usdt: float = 500_000.0
@@ -41,15 +46,22 @@ class QuantAgentV4(PollingAgent):
         cvd_cached = await self.deps.redis.get_cache("bruno:cvd:BTCUSDT")
         if cvd_cached:
             self.cvd_cumulative = float(cvd_cached.get("value", 0.0))
-            self.logger.info(f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f}")
+            self._last_trade_id = int(cvd_cached.get("last_trade_id", 0))
+            # FIX: Lade letzten verarbeiteten Kline-Timestamp
+            self._last_processed_kline_ts = int(cvd_cached.get("last_processed_kline_ts", 0))
+            self.logger.info(f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f} | Last Trade ID: {self._last_trade_id} | Last Kline TS: {self._last_processed_kline_ts}")
         else:
             self.cvd_cumulative = 0.0
+            self._last_trade_id = 0
+            self._last_processed_kline_ts = 0
             self.logger.info("CVD State: Kein Cache — starte bei 0.0")
 
         await self.deps.redis.set_cache(
             "bruno:cvd:BTCUSDT",
             {
                 "value": self.cvd_cumulative,
+                "last_trade_id": self._last_trade_id,
+                "last_processed_kline_ts": self._last_processed_kline_ts,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             },
             ttl=86400
@@ -144,18 +156,49 @@ class QuantAgentV4(PollingAgent):
                 self._last_price = best_bid_p
                 vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
 
-                # CVD
+                # CVD - FIXED: Nutze 1m Klines mit striktem Timestamp-Guard für Deduplizierung
                 try:
-                    trades = await self.exm.binance.fetch_trades(self.symbol, limit=20)
-                    delta = sum(t["amount"] if t["side"] == "buy" else -t["amount"] for t in trades)
-                    self.cvd_cumulative += delta
-                    await self.deps.redis.set_cache(
-                        "bruno:cvd:BTCUSDT",
-                        {"value": self.cvd_cumulative, "timestamp": datetime.now(timezone.utc).isoformat()},
-                        ttl=86400,
-                    )
-                except Exception:
-                    pass
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        # Hole 1m Klines mit Taker-Buy-Volume (baseVolume)
+                        params = {"symbol": "BTCUSDT", "interval": "1m", "limit": 2}
+                        r = await client.get(
+                            "https://fapi.binance.com/fapi/v1/klines", params=params)
+                        if r.status_code == 200:
+                            klines = r.json()
+                            if len(klines) >= 2:
+                                # Letzte abgeschlossene Minute verwenden
+                                latest = klines[-2]  # -2 = letzte volle Minute
+                                kline_ts = int(latest[0])  # Timestamp in Millisekunden
+                                
+                                # FIX: Strikter Timestamp-Guard - verarbeite nur neue Klines
+                                if kline_ts > self._last_processed_kline_ts:
+                                    # Format: [time, open, high, low, close, volume, close_time, quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore]
+                                    taker_buy_volume = float(latest[9])
+                                    total_volume = float(latest[5])
+                                    taker_sell_volume = total_volume - taker_buy_volume
+                                    
+                                    # Delta = Taker Buy - Taker Sell
+                                    minute_delta = taker_buy_volume - taker_sell_volume
+                                    self.cvd_cumulative += minute_delta
+                                    
+                                    # FIX: Update last processed timestamp
+                                    self._last_processed_kline_ts = kline_ts
+                                    
+                                    await self.deps.redis.set_cache(
+                                        "bruno:cvd:BTCUSDT",
+                                        {
+                                            "value": self.cvd_cumulative, 
+                                            "last_processed_kline_ts": self._last_processed_kline_ts,
+                                            "timestamp": datetime.now(timezone.utc).isoformat()
+                                        },
+                                        ttl=86400,
+                                    )
+                                    
+                                    self.logger.debug(f"CVD Update: +{minute_delta:.2f} -> {self.cvd_cumulative:.2f} (TS: {kline_ts})")
+                                else:
+                                    self.logger.debug(f"CVD Kline bereits verarbeitet: TS {kline_ts} <= Last {self._last_processed_kline_ts}")
+                except Exception as e:
+                    self.logger.warning(f"CVD Klines Fehler: {e}")
 
                 # OFI Rolling (kopiere _fetch_ofi_rolling() 1:1 aus quant_v3.py)
                 ofi_data = await self._fetch_ofi_rolling()
@@ -191,6 +234,17 @@ class QuantAgentV4(PollingAgent):
                     f"| TA={signal.ta_score:+.1f} Liq={signal.liq_score:+.1f} "
                     f"Flow={signal.flow_score:+.1f} Macro={signal.macro_score:+.1f}"
                 )
+
+                # 5b. Diagnostik-Logging (immer, auch bei HOLD)
+                if hasattr(signal, 'diagnostics'):
+                    self.logger.info(
+                        f"DIAG: {signal.diagnostics.get('block_reason', 'NONE')} | "
+                        f"GRSS={signal.diagnostics.get('grss_ema', 0):.1f} "
+                        f"Veto={signal.diagnostics.get('veto_active')} | "
+                        f"Score={signal.composite_score:+.1f} "
+                        f"Threshold={signal.diagnostics.get('effective_threshold', 0)} "
+                        f"Gap={signal.diagnostics.get('gap_to_threshold', 0):.1f}"
+                    )
 
                 # 6. Trade-Cooldown (event-driven sweeps dürfen sofort durchlaufen)
                 if signal.should_trade:
@@ -261,7 +315,7 @@ class QuantAgentV4(PollingAgent):
         try:
             raw = await self.deps.redis.redis.lrange("market:ofi:ticks", 0, -1)
             if not raw or len(raw) < 10:
-                return {"buy_pressure_ratio": 0.5, "mean_imbalance": 1.0, "tick_count": 0}
+                return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
 
             import json as _json
             ratios = [_json.loads(t)["r"] for t in raw]
@@ -275,7 +329,7 @@ class QuantAgentV4(PollingAgent):
             }
         except Exception as e:
             self.logger.warning(f"OFI Rolling Fetch Fehler: {e}")
-            return {"buy_pressure_ratio": 0.5, "mean_imbalance": 1.0, "tick_count": 0}
+            return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
 
     async def _log_decision(self, signal) -> None:
         """

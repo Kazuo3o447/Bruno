@@ -37,6 +37,11 @@ class TechnicalAnalysisAgent(PollingAgent):
         # Cache für Orderbuch-Walls (30s TTL)
         self._ob_walls_cache = None
         self._ob_walls_cache_time = 0
+        
+        # FIX: Institutioneller VWAP Tages-Reset
+        self._last_vwap_date = None
+        self._vwap_cumulative_pv = 0.0
+        self._vwap_cumulative_volume = 0.0
 
     def get_interval(self) -> float:
         """60-Sekunden-Intervall für Technical Analysis."""
@@ -209,6 +214,148 @@ class TechnicalAnalysisAgent(PollingAgent):
             self.logger.error(f"Candle Fetch komplett fehlgeschlagen: {e}")
             return []
 
+    def _calc_volume_profile(self, candles: List[Dict]) -> dict:
+        """
+        Berechnet tägliches Volume Profile und identifiziert VPOC.
+        
+        FIX: Erstelle eine echte Volume-at-Price Matrix für den aktuellen Tag.
+        Nutze ein Dictionary, das das Volumen auf exakte Preis-Level (gerundet auf die nächste sinnvolle Tick-Size von BTC, z.B. 10er oder 50er Schritte) mappt.
+        Der VPOC ist exakt das Level mit dem höchsten Wert im Dictionary.
+        """
+        if not candles:
+            return {"vpoc": 0.0, "profile": [], "high_volume_nodes": []}
+        
+        # FIX: Exakte Tick-Size für BTC (10er Schritte für institutionelle Präzision)
+        price_min = min(c["low"] for c in candles)
+        price_max = max(c["high"] for c in candles)
+        tick_size = 10.0  # BTC Tick-Size: $10 Increments
+        
+        # FIX: Echte Volume-at-Price Matrix
+        volume_at_price = {}
+        
+        for candle in candles:
+            high_price = candle["high"]
+            low_price = candle["low"]
+            volume = candle["volume"]
+            
+            # Bestimme die Preis-Range dieser Kerze
+            price_range = high_price - low_price
+            if price_range == 0:
+                # Alle Volumen auf exakten Preis
+                bucket_price = round(low_price / tick_size) * tick_size
+                volume_at_price[bucket_price] = volume_at_price.get(bucket_price, 0.0) + volume
+            else:
+                # FIX: Lineare Verteilung über exakte Preis-Levels
+                num_levels = max(1, int(price_range / tick_size) + 1)
+                volume_per_level = volume / num_levels
+                
+                for level in range(num_levels):
+                    level_price = low_price + (level * tick_size)
+                    bucket_price = round(level_price / tick_size) * tick_size
+                    volume_at_price[bucket_price] = volume_at_price.get(bucket_price, 0.0) + volume_per_level
+        
+        # FIX: VPOC = exaktes Level mit höchstem Volumen
+        if not volume_at_price:
+            return {"vpoc": 0.0, "profile": [], "high_volume_nodes": []}
+        
+        # Sortiere nach Volumen (absteigend)
+        sorted_volume_levels = sorted(volume_at_price.items(), key=lambda x: x[1], reverse=True)
+        
+        vpoc_price, vpoc_volume = sorted_volume_levels[0]
+        total_volume = sum(volume_at_price.values())
+        
+        # FIX: High Volume Nodes (Top 20% Volumen)
+        threshold = total_volume * 0.8  # Top 80% Volumen
+        cumulative = 0
+        high_volume_nodes = []
+        
+        for price, volume in sorted_volume_levels:
+            cumulative += volume
+            high_volume_nodes.append({
+                "price": round(price, 2),
+                "volume": round(volume, 2),
+                "volume_pct": round(volume / total_volume * 100, 1)
+            })
+            if cumulative >= threshold:
+                break
+        
+        return {
+            "vpoc": round(vpoc_price, 2),
+            "vpoc_volume": round(vpoc_volume, 2),
+            "profile": high_volume_nodes[:10],  # Top 10 Nodes
+            "high_volume_nodes": high_volume_nodes[:5],  # Top 5 für UI
+            "total_volume": round(total_volume, 2),
+            "price_levels_count": len(volume_at_price)  # FIX: Anzahl der exakten Preis-Levels
+        }
+
+    def _calc_15m_delta_bars(self, candles_15m: List[Dict]) -> dict:
+        """
+        Aggregiert CVD in 15m-Blöcken und identifiziert Absorption-Signale.
+        
+        Absorption = Hohes Volumen + starkes Delta aber kleine Preisbewegung.
+        Institutionelle Käufer/Verkäufer absorbieren Order-Flow.
+        """
+        if len(candles_15m) < 10:
+            return {"delta_bars": [], "absorption_signals": [], "current_delta": 0.0}
+        
+        delta_bars = []
+        for candle in candles_15m[-10:]:  # Letzte 10 Bars = 2.5h
+            # Delta aus Taker-Buy/Sell Volume (falls verfügbar)
+            # Fallback: Close-Change als Proxy
+            price_change = candle["close"] - candle["open"]
+            volume = candle["volume"]
+            
+            # Delta Proxy: Volume * Price-Direction
+            delta = volume * (1 if price_change > 0 else -1 if price_change < 0 else 0)
+            
+            # Body Size als % von Range
+            body_size = abs(candle["close"] - candle["open"])
+            range_size = candle["high"] - candle["low"]
+            body_ratio = body_size / range_size if range_size > 0 else 0
+            
+            delta_bar = {
+                "time": candle["time"],
+                "price": candle["close"],
+                "delta": round(delta, 2),
+                "volume": round(volume, 2),
+                "body_ratio": round(body_ratio, 3),
+                "price_change_pct": round(price_change / candle["open"] * 100, 2) if candle["open"] > 0 else 0
+            }
+            delta_bars.append(delta_bar)
+        
+        # Absorption-Detektion
+        absorption_signals = []
+        avg_volume = sum(bar["volume"] for bar in delta_bars) / len(delta_bars)
+        
+        for bar in delta_bars:
+            # Kriterien für Absorption:
+            # 1. Volumen > 1.5x Durchschnitt
+            # 2. Starkes Delta (hohe Absolutwert)
+            # 3. Kleine Preisbewegung (body_ratio < 0.3)
+            if (bar["volume"] > avg_volume * 1.5 and
+                abs(bar["delta"]) > avg_volume * 0.7 and
+                bar["body_ratio"] < 0.3):
+                
+                direction = "buying" if bar["delta"] > 0 else "selling"
+                absorption_signals.append({
+                    "time": bar["time"],
+                    "price": bar["price"],
+                    "direction": direction,
+                    "strength": round(abs(bar["delta"]) / avg_volume, 2),
+                    "volume_ratio": round(bar["volume"] / avg_volume, 2),
+                    "body_ratio": bar["body_ratio"]
+                })
+        
+        current_delta = delta_bars[-1]["delta"] if delta_bars else 0.0
+        
+        return {
+            "delta_bars": delta_bars,
+            "absorption_signals": absorption_signals[-3:],  # Letzte 3 Signale
+            "current_delta": round(current_delta, 2),
+            "delta_trend": "increasing" if len(delta_bars) >= 3 and 
+                           delta_bars[-1]["delta"] > delta_bars[-3]["delta"] else "decreasing"
+        }
+
     def _calc_ema(self, candles: List[Dict], period: int) -> float:
         """Berechnet EMA für gegebenen Period."""
         if len(candles) < period:
@@ -228,36 +375,58 @@ class TechnicalAnalysisAgent(PollingAgent):
         return ema
 
     def _calc_rsi(self, candles: List[Dict], period: int = 14) -> float:
-        """Berechnet RSI(14)."""
+        """Berechnet RSI(14) mit Wilder's Exponential Smoothing - TradingView kompatibel."""
         if len(candles) < period + 1:
             return 50.0
         
         closes = [c["close"] for c in candles]
-        deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+        deltas = [closes[i] - closes[i-1] for i in range(1, len(candles))]
+        gains = [max(d, 0) for d in deltas]
+        losses = [abs(min(d, 0)) for d in deltas]
         
-        gains = [d if d > 0 else 0 for d in deltas]
-        losses = [-d if d < 0 else 0 for d in deltas]
+        # Wilder's Exponential Smoothing: Initial SMA, dann EMA mit Alpha = 1/period
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
         
-        avg_gain = sum(gains[-period:]) / period
-        avg_loss = sum(losses[-period:]) / period
+        # Exponential Smoothing für restliche Werte
+        alpha = 1.0 / period
+        for i in range(period, len(gains)):
+            avg_gain = alpha * gains[i] + (1 - alpha) * avg_gain
+            avg_loss = alpha * losses[i] + (1 - alpha) * avg_loss
         
         if avg_loss == 0:
             return 100.0
-        
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+        return 100 - (100 / (1 + rs))
 
     def _calc_vwap(self, candles: List[Dict]) -> float:
-        """Berechnet VWAP für intraday (15m)."""
+        """
+        Berechnet VWAP mit institutionellem Tages-Reset.
+        
+        FIX: Tracke das Datum der letzten verarbeiteten Kerze.
+        Wenn current_candle.timestamp.date() > last_vwap_date: 
+        Setze die Akkumulatoren cumulative_typical_volume und cumulative_volume hart auf 0 zurück.
+        """
         if not candles:
             return 0.0
+            
+        # Prüfe auf Tages-Reset
+        current_date = candles[-1]["time"].date() if hasattr(candles[-1]["time"], 'date') else candles[-1]["time"].date()
         
-        total_pv = sum(c["close"] * c["volume"] for c in candles)
-        total_volume = sum(c["volume"] for c in candles)
+        if self._last_vwap_date != current_date:
+            # FIX: Institutioneller Tages-Reset
+            self._last_vwap_date = current_date
+            self._vwap_cumulative_pv = 0.0
+            self._vwap_cumulative_volume = 0.0
+            self.logger.info(f"VWAP Tages-Reset für {current_date}")
         
-        return total_pv / total_volume if total_volume > 0 else 0.0
+        # Akkumuliere Typical Price * Volume
+        for candle in candles:
+            typical_price = (candle["high"] + candle["low"] + candle["close"]) / 3.0
+            self._vwap_cumulative_pv += typical_price * candle["volume"]
+            self._vwap_cumulative_volume += candle["volume"]
+        
+        return self._vwap_cumulative_pv / self._vwap_cumulative_volume if self._vwap_cumulative_volume > 0 else 0.0
 
     def _calc_atr(self, candles: List[Dict], period: int = 14) -> float:
         """Berechnet ATR(14) mit True Range."""
@@ -671,12 +840,23 @@ class TechnicalAnalysisAgent(PollingAgent):
         
         # ═══ MTF-FILTER (KRITISCH) ═══
         direction = "long" if score > 0 else "short" if score < 0 else "neutral"
-        if direction == "long" and not mtf.get("aligned_long"):
-            score *= 0.3
-            signals.append("⚠ MTF not aligned — score reduced 70%")
-        elif direction == "short" and not mtf.get("aligned_short"):
-            score *= 0.3
-            signals.append("⚠ MTF not aligned — score reduced 70%")
+        alignment = mtf.get("alignment_score", 0)  # -1.0 bis +1.0
+        
+        if direction == "long":
+            if alignment < 0:  # Gegensignal
+                score *= 0.3
+                signals.append("⚠ MTF contra-signal — score reduced 70%")
+            elif alignment < 0.5:  # Teilweise aligned
+                score *= 0.6
+                signals.append("⚠ MTF partially aligned — score reduced 40%")
+            # alignment >= 0.5: kein Abzug (2 von 3 TFs aligned reicht)
+        elif direction == "short":
+            if alignment > 0:
+                score *= 0.3
+                signals.append("⚠ MTF contra-signal — score reduced 70%")
+            elif alignment > -0.5:
+                score *= 0.6
+                signals.append("⚠ MTF partially aligned — score reduced 40%")
         
         score = round(max(-100, min(100, score)), 1)
         
@@ -748,11 +928,17 @@ class TechnicalAnalysisAgent(PollingAgent):
             # 10. Orderbuch-Walls
             ob_walls = await self._fetch_orderbook_walls(price)
             
-            # 11. TA-Score
+            # 11. NEU: Volume Profile (VPOC)
+            volume_profile = self._calc_volume_profile(candles_1h)
+            
+            # 12. NEU: 15m Delta Bars mit Absorption
+            delta_analysis = self._calc_15m_delta_bars(candles_15m)
+            
+            # 13. TA-Score
             ta_score = self._calculate_ta_score(trend, rsi_14, sr_levels, breakout, 
                                                  volume, price, ema_9, ema_21, vwap, mtf, wick)
             
-            # 12. Snapshot → Redis
+            # 13. Snapshot → Redis
             snapshot = {
                 "symbol": "BTCUSDT", "price": price,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -761,8 +947,14 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "trend": trend, "sr_levels": sr_levels, "breakout": breakout,
                 "volume": volume, "mtf": mtf, "wick": wick, "session": session,
                 "ob_walls": ob_walls, "ta_score": ta_score,
+                # NEU: Institutionelle Alpha-Indikatoren
+                "volume_profile": volume_profile,
+                "delta_analysis": delta_analysis,
             }
             await self.deps.redis.set_cache("bruno:ta:snapshot", snapshot)
+            
+            # NEU: Orderbuch-Walls auch separat für LiquidityEngine + ExecutionAgent
+            await self.deps.redis.set_cache("bruno:ta:ob_walls", ob_walls, ttl=60)
             
             latency = (time.perf_counter() - start_time) * 1000
             await self._report_health("TA_Engine", "online", latency)

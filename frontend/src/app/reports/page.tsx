@@ -1,23 +1,17 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import {
   BarChart3,
   Download,
   RefreshCw,
   Brain,
   TrendingUp,
-  TrendingDown,
-  Clock,
   Calendar,
-  Filter,
   ChevronDown,
   ChevronUp,
-  FileText,
   Database,
   Trash2,
-  CheckCircle,
-  AlertCircle
 } from "lucide-react";
 
 // Types
@@ -151,16 +145,21 @@ export default function ReportsPage() {
   };
 
   const getPnlColor = (pnl: number) => pnl >= 0 ? "text-emerald-400" : "text-red-400";
-  const getPnlBg = (pnl: number) => pnl >= 0 ? "bg-emerald-500/10" : "bg-red-500/10";
+
+  const totalPnl = trades.reduce((sum, t) => sum + t.pnl_eur, 0);
+  const avgReturn = trades.reduce((sum, t) => sum + t.pnl_pct, 0) / (trades.length || 1);
+  const winRate = trades.length > 0 ? (trades.filter(t => t.pnl_pct > 0).length / trades.length) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white p-6">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-[#0a0a0f] text-white p-4 lg:p-6 space-y-4">
+      <div className="rounded-3xl border border-[#1a1a2e] bg-gradient-to-br from-indigo-950/25 via-[#0c0c18] to-[#080810] p-5 lg:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Reports</h1>
-            <p className="text-sm text-slate-500">Trade-Auswertungen, Lern-Logs & Performance</p>
+            <div className="text-xs uppercase tracking-[0.28em] text-slate-500 font-bold">Reports · Lernen & Audit</div>
+            <h1 className="text-2xl lg:text-3xl font-bold mt-2">Jeder Run, jeder Trade, jede Auswertung nachvollziehbar</h1>
+            <p className="text-sm text-slate-400 mt-2 max-w-3xl">
+              Reports speichert die Lernbasis der Plattform: geschlossene Trades dauerhaft, Entscheidungsruns nur kurzzeitig und alles exportierbar für Analyse.
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <button onClick={fetchData} className="flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm">
@@ -175,8 +174,26 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-2 mb-6">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
+          <div className="text-xs text-slate-500">Closed Trades</div>
+          <div className="text-2xl font-bold text-white">{trades.length}</div>
+        </div>
+        <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
+          <div className="text-xs text-slate-500">Win Rate</div>
+          <div className="text-2xl font-bold text-emerald-400">{winRate.toFixed(1)}%</div>
+        </div>
+        <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
+          <div className="text-xs text-slate-500">Total P&L</div>
+          <div className={`text-2xl font-bold ${getPnlColor(totalPnl)}`}>€{totalPnl.toFixed(2)}</div>
+        </div>
+        <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
+          <div className="text-xs text-slate-500">Avg Return</div>
+          <div className={`text-2xl font-bold ${getPnlColor(avgReturn)}`}>{avgReturn.toFixed(2)}%</div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
         {[
           { id: "trades", label: "Geschlossene Trades", icon: TrendingUp },
           { id: "learning", label: "Lern-Logs", icon: Brain },
@@ -197,11 +214,9 @@ export default function ReportsPage() {
         ))}
       </div>
 
-      {/* Trades Tab */}
       {activeTab === "trades" && (
         <div className="space-y-4">
-          {/* Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
               <div className="text-xs text-slate-500">Total Trades</div>
               <div className="text-2xl font-bold">{trades.length}</div>
@@ -209,21 +224,19 @@ export default function ReportsPage() {
             <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
               <div className="text-xs text-slate-500">Win Rate</div>
               <div className="text-2xl font-bold text-emerald-400">
-                {trades.length > 0
-                  ? ((trades.filter(t => t.pnl_pct > 0).length / trades.length) * 100).toFixed(1)
-                  : "0"}%
+                {winRate.toFixed(1)}%
               </div>
             </div>
             <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
               <div className="text-xs text-slate-500">Total P&L</div>
-              <div className={`text-2xl font-bold ${getPnlColor(trades.reduce((sum, t) => sum + t.pnl_eur, 0))}`}>
-                €{trades.reduce((sum, t) => sum + t.pnl_eur, 0).toFixed(2)}
+              <div className={`text-2xl font-bold ${getPnlColor(totalPnl)}`}>
+                €{totalPnl.toFixed(2)}
               </div>
             </div>
             <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
               <div className="text-xs text-slate-500">Avg Return</div>
-              <div className={`text-2xl font-bold ${getPnlColor(trades.reduce((sum, t) => sum + t.pnl_pct, 0) / (trades.length || 1))}`}>
-                {(trades.reduce((sum, t) => sum + t.pnl_pct, 0) / (trades.length || 1)).toFixed(2)}%
+              <div className={`text-2xl font-bold ${getPnlColor(avgReturn)}`}>
+                {avgReturn.toFixed(2)}%
               </div>
             </div>
           </div>
@@ -247,7 +260,7 @@ export default function ReportsPage() {
                 </thead>
                 <tbody className="text-sm divide-y divide-slate-800/50">
                   {trades.map((trade) => (
-                    <>
+                    <Fragment key={trade.id}>
                       <tr
                         key={trade.id}
                         className="hover:bg-slate-800/30 cursor-pointer"
@@ -332,7 +345,7 @@ export default function ReportsPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -353,7 +366,10 @@ export default function ReportsPage() {
         <div className="space-y-4">
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium text-slate-300">Entscheidungs-Lern-Logs (24h)</h3>
+              <div>
+                <h3 className="text-sm font-medium text-slate-300">Entscheidungs-Lern-Logs (24h)</h3>
+                <p className="text-xs text-slate-500 mt-1">Jeder Run dokumentiert Input, Entscheidung und Kontext für die spätere Auswertung.</p>
+              </div>
               <div className="flex items-center gap-2">
                 <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1 text-xs">
                   <option value="1h">Letzte Stunde</option>
@@ -397,6 +413,12 @@ export default function ReportsPage() {
                 <Database className="w-4 h-4" />
                 <span>Lern-Logs werden automatisch nach 24 Stunden gelöscht. Geschlossene Trades bleiben dauerhaft gespeichert.</span>
               </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-500">
+              <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">Decision runs werden als kurzer Audit-Stream gespeichert.</div>
+              <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">Geschlossene Trades bleiben als dauerhafte Historie erhalten.</div>
+              <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">Exports sind pro Tab direkt als JSON möglich.</div>
             </div>
           </div>
         </div>
@@ -443,13 +465,19 @@ export default function ReportsPage() {
           {/* Cumulative Chart Placeholder */}
           <div className="p-4 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl">
             <h3 className="text-sm font-medium text-slate-300 mb-4">Kumulative Performance</h3>
-            <div className="h-[300px] flex items-center justify-center text-slate-500">
+            <div className="h-[220px] flex items-center justify-center text-slate-500">
               <BarChart3 className="w-12 h-12 mb-2 opacity-50" />
               <span>Performance-Chart wird hier angezeigt</span>
             </div>
           </div>
         </div>
       )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs text-slate-500">
+        <div className="rounded-xl border border-slate-800 bg-[#0c0c18] p-3">Audit-Logs und Trades dienen als Lernbasis für spätere Auswertungen.</div>
+        <div className="rounded-xl border border-slate-800 bg-[#0c0c18] p-3">Exports sind für manuelle Analyse und Berichte gedacht.</div>
+        <div className="rounded-xl border border-slate-800 bg-[#0c0c18] p-3">Performance bleibt getrennt von Entscheidungsruns und Trade-Historie.</div>
+      </div>
     </div>
   );
 }

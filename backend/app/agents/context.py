@@ -34,11 +34,6 @@ class ContextAgent(StreamingAgent):
         # ── Neue Makro-Signale (v2) ─────────────────────────────
         self.oi_trend: dict = self._oi_trend_fallback()
         self.etf_flows: dict = self._etf_flows_fallback()
-        self.max_pain: dict = {
-            "max_pain_price": 0.0, "distance_pct": 0.0,
-            "direction": "neutral", "gravitational_bias": "neutral",
-            "strikes_analyzed": 0
-        }
         self.pattern_result: dict = {}
         self._last_etf_fetch: float = 0.0
 
@@ -46,11 +41,11 @@ class ContextAgent(StreamingAgent):
         self.funding_divergence: float = 0.0
         self.open_interest: float = 0.0
         self.oi_prev: float = 0.0
-        self.long_short_ratio: float = 1.0
+        self.long_short_ratio: float = None  # None = API-Required, Risk-Veto bei None
         self.perp_basis_pct: float = 0.0
         self.btc_change_24h: float = 0.0
         self.put_call_ratio: float = 0.60
-        self.dvol: float = 55.0
+        self.dvol: float = None  # None = API-Required, Risk-Veto bei None
         self.grss_history: list = []
         self._grss_ema: float = 50.0
         self._grss_ema_alpha: float = 0.4
@@ -66,16 +61,21 @@ class ContextAgent(StreamingAgent):
         self._retail_sentiment_weight: float = 0.0
         self._retail_score: float = 0.0
         self._retail_fomo_warning: bool = False
+        self.onchain_data: Dict = {}
 
         # Latenz & CoinGlass & Retail
         from app.core.latency_monitor import LatencyMonitor
         from app.services.coinglass_client import CoinGlassClient
         from app.services.retail_sentiment import RetailSentimentService
         from app.services.sentiment_analyzer import analyzer as nlp_analyzer
+        from app.services.binance_analytics import BinanceAnalyticsService
+        from app.services.onchain_client import OnChainClient
 
         self.latency_monitor = LatencyMonitor(redis_client=deps.redis)
         self.coinglass = CoinGlassClient(api_key=deps.config.COINGLASS_API_KEY, redis_client=deps.redis)
         self.retail_sentiment_service = RetailSentimentService(redis_client=deps.redis, sentiment_analyzer=nlp_analyzer, config=deps.config)
+        self.binance_analytics = BinanceAnalyticsService(redis_client=deps.redis)
+        self.onchain_client = OnChainClient(redis_client=deps.redis, glassnode_api_key=getattr(deps.config, 'GLASSNODE_API_KEY', None))
 
         self.macro_feeds = ["https://feeds.finance.yahoo.com/rss/2.0/headline"]
         self.crypto_feeds = ["https://cointelegraph.com/rss"]
@@ -127,11 +127,13 @@ class ContextAgent(StreamingAgent):
                 "etf_consecutive_outflow_days": 0, "funding_divergence": 0, "stablecoin_delta_bn": 0,
                 "btc_change_24h": 0, "btc_change_1h": 0, "fear_greed": 50, "deleveraging_complete": False,
                 "liq_bias": "balanced", "liq_squeeze_potential": False, "llm_news_sentiment": 0,
-                "pattern_score": 0, "put_call_ratio": 0.6, "dvol": 55, "long_short_ratio": 1.0,
+                "pattern_score": 0, "put_call_ratio": 0.6, "dvol": None, "long_short_ratio": None,
                 "yields_10y": self.yields_10y, "m2_yoy_pct": 0,
             }
             minimal_grss = self.calculate_grss(minimal_grss_input)
+            missing_critical_liquidity = self.dvol is None or self.long_short_ratio is None
 
+            veto_threshold = 30.0 if self._is_learning_mode() else 40.0
             warmup_payload = {
                 "GRSS_Score_Raw": round(minimal_grss, 1),
                 "GRSS_Score": round(minimal_grss, 1),
@@ -142,7 +144,7 @@ class ContextAgent(StreamingAgent):
                 "Fresh_Source_Count": fresh_count,
                 "Data_Freshness_Active": fresh_count > 0,
                 "News_Silence_Seconds": 0.0,
-                "Veto_Active": minimal_grss < 40,
+                "Veto_Active": missing_critical_liquidity or minimal_grss < veto_threshold,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "_warmup": True,  # Flag dass dies ein Warm-Up-Payload ist
             }
@@ -249,20 +251,6 @@ class ContextAgent(StreamingAgent):
 
     def _etf_flows_fallback(self) -> dict:
         return {"flow_today_m": 0.0, "flow_3d_m": 0.0, "consecutive_inflow_days": 0, "consecutive_outflow_days": 0, "trend": "unknown", "source": "fallback"}
-
-    async def _calculate_max_pain(self) -> dict:
-        try:
-            btc_ticker = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
-            price = float(btc_ticker.get("last_price", 60000))
-            if self.put_call_ratio < 0.45: max_pain_strike = price * 0.96
-            elif self.put_call_ratio > 0.85: max_pain_strike = price * 1.04
-            else: max_pain_strike = price
-            dist = (max_pain_strike - price) / price * 100
-            return {
-                "max_pain_price": round(max_pain_strike, 0), "distance_pct": round(dist, 2),
-                "gravitational_bias": "bullish" if dist > 2 else "bearish" if dist < -2 else "neutral"
-            }
-        except: return {"max_pain_price": 0, "distance_pct": 0, "gravitational_bias": "neutral"}
 
     def _detect_market_patterns(self, data: dict) -> dict:
         """
@@ -474,45 +462,48 @@ class ContextAgent(StreamingAgent):
             return 0.0
 
     async def _fetch_binance_rest_data(self) -> None:
-        start_t = time.perf_counter()
+        """Binance Futures API für L/S Ratio - institutionell korrekt."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.get("https://fapi.binance.com/fapi/v1/openInterest", params={"symbol": "BTCUSDT"})
-                if r.status_code == 200:
-                    self.oi_prev = self.open_interest
-                    self.open_interest = float(r.json().get("openInterest", 0))
-                
-                r = await client.get("https://fapi.binance.com/fapi/v1/premiumIndex", params={"symbol": "BTCUSDT"})
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Global Long/Short Ratio
+                r = await client.get("https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
+                                   params={"symbol": "BTCUSDT", "period": "5m", "limit": 1})
                 if r.status_code == 200:
                     data = r.json()
-                    self.perp_basis_pct = (float(data.get("lastFundingRate", 0.01))) * 100
-                
-                r = await client.get("https://api.binance.com/api/v3/ticker/24hr", params={"symbol": "BTCUSDT"})
-                if r.status_code == 200:
-                    self.btc_change_24h = float(r.json().get("priceChangePercent", 0)) / 100
-            
-            # Health melden wenn mindestens OI-Fetch erfolgreich
-            latency = (time.perf_counter() - start_t) * 1000
-            await self._report_health("Binance_REST", "online", latency)
+                    if data:
+                        self.long_short_ratio = float(data[-1]["longShortRatio"])
+                    else:
+                        self.long_short_ratio = None
+                else:
+                    self.long_short_ratio = None
         except Exception as e:
-            await self._report_health("Binance_REST", "offline", 0.0)
-            self.logger.warning(f"Binance REST Fehler: {e}")
+            self.logger.warning(f"Binance L/S Ratio API Fehler: {e}")
+            self.long_short_ratio = None
 
     async def _fetch_deribit_data(self) -> None:
+        """Deribit API für DVOL - institutionell korrekt."""
         start_t = time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency", params={"currency": "BTC", "kind": "option"})
+                # DVOL (Deribit Implied Volatility Index)
+                r = await client.get("https://www.deribit.com/api/v2/public/get_volatility_index_data", 
+                                   params={"currency": "BTC"})
                 if r.status_code == 200:
-                    res = r.json().get("result", [])
-                    put_v = sum(i.get("open_interest", 0) for i in res if "_P" in i.get("instrument_name", ""))
-                    call_v = sum(i.get("open_interest", 0) for i in res if "_C" in i.get("instrument_name", ""))
-                    if call_v > 0: self.put_call_ratio = put_v / call_v
+                    data = r.json().get("result", {})
+                    if data and "dv" in data:
+                        self.dvol = float(data["dv"])  # DVOL Wert
+                    else:
+                        self.dvol = None
+                else:
+                    self.dvol = None
             
             latency = (time.perf_counter() - start_t) * 1000
-            await self._report_health("Deribit_Public", "online", latency)
+            await self._report_health("Deribit_Public", "online" if self.dvol is not None else "offline", latency)
+            
         except Exception as e:
-            await self._report_health("Deribit_Public", "offline", 0.0)
+            self.logger.warning(f"Deribit DVOL API Fehler: {e}")
+            self.dvol = None
+            await self._report_health("Deribit_Public", "error", 0.0)
             self.logger.warning(f"Deribit Public Fehler: {e}")
 
     async def _fetch_coinglass_data(self) -> None:
@@ -520,6 +511,31 @@ class ContextAgent(StreamingAgent):
             await self.coinglass.update()
             self._etf_flows_3d = self.coinglass.etf_flows_3d
             self._funding_divergence = self.coinglass.funding_divergence
+
+    async def _fetch_long_short_ratio(self) -> Optional[float]:
+        """
+        Binance Global Long/Short Account Ratio.
+        Kostenlos, kein API-Key nötig.
+        """
+        CACHE_KEY = "bruno:macro:long_short_ratio"
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached is not None:
+            return float(cached)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(
+                    "https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
+                    params={"symbol": "BTCUSDT", "period": "1h", "limit": 1}
+                )
+                if r.status_code == 200:
+                    data = r.json()
+                    if data:
+                        ratio = float(data[-1]["longShortRatio"])
+                        await self.deps.redis.set_cache(CACHE_KEY, ratio, ttl=900)
+                        return ratio
+        except Exception as e:
+            self.logger.warning(f"Long/Short Ratio Fehler: {e}")
+        return None
 
     async def _fetch_cross_exchange_funding(self) -> float:
         """
@@ -652,19 +668,21 @@ class ContextAgent(StreamingAgent):
         elif div > 0.03:
             score -= 8
 
-        dvol = data.get("dvol", 55)
-        if dvol < 40:
-            score += 5
-        elif dvol > 80:
-            score -= 10
-        elif dvol > 65:
-            score -= 4
+        dvol = data.get("dvol")
+        if dvol is not None:
+            if dvol < 40:
+                score += 5
+            elif dvol > 80:
+                score -= 10
+            elif dvol > 65:
+                score -= 4
 
-        ls = data.get("long_short_ratio", 1.0)
-        if ls < 0.9:
-            score += 5
-        elif ls > 1.5:
-            score -= 4
+        ls = data.get("long_short_ratio")
+        if ls is not None:
+            if ls < 0.9:
+                score += 5
+            elif ls > 1.5:
+                score -= 4
 
         # ═══ TIER 2: INSTITUTIONELL ═══════════════════════════════════════
         etf = data.get("etf_flow_3d_m", 0)
@@ -742,17 +760,50 @@ class ContextAgent(StreamingAgent):
 
         score += data.get("pattern_score", 0)
 
-        # Absoluter Minimalwert: 10 (nie 0.0 bei normalen API-Ausfällen)
-        score = max(score, 10.0)
+        # ═══ TIER 3b: ON-CHAIN ════════════════════════════════════════
+        onchain = data.get("onchain", {})
+        if onchain:
+            # Hash Rate steigend = Miner bullish (±3)
+            hr_change = onchain.get("hash_rate_7d_change_pct", 0)
+            if hr_change > 5:
+                score += 3
+            elif hr_change < -10:
+                score -= 3
+            
+            # Exchange Outflow = bullish (±4)
+            if onchain.get("exchange_outflow"):
+                score += 4
+            elif onchain.get("exchange_balance_change_btc", 0) > 5000:
+                score -= 4  # >5000 BTC Inflow = bearish
 
-        if data.get("news_silence_seconds", 0) > 3600:
-            return 0.0
+        # Absoluter Minimalwert: 25 (nie 0.0 bei normalen API-Ausfällen)
+        score = max(score, 25.0)
+
+        # News Silence: Graduelle Penalty statt nuklearer Veto
+        silence = data.get("news_silence_seconds", 0)
+        if silence > 7200:  # 2 Stunden: starke Penalty, aber kein Totalausfall
+            score -= 15
+        elif silence > 3600:  # 1 Stunde: moderate Penalty
+            score -= 8
+        
+        # Erneut Minimum prüfen nach News Silence Penalty
+        score = max(score, 25.0)
         if vix > 45:
             return 10.0
         if data.get("ndx_status") == "BEARISH" and f > 0.08:
             return 5.0
 
         return max(0.0, min(100.0, round(score, 1)))
+
+    def _is_learning_mode(self) -> bool:
+        """Prüft ob Learning Mode aktiv ist."""
+        import os
+        try:
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.json")
+            with open(config_path) as f:
+                return json.load(f).get("LEARNING_MODE_ENABLED", False)
+        except:
+            return False
 
     async def _report_health(self, name: str, status: str, latency: float):
         curr = await self.deps.redis.get_cache("bruno:health:sources") or {}
@@ -777,11 +828,28 @@ class ContextAgent(StreamingAgent):
 
             self.oi_trend = await self._fetch_oi_trend()
             self.etf_flows = await self._fetch_etf_flows()
-            self.max_pain = await self._calculate_max_pain()
-            
             await self._fetch_binance_rest_data()
             await self._fetch_deribit_data()
             await self._fetch_coinglass_data()
+            
+            # Neue Datenquellen
+            analytics_start = time.perf_counter()
+            analytics = await self.binance_analytics.update()
+            self.long_short_ratio = analytics.get("global_ls_ratio", self.long_short_ratio)
+            await self._report_health(
+                "Binance_Analytics",
+                "online" if analytics else "offline",
+                (time.perf_counter() - analytics_start) * 1000,
+            )
+
+            onchain_start = time.perf_counter()
+            self.onchain_data = await self.onchain_client.update()
+            await self._report_health(
+                "Blockchain_OnChain",
+                "online" if self.onchain_data else "offline",
+                (time.perf_counter() - onchain_start) * 1000,
+            )
+            
             if not self.coinglass.is_active:
                 self._funding_divergence = await self._fetch_cross_exchange_funding()
             await self.retail_sentiment_service.update()
@@ -791,6 +859,7 @@ class ContextAgent(StreamingAgent):
             
             sources = [
                 "Binance_REST",
+                "Binance_Analytics",  # NEU
                 "Deribit_Public",
                 "yFinance_Macro",
                 "Binance_OI_Trend",
@@ -799,6 +868,7 @@ class ContextAgent(StreamingAgent):
                 "CryptoCompare_Market",
                 "CoinMarketCap_BTC",
                 "CoinMarketCap_Global",
+                "Blockchain_OnChain",  # NEU
             ]
             health = await self.deps.redis.get_cache("bruno:health:sources") or {}
             fresh_count = sum(
@@ -867,6 +937,8 @@ class ContextAgent(StreamingAgent):
                 "long_short_ratio": self.long_short_ratio,
                 "yields_10y": self.yields_10y,
                 "m2_yoy_pct": self.m2_yoy_pct,
+                "onchain": self.onchain_data,
+                "taker_buy_sell_ratio": analytics.get("taker_buy_sell_ratio", 1.0),
             }
             
             grss = self.calculate_grss(grss_input)
@@ -879,6 +951,8 @@ class ContextAgent(StreamingAgent):
             grss_velocity_30min = round(grss - self.grss_history[0]["score"], 1) if self.grss_history else 0.0
             self._grss_ema = self._grss_ema_alpha * grss + (1 - self._grss_ema_alpha) * self._grss_ema
             
+            veto_threshold = 30.0 if self._is_learning_mode() else 40.0
+            missing_critical_liquidity = self.dvol is None or self.long_short_ratio is None
             payload = {
                 "GRSS_Score_Raw": round(grss, 1),
                 "GRSS_Score": round(self._grss_ema, 1),
@@ -892,9 +966,9 @@ class ContextAgent(StreamingAgent):
                 "Funding_Divergence": round(self._funding_divergence, 4),
                 "OI_Delta_Pct": round(oi_delta_pct, 2),
                 "Perp_Basis_Pct": round(self.perp_basis_pct, 4),
-                "Long_Short_Ratio": round(self.long_short_ratio, 4),
+                "Long_Short_Ratio": round(self.long_short_ratio, 4) if self.long_short_ratio is not None else None,
                 "Put_Call_Ratio": round(self.put_call_ratio, 4),
-                "DVOL": round(self.dvol, 2),
+                "DVOL": round(self.dvol, 2) if self.dvol is not None else None,
                 "Stablecoin_Delta_Bn": round(self.stablecoin_delta_bn, 2),
                 "Retail_Score": round(retail_score, 3),
                 "Retail_FOMO_Warning": retail_fomo_warning,
@@ -910,8 +984,7 @@ class ContextAgent(StreamingAgent):
                 "Active_Patterns": self.pattern_result["active_patterns"],
                 "OI_Trend": self.oi_trend,
                 "ETF_Flows": self.etf_flows,
-                "Max_Pain": self.max_pain,
-                "CryptoCompare": {
+"CryptoCompare": {
                     "timestamp": cryptocompare_bundle.get("timestamp"),
                     "symbols": cryptocompare_bundle.get("symbols", []),
                     "tsym": cryptocompare_bundle.get("tsym", "USD"),
@@ -931,7 +1004,7 @@ class ContextAgent(StreamingAgent):
                     "btc_info": coinmarketcap_bundle.get("btc_info", {}),
                     "global_metrics": coinmarketcap_bundle.get("global_metrics", {}),
                 },
-                "Veto_Active": self._grss_ema < 40,
+                "Veto_Active": missing_critical_liquidity or self._grss_ema < veto_threshold,
                 "timestamp": current_ts.isoformat()
             }
             await self.deps.redis.set_cache("bruno:context:grss", payload)

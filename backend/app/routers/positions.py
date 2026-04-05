@@ -150,7 +150,7 @@ async def test_open_position(
             stop_loss_price=stop_loss_price,
             take_profit_price=take_profit_price,
             entry_trade_id=f"test_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}",
-            grss_at_entry=55.0,
+            grss_at_entry=None,  # FIX: Kein Hardcode mehr - bei fehlenden Daten wird None übergeben
             layer1_output=layer1_output,
             layer2_output=layer2_output,
             layer3_output=layer3_output,

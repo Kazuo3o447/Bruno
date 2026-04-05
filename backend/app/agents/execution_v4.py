@@ -8,7 +8,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 class ExecutionAgentV4(StreamingAgent):
     """
@@ -77,6 +77,21 @@ class ExecutionAgentV4(StreamingAgent):
             data = json.loads(veto_raw)
             self._local_veto_active = data.get("Veto_Active", True)
             self._last_veto_reason = data.get("Reason", "Redis Cache")
+            self.logger.info(f"Veto State aus Redis geladen: Active={self._local_veto_active}")
+        else:
+            # Wenn kein Veto-State in Redis: aktiv von RiskAgent abfragen
+            self.logger.info("Kein Veto-State in Redis - warte auf RiskAgent...")
+            for i in range(30):
+                await asyncio.sleep(1)
+                veto_raw = await self.deps.redis.redis.get("bruno:veto:state")
+                if veto_raw:
+                    data = json.loads(veto_raw)
+                    self._local_veto_active = data.get("Veto_Active", True)
+                    self._last_veto_reason = data.get("Reason", "RiskAgent")
+                    self.logger.info(f"Veto State nach {i+1}s erhalten: Active={self._local_veto_active}")
+                    break
+            else:
+                self.logger.warning("Kein Veto-State nach 30s — Veto bleibt aktiv bis RiskAgent läuft")
 
         # Simulated Portfolio initialisieren (DRY_RUN)
         if self.deps.config.DRY_RUN:
@@ -154,7 +169,8 @@ class ExecutionAgentV4(StreamingAgent):
 
         symbol = signal.get("symbol")
         side = signal.get("side")
-        amount = signal.get("amount", 0.01)
+        signal_amount = float(signal.get("amount", 0.0) or 0.0)
+        amount = signal_amount if signal_amount > 0 else None
         reason = signal.get("reason", "unknown")
 
         if not symbol or not isinstance(symbol, str):
@@ -165,9 +181,10 @@ class ExecutionAgentV4(StreamingAgent):
             self.logger.error(f"ABBRUCH: Ungültige Seite: {signal}")
             return
 
-        if amount <= 0:
-            self.logger.error(f"ABBRUCH: Ungültige Menge: {signal}")
-            return
+        if amount is None:
+            self.logger.warning(
+                "Signal lieferte keine direkte Menge — verwende internes Sizing statt Signal-Menge."
+            )
 
         # ── POSITION GUARD (Phase D) ───────────────────────────
         if await self.position_tracker.has_open_position(symbol):
@@ -219,7 +236,10 @@ class ExecutionAgentV4(StreamingAgent):
                 (capital * self.deps.config.MAX_LEVERAGE) / signal_price
             )
         )
-        amount = max(0.001, min(amount, position_size_btc))
+        if amount is None:
+            amount = max(0.001, position_size_btc)
+        else:
+            amount = max(0.001, min(amount, position_size_btc))
 
         if vol_multiplier < 1.0:
             self.logger.info(
@@ -284,13 +304,20 @@ class ExecutionAgentV4(StreamingAgent):
             # SL/TP aus Signal (LLM-Cascade) oder ATR-Default
             sl_pct = signal.get("stop_loss_pct", dynamic_sl_pct)
             tp_pct = signal.get("take_profit_pct", dynamic_sl_pct * 2.0)
+            tp1_pct = signal.get("take_profit_1_pct", tp_pct * 0.5)
+            tp2_pct = signal.get("take_profit_2_pct", tp_pct)
+            be_trigger_pct = signal.get("breakeven_trigger_pct", tp1_pct)
 
             if position_side == "long":
                 sl_price = fill_price * (1 - sl_pct)
                 tp_price = fill_price * (1 + tp_pct)
+                tp1_price = fill_price * (1 + tp1_pct)
+                tp2_price = fill_price * (1 + tp2_pct)
             else:
                 sl_price = fill_price * (1 + sl_pct)
                 tp_price = fill_price * (1 - tp_pct)
+                tp1_price = fill_price * (1 - tp1_pct)
+                tp2_price = fill_price * (1 - tp2_pct)
 
             try:
                 await self.position_tracker.open_position(
@@ -299,7 +326,15 @@ class ExecutionAgentV4(StreamingAgent):
                     entry_price=fill_price,
                     quantity=amount,
                     stop_loss_price=round(sl_price, 2),
-                    take_profit_price=round(tp_price, 2),
+                    take_profit_price=round(tp2_price, 2),    # TP2 als Haupt-TP
+                    take_profit_1_price=round(tp1_price, 2),  # TP1 NEU
+                    take_profit_2_price=round(tp2_price, 2),  # TP2 NEU
+                    tp1_size_pct=signal.get("tp1_size_pct", 0.50),
+                    tp2_size_pct=signal.get("tp2_size_pct", 0.50),
+                    breakeven_trigger_pct=be_trigger_pct,
+                    tp1_hit=False,
+                    max_favorable_price=fill_price,
+                    min_favorable_price=fill_price,
                     entry_trade_id=order["id"],
                     # Phase C Felder — aus Signal wenn vorhanden
                     grss_at_entry=signal.get("grss", 0.0),
@@ -724,81 +759,230 @@ class ExecutionAgentV4(StreamingAgent):
 
     async def _monitor_position(self):
         """
-        Hintergrund-Task: SL/TP Watcher mit v2.1 Breakeven-Stop.
+        Position Monitor mit 3-Phasen Exit-Management.
+        
+        Phase 1: Fixer SL/TP (0% bis +0.5%)
+        Phase 2: Breakeven Stop (+0.5% bis +1.2%)
+        Phase 3: ATR Trailing Stop (ab +1.2%)
+        
+        TP1 Scaling: Bei TP1 wird 50% der Position geschlossen.
+        TP2: Restposition wird bei TP2 oder via Trailing Stop geschlossen.
         """
-        self.logger.info("Position-Monitor gestartet (30s Intervall).")
+        self.logger.info("Position-Monitor v2 gestartet (10s Intervall).")
+        
         while self.state.running:
             try:
                 pos = await self.position_tracker.get_open_position("BTCUSDT")
-                if pos:
-                    funding_data = await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}
-                    current_price = float(funding_data.get("mark_price", 0))
-                    if current_price <= 0:
-                        ticker = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
-                        current_price = float(ticker.get("last_price", 0))
-
-                    if current_price <= 0:
-                        await asyncio.sleep(30)
-                        continue
-
-                    await self.position_tracker.update_excursions("BTCUSDT", current_price)
-
-                    sl_price = pos["stop_loss_price"]
-                    tp_price = pos["take_profit_price"]
-                    side = pos["side"]
-                    current_pnl_pct = pos.get("current_pnl_pct", 0)
-                    
-                    # Breakeven-Stop: Wenn Trade > 0.5% im Plus, SL auf Entry + 0.1% ziehen
-                    if pos and self._breakeven_enabled:
-                        entry_price = float(pos.get("entry_price", 0))
-                        side = pos.get("side", "buy")
-                        
-                        if entry_price > 0 and current_price > 0:
-                            if side == "buy":
-                                pnl_pct = (current_price - entry_price) / entry_price
-                            else:
-                                pnl_pct = (entry_price - current_price) / entry_price
-                            
-                            if pnl_pct >= self._breakeven_trigger_pct:
-                                if side == "buy":
-                                    new_sl = entry_price * 1.001
-                                    current_sl = float(pos.get("stop_loss_price", 0))
-                                    if current_sl < new_sl:
-                                        pos["stop_loss_price"] = new_sl
-                                        await self.position_tracker.update_position("BTCUSDT", pos)
-                                        self.logger.info(f"BREAKEVEN-STOP: SL für BTCUSDT auf {new_sl:.2f} gezogen (Entry: {entry_price:.2f}, Profit: {pnl_pct:.2%})")
-                                else:  # sell/short
-                                    new_sl = entry_price * 0.999
-                                    current_sl = float(pos.get("stop_loss_price", float('inf')))
-                                    if current_sl > new_sl:
-                                        pos["stop_loss_price"] = new_sl
-                                        await self.position_tracker.update_position("BTCUSDT", pos)
-                                        self.logger.info(f"BREAKEVEN-STOP: SL auf {new_sl:.2f}")
-                                
-                                self._breakeven_enabled = False
-
-                    if side == "long":
-                        if current_price <= sl_price:
-                            self.logger.warning(f"STOP-LOSS (Long): {current_price:,.0f} <= {sl_price:,.0f}")
-                            await self._close_position("stop_loss", current_price)
-                        elif current_price >= tp_price:
-                            self.logger.info(f"TAKE-PROFIT (Long): {current_price:,.0f} >= {tp_price:,.0f}")
-                            await self._close_position("take_profit", current_price)
-                    elif side == "short":
-                        if current_price >= sl_price:
-                            self.logger.warning(f"STOP-LOSS (Short): {current_price:,.0f} >= {sl_price:,.0f}")
-                            await self._close_position("stop_loss", current_price)
-                        elif current_price <= tp_price:
-                            self.logger.info(f"TAKE-PROFIT (Short): {current_price:,.0f} <= {tp_price:,.0f}")
-                            await self._close_position("take_profit", current_price)
-                    
+                if not pos:
+                    await asyncio.sleep(10)
+                    continue
+                
+                # Aktuellen Preis holen
+                current_price = await self._get_current_price()
+                if current_price <= 0:
+                    await asyncio.sleep(10)
+                    continue
+                
+                await self.position_tracker.update_excursions("BTCUSDT", current_price)
+                
+                entry_price = float(pos["entry_price"])
+                side = pos["side"]
+                sl_price = float(pos["stop_loss_price"])
+                tp_price = float(pos["take_profit_price"])
+                quantity = float(pos["quantity"])
+                
+                # P&L berechnen
+                if side == "long":
+                    pnl_pct = (current_price - entry_price) / entry_price
                 else:
-                    self._breakeven_enabled = True
-
+                    pnl_pct = (entry_price - current_price) / entry_price
+                
+                # ── TP1 Scaling Check ──────────────────────────────
+                tp1_pct = float(pos.get("take_profit_1_pct", 0.012))
+                tp1_hit = pos.get("tp1_hit", False)
+                
+                if not tp1_hit and pnl_pct >= tp1_pct:
+                    tp1_size = float(pos.get("tp1_size_pct", 0.50))
+                    close_qty = round(quantity * tp1_size, 4)
+                    
+                    self.logger.info(
+                        f"TP1 HIT: {pnl_pct:.2%} >= {tp1_pct:.2%} | "
+                        f"Schließe {tp1_size:.0%} ({close_qty} BTC)"
+                    )
+                    
+                    await self._partial_close(
+                        pos, close_qty, current_price, "tp1_scaling"
+                    )
+                    
+                    # Position State updaten
+                    pos["tp1_hit"] = True
+                    pos["quantity"] = round(quantity - close_qty, 4)
+                    await self.position_tracker.update_position("BTCUSDT", pos)
+                
+                # ── Phase 1: Fixer SL (vor Breakeven) ──────────────
+                breakeven_pct = float(pos.get("breakeven_trigger_pct", 0.005))
+                
+                if pnl_pct < breakeven_pct:
+                    # Normaler SL/TP Check
+                    if self._is_sl_hit(side, current_price, sl_price):
+                        self.logger.warning(f"STOP-LOSS: {current_price:,.0f}")
+                        await self._close_position("stop_loss", current_price)
+                    elif self._is_tp_hit(side, current_price, tp_price):
+                        self.logger.info(f"TAKE-PROFIT: {current_price:,.0f}")
+                        await self._close_position("take_profit", current_price)
+                    await asyncio.sleep(10)
+                    continue
+                
+                # ── Phase 2: Breakeven Stop ────────────────────────
+                trailing_trigger_pct = float(pos.get(
+                    "take_profit_1_pct", 0.012))  # Trailing ab TP1
+                
+                if pnl_pct < trailing_trigger_pct:
+                    # Breakeven: SL auf Entry + 0.1%
+                    if side == "long":
+                        be_sl = entry_price * 1.001
+                        if sl_price < be_sl:
+                            pos["stop_loss_price"] = be_sl
+                            await self.position_tracker.update_position(
+                                "BTCUSDT", pos)
+                            self.logger.info(
+                                f"BREAKEVEN: SL → {be_sl:.2f} "
+                                f"(PnL: {pnl_pct:.2%})")
+                    else:
+                        be_sl = entry_price * 0.999
+                        if sl_price > be_sl:
+                            pos["stop_loss_price"] = be_sl
+                            await self.position_tracker.update_position(
+                                "BTCUSDT", pos)
+                    
+                    # SL Check mit neuem Breakeven-SL
+                    if self._is_sl_hit(side, current_price, 
+                                       pos["stop_loss_price"]):
+                        await self._close_position("breakeven_stop", 
+                                                   current_price)
+                    await asyncio.sleep(10)
+                    continue
+                
+                # ── Phase 3: ATR Trailing Stop ─────────────────────
+                atr = await self._get_current_atr()
+                if atr <= 0:
+                    atr = current_price * 0.01  # Fallback: 1% ATR
+                
+                trailing_multiplier = 2.5  # Chandelier: 2.5× ATR
+                
+                if side == "long":
+                    # Trailing SL = Höchstkurs - ATR × Mult
+                    high_water = float(pos.get("max_favorable_price", 
+                                               current_price))
+                    if current_price > high_water:
+                        high_water = current_price
+                        pos["max_favorable_price"] = high_water
+                    
+                    new_trailing_sl = high_water - (atr * trailing_multiplier)
+                    
+                    # SL kann nur steigen, nie fallen
+                    if new_trailing_sl > float(pos["stop_loss_price"]):
+                        pos["stop_loss_price"] = round(new_trailing_sl, 2)
+                        await self.position_tracker.update_position(
+                            "BTCUSDT", pos)
+                        self.logger.info(
+                            f"TRAILING SL: → {new_trailing_sl:.2f} | "
+                            f"High={high_water:.2f} | "
+                            f"ATR={atr:.0f} | PnL={pnl_pct:.2%}")
+                    
+                    if current_price <= float(pos["stop_loss_price"]):
+                        await self._close_position("trailing_stop", 
+                                                   current_price)
+                
+                else:  # short
+                    low_water = float(pos.get("min_favorable_price",
+                                              current_price))
+                    if current_price < low_water:
+                        low_water = current_price
+                        pos["min_favorable_price"] = low_water
+                    
+                    new_trailing_sl = low_water + (atr * trailing_multiplier)
+                    
+                    if new_trailing_sl < float(pos["stop_loss_price"]):
+                        pos["stop_loss_price"] = round(new_trailing_sl, 2)
+                        await self.position_tracker.update_position(
+                            "BTCUSDT", pos)
+                    
+                    if current_price >= float(pos["stop_loss_price"]):
+                        await self._close_position("trailing_stop",
+                                                   current_price)
+            
             except Exception as e:
                 self.logger.error(f"Position-Monitor Fehler: {e}")
+            
+            # Dynamisches Sleep-Interval basierend auf Volatilität
+            atr = await self._get_current_atr()
+            atr_pct = atr / current_price if current_price > 0 else 0
+            sleep_interval = 5 if atr_pct > 0.02 else 10
+            await asyncio.sleep(sleep_interval)
 
-            await asyncio.sleep(30)
+    def _is_sl_hit(self, side: str, price: float, sl: float) -> bool:
+        return (side == "long" and price <= sl) or \
+               (side == "short" and price >= sl)
+
+    def _is_tp_hit(self, side: str, price: float, tp: float) -> bool:
+        return (side == "long" and price >= tp) or \
+               (side == "short" and price <= tp)
+
+    async def _get_current_price(self) -> float:
+        """Holt aktuellen BTC-Preis (Mark Price > Ticker > 0)."""
+        funding = await self.deps.redis.get_cache("market:funding:BTCUSDT") or {}
+        price = float(funding.get("mark_price", 0))
+        if price <= 0:
+            ticker = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
+            price = float(ticker.get("last_price", 0))
+        return price
+
+    async def _get_current_atr(self) -> float:
+        """ATR aus TA-Snapshot."""
+        ta = await self.deps.redis.get_cache("bruno:ta:snapshot") or {}
+        return float(ta.get("atr_14", 0))
+
+    async def _partial_close(self, pos: dict, quantity: float,
+                              exit_price: float, reason: str):
+        """Nutzt PositionTracker's scale_out_position für TP1 Scaling."""
+        symbol = pos["symbol"]
+        initial_qty = float(pos.get("initial_quantity", pos.get("quantity", 0)))
+        fraction = quantity / initial_qty if initial_qty > 0 else 0.50
+        
+        trade_id = None
+        if self.deps.config.DRY_RUN:
+            trade_id = f"sim_tp1_{int(datetime.now().timestamp())}"
+            self.logger.info(
+                f"🔀 TP1 SCALING (DRY_RUN): {quantity:.4f} BTC "
+                f"@ {exit_price:,.2f} | {reason}")
+        else:
+            if self.deps.config.LIVE_TRADING_APPROVED:
+                exit_side = "sell" if pos["side"] == "long" else "buy"
+                order = await self.exm.create_market_order(
+                    symbol, exit_side, quantity)
+                trade_id = order.get("id")
+        
+        result = await self.position_tracker.scale_out_position(
+            symbol=symbol,
+            exit_price=exit_price,
+            reason=reason,
+            fraction=fraction,
+            move_stop_to_breakeven=True,
+            exit_trade_id=trade_id,
+        )
+        
+        if result and self.deps.config.DRY_RUN:
+            # Portfolio Update für Teilschließung
+            entry_price = float(pos["entry_price"])
+            if pos["side"] == "long":
+                pnl = (exit_price - entry_price) * quantity
+            else:
+                pnl = (entry_price - exit_price) * quantity
+            fee = quantity * exit_price * 0.0004
+            await self._update_portfolio({"pnl_eur": pnl, "fee_eur": fee})
+        
+        return result
 
     async def _close_position(self, reason: str, exit_price: float):
         """Schließt offene Position über PositionTracker."""

@@ -23,7 +23,6 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
-  ChevronRight,
   BarChart3,
   Brain,
   Server,
@@ -196,6 +195,61 @@ export default function TradingPage() {
   const [error, setError] = useState("");
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
+  const decisionTimeline = useMemo(() => {
+    if (!decisions?.events) return [];
+    return [...decisions.events].reverse().slice(0, 30).map((e) => ({
+      time: e.ts ? new Date(e.ts).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "—",
+      signal: e.outcome?.includes("SIGNAL_BUY") ? 1 : e.outcome?.includes("SIGNAL_SELL") ? -1 : 0,
+      blocked: e.outcome?.includes("HOLD") || e.outcome?.includes("BLOCK") || e.outcome?.includes("VETO") ? 1 : 0,
+      ofi: e.ofi || 0,
+      grss: e.grss_score || e.composite_score || 0,
+    }));
+  }, [decisions]);
+
+  const gates = [
+    { key: "gate_1_data_freshness", name: "Data Freshness", icon: Database, desc: "Prüft ob alle Datenquellen aktuell sind" },
+    { key: "gate_2_grss_precheck", name: "GRSS Pre-Check", icon: Shield, desc: "Global Risk Stress Score über 20 Punkte" },
+    { key: "gate_3_risk_veto", name: "Risk Veto", icon: Lock, desc: "Keine aktiven Risk-Vetos (VIX, Liquidation, etc.)" },
+    { key: "gate_4_llm_cascade", name: "LLM Cascade", icon: Brain, desc: "Zeitbasierte Kaskaden-Entscheidung" },
+    { key: "gate_5_position_guard", name: "Position Guard", icon: PauseCircle, desc: "Keine offene Position" },
+    { key: "gate_6_daily_limit", name: "Daily Limit", icon: BarChart3, desc: "Tägliches Limit nicht erreicht" },
+  ];
+
+  const cadenceEstimate = useMemo(() => {
+    const timestamps = (decisions?.events ?? [])
+      .map((event) => event.ts)
+      .filter((ts): ts is string => Boolean(ts))
+      .map((ts) => new Date(ts).getTime())
+      .sort((a, b) => a - b);
+
+    if (timestamps.length < 2) return null;
+
+    const recent = timestamps.slice(-6);
+    const gaps = recent.slice(1).map((ts, idx) => ts - recent[idx]);
+    const avgGap = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
+    const last = recent[recent.length - 1];
+    return {
+      averageMinutes: avgGap / 60000,
+      nextAt: new Date(last + avgGap),
+      remainingMinutes: Math.max(Math.round((last + avgGap - Date.now()) / 60000), 0),
+    };
+  }, [decisions]);
+
+  const decisionMixData = useMemo(() => {
+    const signal = (decisions?.events ?? []).filter((event) => String(event.outcome ?? "").toUpperCase().includes("SIGNAL_")).length;
+    const blocked = (decisions?.events ?? []).filter((event) => {
+      const outcome = String(event.outcome ?? "").toUpperCase();
+      const reason = String(event.reason ?? "").toUpperCase();
+      return outcome.includes("HOLD") || outcome.includes("BLOCK") || outcome.includes("VETO") || reason.includes("VETO");
+    }).length;
+    const neutral = Math.max((decisions?.count ?? 0) - signal - blocked, 0);
+    return [
+      { name: "Signal", value: signal },
+      { name: "Blocked", value: blocked },
+      { name: "Neutral", value: neutral },
+    ].filter((item) => item.value > 0);
+  }, [decisions]);
+
   const refresh = useCallback(async () => {
     try {
       const [telRes, pipeRes, decRes] = await Promise.allSettled([
@@ -221,28 +275,6 @@ export default function TradingPage() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  // Decision timeline with more detail
-  const decisionTimeline = useMemo(() => {
-    if (!decisions?.events) return [];
-    return [...decisions.events].reverse().slice(0, 30).map((e, i) => ({
-      time: e.ts ? new Date(e.ts).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "—",
-      signal: e.outcome?.includes("SIGNAL_BUY") ? 1 : e.outcome?.includes("SIGNAL_SELL") ? -1 : 0,
-      blocked: e.outcome?.includes("HOLD") || e.outcome?.includes("BLOCK") || e.outcome?.includes("VETO") ? 1 : 0,
-      ofi: e.ofi || 0,
-      grss: e.grss_score || e.composite_score || 0,
-    }));
-  }, [decisions]);
-
-  // Gate definitions with explanations
-  const gates = [
-    { key: "gate_1_data_freshness", name: "Data Freshness", icon: Database, desc: "Prüft ob alle Datenquellen aktuell sind" },
-    { key: "gate_2_grss_precheck", name: "GRSS Pre-Check", icon: Shield, desc: "Global Risk Stress Score über 20 Punkte" },
-    { key: "gate_3_risk_veto", name: "Risk Veto", icon: Lock, desc: "Keine aktiven Risk-Vetos (VIX, Liquidation, etc.)" },
-    { key: "gate_4_llm_cascade", name: "LLM Cascade", icon: Brain, desc: "Zeitbasierte Kaskaden-Entscheidung" },
-    { key: "gate_5_position_guard", name: "Position Guard", icon: PauseCircle, desc: "Keine offene Position" },
-    { key: "gate_6_daily_limit", name: "Daily Limit", icon: BarChart3, desc: "Tägliches Limit nicht erreicht" },
-  ];
-
   if (error) {
     return (
       <div className="min-h-screen bg-[#0a0a0f] text-white p-8">
@@ -267,15 +299,38 @@ export default function TradingPage() {
   const market = telemetry.market;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white p-6">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Trading</h1>
-        <p className="text-sm text-slate-500">Marktanalyse & Entscheidungs-Kaskade</p>
+    <div className="min-h-screen bg-[#0a0a0f] text-white p-4 lg:p-6 space-y-4">
+      <div className="rounded-3xl border border-[#1a1a2e] bg-gradient-to-br from-indigo-950/25 via-[#0c0c18] to-[#080810] p-5 lg:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.28em] text-slate-500 font-bold">Trading · Markt & Logik</div>
+            <h1 className="text-2xl lg:text-3xl font-bold mt-2">Warum Bruno gerade handelt oder nicht handelt</h1>
+            <p className="text-sm text-slate-400 mt-2 max-w-3xl">
+              Diese Seite zeigt die Marktgesundheit, die Kaskade, die Gate-Entscheidungen und das Timing der nächsten Runde so kompakt wie möglich.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 min-w-[280px]">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Status</div>
+              <div className={`mt-1 text-sm font-semibold ${armed ? "text-emerald-400" : "text-red-400"}`}>{armed ? "ARMED" : "HALTED"}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Next Cycle</div>
+              <div className="mt-1 text-sm font-semibold text-indigo-400">{cadenceEstimate ? `${cadenceEstimate.remainingMinutes}m` : "—"}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Signal Mix</div>
+              <div className="mt-1 text-sm font-semibold text-emerald-400">{decisions?.stats?.signals_generated ?? 0}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Last Update</div>
+              <div className="mt-1 text-sm font-semibold text-slate-200">{lastUpdate.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Market Overview Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
         <MetricCard
           label="BTC Preis"
           value={fmtPrice(market.btc_price)}
@@ -320,18 +375,13 @@ export default function TradingPage() {
         />
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: Decision Timeline */}
-        <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+        <div className="xl:col-span-2 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-slate-300">Entscheidungs-Timeline (letzte 30)</h3>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"/> Buy</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500"/> Block</span>
-            </div>
+            <h3 className="text-sm font-medium text-slate-300">Decision Rhythm</h3>
+            <span className="text-xs text-slate-500">letzte 30 Entscheidungen</span>
           </div>
-          <div className="h-[350px]">
+          <div className="h-[240px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={decisionTimeline}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1a1a2e" />
@@ -348,63 +398,56 @@ export default function TradingPage() {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          <p className="text-xs text-slate-500 mt-2">
-            <span className="text-emerald-400">Grün</span> = Buy Signal, <span className="text-indigo-400">Lila</span> = GRSS Score
-          </p>
+          <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-500">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500" />Signal</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-indigo-500" />GRSS</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />Blocked</span>
+          </div>
         </div>
 
-        {/* Right: Gate Status */}
         <div className="space-y-4">
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
-            <h3 className="text-sm font-medium text-slate-300 mb-4">6-Gate Entscheidungs-Kaskade</h3>
-            
-            {/* Pipeline Flow */}
-            <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-medium text-slate-300">6-Gate Entscheidungs-Kaskade</h3>
+              <span className={`text-xs px-2 py-1 rounded-full border ${pipeline?.summary?.trade_possible ? "border-emerald-800 text-emerald-400" : "border-red-800 text-red-400"}`}>
+                {pipeline?.summary?.trade_possible ? "READY" : "BLOCKED"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 mb-4">
               {gates.map((gate, i) => {
                 const gateData = pipeline?.gates?.[gate.key];
                 const isBlocked = gateData?.blocked;
-                const isLast = i === gates.length - 1;
-                
                 return (
-                  <div key={gate.key} className="flex items-center gap-2 flex-shrink-0">
-                    <div 
-                      className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${
-                        isBlocked ? "bg-red-500/20 text-red-400 border border-red-500" : "bg-emerald-500/20 text-emerald-400 border border-emerald-500"
-                      }`}
-                      title={`${gate.name}: ${gate.desc}`}
-                    >
-                      {i + 1}
+                  <div key={gate.key} className={`rounded-xl border p-3 ${isBlocked ? "border-red-800 bg-red-950/10" : "border-emerald-800 bg-emerald-950/10"}`} title={gate.desc}>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className={`w-2 h-2 rounded-full ${isBlocked ? "bg-red-400" : "bg-emerald-400"}`} />
+                      <span className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Gate {i + 1}</span>
                     </div>
-                    {!isLast && (
-                      <ChevronRight className={`w-4 h-4 ${isBlocked ? "text-red-500" : "text-emerald-500"}`} />
-                    )}
+                    <div className={`text-xs font-semibold ${isBlocked ? "text-red-300" : "text-emerald-300"}`}>{gate.name}</div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Trade Possible Status */}
-            <div className={`p-3 rounded-lg border mb-4 ${
-              pipeline?.summary?.trade_possible ? "border-emerald-800 bg-emerald-950/20" : "border-red-800 bg-red-950/20"
-            }`}>
+            <div className={`p-3 rounded-lg border mb-4 ${pipeline?.summary?.trade_possible ? "border-emerald-800 bg-emerald-950/20" : "border-red-800 bg-red-950/20"}`}>
               <div className="flex items-center gap-2">
-                {pipeline?.summary?.trade_possible ? (
-                  <Unlock className="w-5 h-5 text-emerald-400" />
-                ) : (
-                  <Lock className="w-5 h-5 text-red-400" />
-                )}
+                {pipeline?.summary?.trade_possible ? <Unlock className="w-5 h-5 text-emerald-400" /> : <Lock className="w-5 h-5 text-red-400" />}
                 <span className={pipeline?.summary?.trade_possible ? "text-emerald-400" : "text-red-400"}>
                   {pipeline?.summary?.trade_possible ? "Trading möglich" : "Trading blockiert"}
                 </span>
               </div>
+              <div className="mt-2 text-xs text-slate-500 flex flex-wrap gap-3">
+                <span>GRSS: {fmt(pipeline?.summary?.grss_score, 1)}</span>
+                <span>VIX: {fmt(pipeline?.summary?.vix, 1)}</span>
+                <span>Fresh: {String(pipeline?.summary?.data_freshness_active ?? false)}</span>
+                <span>{pipeline?.summary?.context_timestamp ? new Date(pipeline.summary.context_timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+              </div>
               {pipeline?.summary?.blocking_gates && pipeline.summary.blocking_gates.length > 0 && (
-                <p className="text-xs text-red-400 mt-2">
-                  Blockiert durch: {pipeline.summary.blocking_gates.join(" → ")}
-                </p>
+                <p className="text-xs text-red-400 mt-2">Blockiert durch: {pipeline.summary.blocking_gates.join(" → ")}</p>
               )}
             </div>
 
-            {/* Gate Details */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {gates.map((gate, i) => (
                 <GateDetail 
@@ -417,7 +460,6 @@ export default function TradingPage() {
             </div>
           </div>
 
-          {/* Quant Micro Data */}
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <h3 className="text-sm font-medium text-slate-300 mb-3">Quant Micro Daten</h3>
             <div className="grid grid-cols-2 gap-4">
@@ -456,10 +498,9 @@ export default function TradingPage() {
         </div>
       </div>
 
-      {/* Additional Metrics */}
-      <div className="mt-6 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
+      <div className="mt-2 bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
         <h3 className="text-sm font-medium text-slate-300 mb-4">Zusätzliche Marktmetriken</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
           {[
             { label: "Fear & Greed", value: fmt(market.fear_greed, 0), status: market.fear_greed && market.fear_greed > 75 ? "danger" : market.fear_greed && market.fear_greed < 25 ? "good" : "neutral" },
             { label: "DVOL", value: fmt(market.dvol, 1), status: "neutral" },

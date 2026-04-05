@@ -26,10 +26,24 @@ interface Config {
   Stop_Loss_Pct: number;
   Liq_Distance: number;
   COMPOSITE_SIGNAL_THRESHOLD?: number;
+  COMPOSITE_W_TA?: number;
+  COMPOSITE_W_LIQ?: number;
+  COMPOSITE_W_FLOW?: number;
+  COMPOSITE_W_MACRO?: number;
   TRADE_COOLDOWN_SECONDS?: number;
   DAILY_MAX_LOSS_PCT?: number;
   MAX_CONSECUTIVE_LOSSES?: number;
   BREAKEVEN_TRIGGER_PCT?: number;
+  PAPER_TRADING_ONLY?: boolean;
+  ENABLE_LLM_CASCADE_V4?: boolean;
+  LEARNING_MODE_ENABLED?: boolean;
+  // V2.2 Institutional Features
+  ATR_TRAILING_MULTIPLIER?: number;
+  TP1_SIZE_PCT?: number;
+  TP2_SIZE_PCT?: number;
+  ENABLE_ATR_TRAILING?: boolean;
+  ENABLE_VOLUME_PROFILE?: boolean;
+  ENABLE_DELTA_ABSORPTION?: boolean;
   [key: string]: any;
 }
 
@@ -57,7 +71,7 @@ interface DeepseekStatus {
 const PRESETS = {
   konservativ: {
     name: "Konservativ",
-    description: "Minimales Risiko, weniger Trades",
+    description: "Minimales Risiko, maximale Kontrolle",
     config: {
       GRSS_Threshold: 55,
       OFI_Threshold: 250,
@@ -65,8 +79,22 @@ const PRESETS = {
       Stop_Loss_Pct: 0.015,
       Liq_Distance: 0.008,
       COMPOSITE_SIGNAL_THRESHOLD: 75,
+      COMPOSITE_W_TA: 0.18,
+      COMPOSITE_W_LIQ: 0.12,
+      COMPOSITE_W_FLOW: 0.25,
+      COMPOSITE_W_MACRO: 0.45,
       DAILY_MAX_LOSS_PCT: 1.5,
       MAX_CONSECUTIVE_LOSSES: 2,
+      BREAKEVEN_TRIGGER_PCT: 0.008,
+      // V2.2 Features
+      ATR_TRAILING_MULTIPLIER: 2.0,  // Konservativer Trailing
+      TP1_SIZE_PCT: 0.6,            // Mehr bei TP1
+      TP2_SIZE_PCT: 0.4,
+      ENABLE_ATR_TRAILING: true,
+      ENABLE_VOLUME_PROFILE: true,
+      ENABLE_DELTA_ABSORPTION: true,
+      PAPER_TRADING_ONLY: true,
+      ENABLE_LLM_CASCADE_V4: false,
     }
   },
   balanced: {
@@ -79,13 +107,27 @@ const PRESETS = {
       Stop_Loss_Pct: 0.012,
       Liq_Distance: 0.006,
       COMPOSITE_SIGNAL_THRESHOLD: 65,
+      COMPOSITE_W_TA: 0.22,
+      COMPOSITE_W_LIQ: 0.18,
+      COMPOSITE_W_FLOW: 0.25,
+      COMPOSITE_W_MACRO: 0.35,
       DAILY_MAX_LOSS_PCT: 3.0,
       MAX_CONSECUTIVE_LOSSES: 3,
+      BREAKEVEN_TRIGGER_PCT: 0.005,
+      // V2.2 Features
+      ATR_TRAILING_MULTIPLIER: 1.5,  // Standard
+      TP1_SIZE_PCT: 0.5,            // 50/50 Split
+      TP2_SIZE_PCT: 0.5,
+      ENABLE_ATR_TRAILING: true,
+      ENABLE_VOLUME_PROFILE: true,
+      ENABLE_DELTA_ABSORPTION: true,
+      PAPER_TRADING_ONLY: true,
+      ENABLE_LLM_CASCADE_V4: false,
     }
   },
-  opportunistisch: {
-    name: "Opportunistisch",
-    description: "Mehr Trades, höheres Risiko",
+  aggressiv: {
+    name: "Aggressiv",
+    description: "Mehr Trades, engere Filter",
     config: {
       GRSS_Threshold: 35,
       OFI_Threshold: 150,
@@ -93,22 +135,51 @@ const PRESETS = {
       Stop_Loss_Pct: 0.01,
       Liq_Distance: 0.005,
       COMPOSITE_SIGNAL_THRESHOLD: 55,
+      COMPOSITE_W_TA: 0.20,
+      COMPOSITE_W_LIQ: 0.15,
+      COMPOSITE_W_FLOW: 0.35,
+      COMPOSITE_W_MACRO: 0.30,
       DAILY_MAX_LOSS_PCT: 5.0,
       MAX_CONSECUTIVE_LOSSES: 4,
+      BREAKEVEN_TRIGGER_PCT: 0.003,
+      // V2.2 Features
+      ATR_TRAILING_MULTIPLIER: 1.0,  // Enger Trailing
+      TP1_SIZE_PCT: 0.3,            // Weniger bei TP1
+      TP2_SIZE_PCT: 0.7,
+      ENABLE_ATR_TRAILING: true,
+      ENABLE_VOLUME_PROFILE: true,
+      ENABLE_DELTA_ABSORPTION: true,
+      PAPER_TRADING_ONLY: true,
+      ENABLE_LLM_CASCADE_V4: false,
     }
   },
-  test: {
-    name: "Test-Modus",
-    description: "Sehr strenge Limits für Tests",
+  research: {
+    name: "Research",
+    description: "Mehr Beobachtung, mehr Lernen",
     config: {
-      GRSS_Threshold: 65,
-      OFI_Threshold: 300,
+      GRSS_Threshold: 40,
+      OFI_Threshold: 180,
       Max_Leverage: 1.0,
-      Stop_Loss_Pct: 0.02,
-      Liq_Distance: 0.01,
-      COMPOSITE_SIGNAL_THRESHOLD: 85,
-      DAILY_MAX_LOSS_PCT: 1.0,
-      MAX_CONSECUTIVE_LOSSES: 1,
+      Stop_Loss_Pct: 0.014,
+      Liq_Distance: 0.006,
+      COMPOSITE_SIGNAL_THRESHOLD: 60,
+      COMPOSITE_W_TA: 0.20,
+      COMPOSITE_W_LIQ: 0.15,
+      COMPOSITE_W_FLOW: 0.30,
+      COMPOSITE_W_MACRO: 0.35,
+      DAILY_MAX_LOSS_PCT: 3.0,
+      MAX_CONSECUTIVE_LOSSES: 3,
+      BREAKEVEN_TRIGGER_PCT: 0.005,
+      // V2.2 Features
+      ATR_TRAILING_MULTIPLIER: 1.5,  // Standard
+      TP1_SIZE_PCT: 0.5,
+      TP2_SIZE_PCT: 0.5,
+      ENABLE_ATR_TRAILING: true,
+      ENABLE_VOLUME_PROFILE: true,
+      ENABLE_DELTA_ABSORPTION: true,
+      PAPER_TRADING_ONLY: true,
+      ENABLE_LLM_CASCADE_V4: true,
+      LEARNING_MODE_ENABLED: true,
     }
   }
 };
@@ -197,6 +268,10 @@ export default function SettingsPage() {
   };
 
   const updateConfigValue = (key: string, value: number) => {
+    setConfig(prev => prev ? { ...prev, [key]: value } : null);
+  };
+
+  const updateConfigBoolean = (key: string, value: boolean) => {
     setConfig(prev => prev ? { ...prev, [key]: value } : null);
   };
 
@@ -292,7 +367,11 @@ export default function SettingsPage() {
               { key: "GRSS_Threshold", label: "GRSS Mindestschwelle", unit: "" },
               { key: "OFI_Threshold", label: "OFI Schwellenwert", unit: "" },
               { key: "COMPOSITE_SIGNAL_THRESHOLD", label: "Composite Signal Threshold", unit: "" },
-            ].map(({ key, label, unit }) => (
+              { key: "COMPOSITE_W_TA", label: "Composite Gewicht TA", unit: "" },
+              { key: "COMPOSITE_W_LIQ", label: "Composite Gewicht Liquidity", unit: "" },
+              { key: "COMPOSITE_W_FLOW", label: "Composite Gewicht Flow", unit: "" },
+              { key: "COMPOSITE_W_MACRO", label: "Composite Gewicht Macro", unit: "" },
+            ].map(({ key, label }) => (
               <div key={key}>
                 <label className="text-xs text-slate-500 block mb-1">{label}</label>
                 <div className="flex items-center gap-2">
@@ -310,6 +389,29 @@ export default function SettingsPage() {
                   </span>
                 </div>
               </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section id="operations" title="Betrieb & Kontrolle" icon={Shield}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {config && [
+              { key: "PAPER_TRADING_ONLY", label: "Paper Trading Only", desc: "Hard-Lock auf Demo-Modus" },
+              { key: "ENABLE_LLM_CASCADE_V4", label: "LLM Cascade V4", desc: "Zeitbasierte Kaskade aktivieren" },
+              { key: "LEARNING_MODE_ENABLED", label: "Learning Mode", desc: "Runs für spätere Auswertung markieren" },
+            ].map(({ key, label, desc }) => (
+              <label key={key} className="flex items-center justify-between gap-4 p-4 rounded-xl border border-[#1a1a2e] bg-[#080810]">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">{label}</div>
+                  <div className="text-xs text-slate-500 mt-1">{desc}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(config[key])}
+                  onChange={(e) => updateConfigBoolean(key, e.target.checked)}
+                  className="h-5 w-5 rounded border-slate-700 bg-slate-900 text-indigo-500"
+                />
+              </label>
             ))}
           </div>
         </Section>
@@ -368,6 +470,12 @@ export default function SettingsPage() {
             <p className="text-sm text-slate-400">
               Deepseek API wird für Post-Trade Analysen und Lern-Logs verwendet. Der Verbindungstest prüft die Erreichbarkeit.
             </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-400">
+              <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">• Analyse nach Trade-Close</div>
+              <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">• Runs nur 24h, Trades dauerhaft</div>
+              <div className="rounded-xl border border-[#1a1a2e] bg-[#080810] p-3">• Manuell testbar per Button</div>
+            </div>
 
             <div className="flex items-center gap-4">
               <button

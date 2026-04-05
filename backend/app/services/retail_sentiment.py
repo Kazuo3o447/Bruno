@@ -1,17 +1,13 @@
 """
 Retail Sentiment Service — Bruno Trading Bot
 
-Sammelt Retail-Signale aus drei Quellen:
-1. Google Trends (BTC + "buy bitcoin")
-2. Reddit r/Bitcoin (Top Posts Sentiment)
-3. StockTwits (Bull/Bear Ratio)
-
+Aggregiert Social-Sentiment aus Reddit und StockTwits für den Retail-Kontext.
 Datenfluss:
 - Alle 6 Stunden aktualisiert
 - In Redis gecacht (bruno:retail:sentiment)
 - An ContextAgent für GRSS-Berechnung weitergegeben
 
-FOMO-Warning: Wenn alle drei Quellen gleichzeitig extrem bullish
+FOMO-Warning: Wenn beide Quellen gleichzeitig extrem bullish
 → Telegram-Alert + Failure Watch Trigger
 """
 
@@ -43,9 +39,6 @@ class RetailSentimentService:
         """
         now = datetime.now(timezone.utc)
         
-        # Google Trends
-        google_score = await self._fetch_google_trends()
-        
         # Reddit r/Bitcoin
         reddit_score = await self._fetch_reddit_sentiment()
         
@@ -53,23 +46,22 @@ class RetailSentimentService:
         stocktwits_score = await self._fetch_stocktwits_ratio()
         
         # Aggregierter Score (-1.0 bis +1.0)
-        scores = [s for s in [google_score, reddit_score, stocktwits_score] if s is not None]
+        scores = [s for s in [reddit_score, stocktwits_score] if s is not None]
         retail_score = sum(scores) / len(scores) if scores else 0.0
         
         # FOMO-Warning: alle > 0.7
         fomo_warning = all(
             s is not None and s > 0.7 
-            for s in [google_score, reddit_score, stocktwits_score]
+            for s in [reddit_score, stocktwits_score]
         )
         
         result = {
             "retail_score": retail_score,
-            "google_trends": google_score,
             "reddit_sentiment": reddit_score,
             "stocktwits_ratio": stocktwits_score,
             "fomo_warning": fomo_warning,
             "last_update": now.isoformat(),
-            "sources_active": len(scores)
+            "data_sources": ["reddit", "stocktwits"]
         }
         
         # In Redis cachen
@@ -82,84 +74,8 @@ class RetailSentimentService:
         self._last_update = now.timestamp()
         return result
 
-    async def _fetch_google_trends(self) -> Optional[float]:
-        """
-        Google Trends für "bitcoin" und "buy bitcoin".
-        Normalisiert auf 0-100, dann auf -1 bis +1.
-        """
-        try:
-            # pytrends wäre ideal, aber hat Probleme mit headless
-            # Wir nutzen einen simpleren HTTP-Ansatz mit public data
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                # Multi-Interest-Query (bis zu 5 Topics)
-                payload = {
-                    "req": {
-                        "comparisonItem": [
-                            {"geo": "", "timeRange": "now 7-d", "complexKeywordsRestriction": {"keyword": [{"type": "BROAD", "value": "bitcoin"}]}},
-                            {"geo": "", "timeRange": "now 7-d", "complexKeywordsRestriction": {"keyword": [{"type": "BROAD", "value": "buy bitcoin"}]}}
-                        ],
-                        "category": 0,
-                        "property": ""
-                    }
-                }
-                
-                resp = await client.post(
-                    "https://trends.google.com/trends/api/explore",
-                    json=payload
-                )
-                
-                if resp.status_code == 200:
-                    # Parsen der JSON-Antwort
-                    data = resp.json()
-                    widgets = data.get("widgets", [])
-                    
-                    bitcoin_trend = None
-                    buy_bitcoin_trend = None
-                    
-                    for widget in widgets:
-                        title = widget.get("title", "").lower()
-                        if "bitcoin" in title and "buy" not in title:
-                            bitcoin_trend = widget
-                        elif "buy bitcoin" in title:
-                            buy_bitcoin_trend = widget
-                    
-                    if bitcoin_trend and buy_bitcoin_trend:
-                        # Durchschnittliche Werte der letzten 7 Tage
-                        btc_avg = self._extract_avg_trend(bitcoin_trend)
-                        buy_avg = self._extract_avg_trend(buy_bitcoin_trend)
-                        
-                        if btc_avg is not None and buy_avg is not None:
-                            # Kombinierter Score: "buy bitcoin" hat mehr Gewicht
-                            combined = (btc_avg * 0.3 + buy_avg * 0.7) / 50.0  # → 0-2
-                            normalized = (combined - 1.0)  # → -1 bis +1
-                            return max(-1.0, min(1.0, normalized))
-                
-        except Exception as e:
-            logger.warning(f"Google Trends Fehler: {e}")
-        
-        return None
-
-    def _extract_avg_trend(self, widget: Dict) -> Optional[float]:
-        """Extrahiert den Durchschnittswert aus einem Google Trends Widget."""
-        try:
-            timeline_data = widget.get("lineData", [])
-            if not timeline_data:
-                return None
-            
-            values = [item.get("formattedValue", "0") for item in timeline_data]
-            # "1.2K" → 1200, "890" → 890
-            numeric_values = []
-            for v in values:
-                if "K" in v:
-                    numeric_values.append(float(v.replace("K", "")) * 1000)
-                elif "M" in v:
-                    numeric_values.append(float(v.replace("M", "")) * 1000000)
-                else:
-                    numeric_values.append(float(v))
-            
-            return sum(numeric_values) / len(numeric_values) if numeric_values else None
-        except:
-            return None
+    # Legacy helper removed. Social sentiment aggregation is intentionally limited
+    # to the active sources above.
 
     async def _get_reddit_token(self) -> Optional[str]:
         """App-Only OAuth, kein User-Login. Token gilt 24h."""

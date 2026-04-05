@@ -215,6 +215,15 @@ class RiskAgent(PollingAgent):
             if not context or not micro:
                 veto, reason = True, "DATA GAP: Missing input signals."
             
+            # ── 1.1 API Data Gap (institutionell) ───────────────────
+            if not veto:
+                # Kritische API-Werte müssen vorhanden sein
+                dvol = context.get("DVOL")
+                ls_ratio = context.get("Long_Short_Ratio")
+                
+                if dvol is None or ls_ratio is None:
+                    veto, reason = True, f"DATA GAP: Critical API missing - DVOL={dvol}, L/S={ls_ratio}"
+            
             # ── 2. News Silence (ContextAgent tot) ─────────────
             if not veto:
                 ts = context.get("timestamp")

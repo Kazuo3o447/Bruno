@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Fragment } from "react";
 import {
   Terminal,
   Filter,
@@ -195,15 +195,18 @@ export default function LogViewerPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white p-6">
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-[#0a0a0f] text-white p-4 lg:p-6 space-y-4">
+      <div className="rounded-3xl border border-[#1a1a2e] bg-gradient-to-br from-indigo-950/25 via-[#0c0c18] to-[#080810] p-5 lg:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Logs</h1>
-            <p className="text-sm text-slate-500">Vollständiges System-Logging</p>
+            <div className="text-xs uppercase tracking-[0.28em] text-slate-500 font-bold">Logs · Forensik</div>
+            <h1 className="text-2xl lg:text-3xl font-bold mt-2">Alles, was die Plattform tut — vollständig und durchsuchbar</h1>
+            <p className="text-sm text-slate-400 mt-2 max-w-3xl">
+              Fehler, Warnungen und Kontext werden hier bewusst dicht dargestellt, damit du ohne Umweg nachvollziehen kannst, was Bruno getan hat.
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs ${wsConnected ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
+          <div className="flex flex-wrap items-center gap-3 justify-start lg:justify-end">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${wsConnected ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/20 text-red-400"}`}>
               {wsConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
               {wsConnected ? "Live" : "Offline"}
             </div>
@@ -228,13 +231,15 @@ export default function LogViewerPage() {
       </div>
 
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mb-4">
-          <div className="p-3 bg-slate-900/50 rounded-lg text-center">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="p-3 bg-slate-900/50 rounded-xl border border-slate-800 text-center">
             <div className="text-xs text-slate-500">Total</div>
             <div className="text-lg font-bold text-slate-300">{stats.total}</div>
           </div>
-          {["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"].map(level => (
-            <div key={level} className="p-3 bg-slate-900/50 rounded-lg text-center">
+          {[
+            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+          ].map(level => (
+            <div key={level} className="p-3 bg-slate-900/50 rounded-xl border border-slate-800 text-center">
               <div className="text-xs text-slate-500">{level}</div>
               <div className={`text-lg font-bold ${getLevelColor(level).split(" ")[0]}`}>
                 {stats.by_level[level] || 0}
@@ -315,7 +320,7 @@ export default function LogViewerPage() {
             </thead>
             <tbody className="text-sm divide-y divide-slate-800/50">
               {logs.map((log) => (
-                <>
+                <Fragment key={log.id}>
                   <tr key={log.id} className="hover:bg-slate-800/30 cursor-pointer" onClick={() => setExpandedLog(expandedLog === log.id ? null : log.id)}>
                     <td className="px-4 py-2 text-xs text-slate-400 font-mono whitespace-nowrap">
                       {new Date(log.timestamp).toLocaleTimeString("de-DE")}
@@ -355,7 +360,7 @@ export default function LogViewerPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -376,6 +381,21 @@ export default function LogViewerPage() {
 
         <div ref={logsEndRef} />
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs text-slate-500">
+        <div className="rounded-xl border border-slate-800 bg-[#0c0c18] p-3">Live-Stream zeigt neue Einträge sofort an.</div>
+        <div className="rounded-xl border border-slate-800 bg-[#0c0c18] p-3">Metadaten lassen sich pro Eintrag expandieren und kopieren.</div>
+        <div className="rounded-xl border border-slate-800 bg-[#0c0c18] p-3">Filter und Export sind für Debugging und Audit gedacht.</div>
+      </div>
     </div>
   );
+}
+
+function timeAgo(isoStr: string): string {
+  if (!isoStr) return "—";
+  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+  if (diff < 60) return `${diff}s`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return `${Math.floor(diff / 86400)}d`;
 }

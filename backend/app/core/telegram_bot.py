@@ -358,7 +358,7 @@ class BrunoTelegramBot:
         await self._send(
             f"⚠️ *FOMO-WARNING*\n"
             f"Retail Score: {retail_score:.3f}\n"
-            f"Google Trends + Reddit + StockTwits gleichzeitig extrem bullish.\n"
+            f"Reddit + StockTwits gleichzeitig extrem bullish.\n"
             f"Historisch: Top-Signal. Reversal-Risiko erhöht."
         )
 

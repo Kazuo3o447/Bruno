@@ -73,6 +73,10 @@ export default function MonitorPage() {
   const [error, setError] = useState("");
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
+  const freshSourceCount = Object.values(healthSources).filter(s => ["online", "healthy", "connected", "success", "running", "ok"].includes(s.status.toLowerCase())).length;
+  const warningSourceCount = Object.values(healthSources).filter(s => ["degraded", "warning", "fallback", "partial"].includes(s.status.toLowerCase())).length;
+  const healthyAgentCount = agentStatuses.filter(a => a.healthy).length;
+
   const fetchData = useCallback(async () => {
     try {
       const [testRes, agentRes, schedRes, healthRes] = await Promise.allSettled([
@@ -165,39 +169,45 @@ export default function MonitorPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white p-6">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-[#0a0a0f] text-white p-4 lg:p-6 space-y-4">
+      <div className="rounded-3xl border border-[#1a1a2e] bg-gradient-to-br from-indigo-950/25 via-[#0c0c18] to-[#080810] p-5 lg:p-6">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Monitor</h1>
-            <p className="text-sm text-slate-500">System- & API-Status Überwachung</p>
+            <div className="text-xs uppercase tracking-[0.28em] text-slate-500 font-bold">Monitor · Kontrolle</div>
+            <h1 className="text-2xl lg:text-3xl font-bold mt-2">System-, API- und Agentengesundheit in Echtzeit</h1>
+            <p className="text-sm text-slate-400 mt-2 max-w-3xl">
+              Hier siehst du, was gerade wirklich läuft, was zuletzt geprüft wurde und wann der nächste Test ansteht.
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-500">
-              Letzte Aktualisierung: {lastUpdate.toLocaleTimeString("de-DE")}
-            </span>
-            <button
-              onClick={runSystemTest}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm transition-colors disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-              {loading ? "Teste..." : "System-Test"}
-            </button>
+          <div className="grid grid-cols-2 gap-3 min-w-[280px]">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Letzter Test</div>
+              <div className="mt-1 text-sm font-semibold text-white">{lastUpdate.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Nächster Test</div>
+              <div className="mt-1 text-sm font-semibold text-indigo-400">{schedulerStatus?.next_run ? new Date(schedulerStatus.next_run).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "—"}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Quellen</div>
+              <div className="mt-1 text-sm font-semibold text-emerald-400">{freshSourceCount}/{Object.keys(healthSources).length || 0}</div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+              <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Agenten</div>
+              <div className="mt-1 text-sm font-semibold text-slate-200">{healthyAgentCount}/{agentStatuses.length || 0}</div>
+            </div>
           </div>
         </div>
       </div>
 
       {error && (
-        <div className="mb-6 bg-red-950/30 border border-red-800 rounded-xl p-4">
+        <div className="bg-red-950/30 border border-red-800 rounded-xl p-4">
           <AlertTriangle className="w-5 h-5 text-red-400 inline mr-2" />
           <span className="text-red-400">{error}</span>
         </div>
       )}
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <div className={`p-4 rounded-xl border ${getStatusColor(testResults?.overall_status || "unknown")}`}>
           <div className="flex items-center gap-2 mb-2">
             <Activity className="w-5 h-5" />
@@ -253,9 +263,7 @@ export default function MonitorPage() {
         </div>
       </div>
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: System Tests */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
         <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-slate-300">System-Tests</h3>
@@ -308,9 +316,7 @@ export default function MonitorPage() {
           </div>
         </div>
 
-        {/* Right: Agent Status & Data Sources */}
-        <div className="space-y-6">
-          {/* Agent Status */}
+        <div className="space-y-4">
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <h3 className="text-sm font-medium text-slate-300 mb-4">Agenten-Status</h3>
             <div className="space-y-2">
@@ -340,7 +346,6 @@ export default function MonitorPage() {
             </div>
           </div>
 
-          {/* Data Sources */}
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <h3 className="text-sm font-medium text-slate-300 mb-4">Datenquellen</h3>
             <div className="space-y-2 max-h-[300px] overflow-y-auto">
@@ -363,9 +368,13 @@ export default function MonitorPage() {
                 </div>
               )}
             </div>
+            <div className="mt-3 flex flex-wrap gap-3 text-xs text-slate-500">
+              <span>Fresh: {freshSourceCount}</span>
+              <span>Warning: {warningSourceCount}</span>
+              <span>Healthy Agents: {healthyAgentCount}</span>
+            </div>
           </div>
 
-          {/* Scheduler Control */}
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <h3 className="text-sm font-medium text-slate-300 mb-4">Scheduler Steuerung</h3>
             <div className="flex gap-2">
@@ -409,6 +418,12 @@ export default function MonitorPage() {
                   <div className="p-2 bg-[#080810] rounded col-span-2">
                     <span className="text-slate-500">Last Run:</span>
                     <span className="ml-2 text-slate-300">{new Date(schedulerStatus.last_run).toLocaleString("de-DE")}</span>
+                  </div>
+                )}
+                {schedulerStatus.next_run && (
+                  <div className="p-2 bg-[#080810] rounded col-span-2">
+                    <span className="text-slate-500">Next Run:</span>
+                    <span className="ml-2 text-slate-300">{new Date(schedulerStatus.next_run).toLocaleString("de-DE")}</span>
                   </div>
                 )}
               </div>

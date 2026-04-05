@@ -11,7 +11,7 @@ from typing import List, Dict, Optional, Callable
 from enum import Enum
 from dataclasses import dataclass, asdict
 
-from app.core.redis_client import redis_client
+from app.core.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class LogManager:
     """
     
     def __init__(self, max_logs: int = 10000):
-        self.redis = redis_client
+        self.redis = RedisClient()
         self.max_logs = max_logs
         self.log_key = "logs:all"
         self.channel = "logs:live"
@@ -77,13 +77,17 @@ class LogManager:
         """Initialisiert den Log-Manager"""
         if not self._initialized:
             try:
-                # Prüfen ob Redis bereits connected ist
+                # Sicherstellen dass Redis verbunden ist
                 if not self.redis.redis:
                     await self.redis.connect()
+                # Nochmal prüfen ob Verbindung funktioniert
+                if not self.redis.redis:
+                    raise Exception("Redis Verbindung fehlgeschlagen")
                 self._initialized = True
                 await self.info(LogCategory.SYSTEM, "LogManager", "Log-System initialisiert")
             except Exception as e:
                 logger.error(f"LogManager Init Fehler: {e}")
+                raise
     
     async def _cleanup_old_logs(self):
         """Löscht Logs, die älter als 24 Stunden sind."""

@@ -11,6 +11,11 @@ interface Position {
   quantity: number;
   stop_loss_price: number | null;
   take_profit_price: number | null;
+  // FIX: V2.2 Multi-Level-Exit Felder
+  take_profit_1_price: number | null;
+  take_profit_2_price: number | null;
+  tp1_hit: boolean;
+  atr_trailing_enabled: boolean;
   current_price?: number;
   current_pnl_pct?: number;
   current_pnl_eur?: number;
@@ -77,7 +82,9 @@ export default function ActivePositions() {
               <th className="px-6 py-3">Side</th>
               <th className="px-6 py-3 text-right">Entry</th>
               <th className="px-6 py-3 text-right">Quantity</th>
-              <th className="px-6 py-3 text-right">SL / TP</th>
+              {/* FIX: V2.2 Multi-Level-Exit UI */}
+              <th className="px-6 py-3 text-right">TP1 / TP2</th>
+              <th className="px-6 py-3 text-right">Trailing SL</th>
               <th className="px-6 py-3 text-right">Current PnL</th>
             </tr>
           </thead>
@@ -105,12 +112,32 @@ export default function ActivePositions() {
                     <span className="text-xs font-mono text-slate-300">{pos.quantity}</span>
                   </td>
                   <td className="px-6 py-4 text-right">
+                    {/* FIX: V2.2 Multi-Level-Exit UI */}
                     <div className="flex flex-col items-end gap-1">
-                      <div className="flex items-center gap-1.5 text-[10px] text-red-400 font-medium font-mono">
-                        <Shield className="w-2.5 h-2.5" /> ${pos.stop_loss_price?.toLocaleString() || '—'}
+                      <div className={`flex items-center gap-1.5 text-[10px] font-medium font-mono ${
+                        pos.tp1_hit ? 'text-emerald-400' : 'text-slate-500'
+                      }`}>
+                        <Target className="w-2.5 h-2.5" /> 
+                        TP1: ${pos.take_profit_1_price?.toLocaleString() || '—'}
+                        {pos.tp1_hit && ' ✓'}
                       </div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-emerald-400 font-medium font-mono">
-                        <Target className="w-2.5 h-2.5" /> ${pos.take_profit_price?.toLocaleString() || '—'}
+                      <div className={`flex items-center gap-1.5 text-[10px] font-medium font-mono ${
+                        pos.tp1_hit ? 'text-slate-500' : 'text-slate-600'
+                      }`}>
+                        <Target className="w-2.5 h-2.5" /> 
+                        TP2: ${pos.take_profit_2_price?.toLocaleString() || '—'}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    {/* FIX: Live Trailing Stop */}
+                    <div className="flex flex-col items-end gap-1">
+                      <div className={`flex items-center gap-1.5 text-[10px] font-medium font-mono ${
+                        pos.atr_trailing_enabled ? 'text-orange-400' : 'text-red-400'
+                      }`}>
+                        <Shield className="w-2.5 h-2.5" /> 
+                        ${pos.stop_loss_price?.toLocaleString() || '—'}
+                        {pos.atr_trailing_enabled && ' (Trailing)'}
                       </div>
                     </div>
                   </td>

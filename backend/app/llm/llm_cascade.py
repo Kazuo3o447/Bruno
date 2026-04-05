@@ -159,7 +159,6 @@ GRSS: {market_context.get('grss', 'N/A')}
 ETF Flows: {market_context.get('etf_flow_today_m', 'N/A')}
 OI-7d: {market_context.get('oi_7d_change_pct', 'N/A')}
 OI-Trend: {market_context.get('oi_trend', 'N/A')}
-Max Pain Distance: {market_context.get('max_pain_dist_pct', 'N/A')}%
 VIX: {market_context.get('vix', 'N/A')}
 
 Gib zurück als JSON:
