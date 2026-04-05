@@ -460,13 +460,22 @@ class LiquidityEngine:
         # Orderbuch-Wall-Imbalance (±10)
         imbalance = ob_walls.get("wall_imbalance", 1.0)
         if imbalance > 1.5:
-            score += 10   # Mehr Bid-Walls = bullisch
+            score += 10
         elif imbalance < 0.67:
-            score -= 10   # Mehr Ask-Walls = bärisch
+            score -= 10
         elif imbalance > 1.2:
             score += 5
         elif imbalance < 0.83:
             score -= 5
+
+        # NEU: Nearest-Wall-Proximity (±5)
+        # Wenn ein Wall in der Nähe ist, wird Preis davon angezogen/abgestoßen
+        nearest_bid = ob_walls.get("nearest_bid_wall")
+        nearest_ask = ob_walls.get("nearest_ask_wall")
+        if nearest_bid and abs(nearest_bid.get("distance_pct", 99)) < 1.0:
+            score += 5  # Starker Bid-Wall unter uns = Support = bullish
+        if nearest_ask and abs(nearest_ask.get("distance_pct", 99)) < 1.0:
+            score -= 5  # Starker Ask-Wall über uns = Resistance = bearish
         
         return round(max(-50, min(50, score)), 1)
 

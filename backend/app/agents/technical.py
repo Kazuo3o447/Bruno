@@ -731,7 +731,7 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "nearest_ask_wall": None, "wall_imbalance": 1.0}
 
     def _calculate_ta_score(self, trend, rsi, sr_levels, breakout, volume,
-                             price, ema_9, ema_21, vwap, mtf, wick, regime) -> dict:
+                             price, ema_9, ema_21, vwap, mtf, wick, regime, session) -> dict:
         """
         Normalisierter TA-Score (-100 bis +100).
         Positiv = bullisch, negativ = bärisch.
@@ -739,16 +739,25 @@ class TechnicalAnalysisAgent(PollingAgent):
         score = 0.0
         signals = []
         
-        # Trend (25%)
+        # Trend (25%) — mit Ranging-Kompensation
         stack = trend.get("ema_stack", "mixed")
-        if stack == "perfect_bull": 
+        if stack == "perfect_bull":
             score += 25; signals.append("Perfect bull EMA stack")
-        elif stack == "bull": 
+        elif stack == "bull":
             score += 18; signals.append("Bull EMA stack")
-        elif stack == "perfect_bear": 
+        elif stack == "perfect_bear":
             score -= 25; signals.append("Perfect bear EMA stack")
-        elif stack == "bear": 
+        elif stack == "bear":
             score -= 18; signals.append("Bear EMA stack")
+        elif stack == "mixed":
+            # NEU: Im Mixed-Stack prüfe ob sich ein Trend aufbaut
+            # Wenn die kurzen EMAs (9, 21) aligned sind, tendiert der Markt
+            if ema_9 > ema_21:
+                score += 8
+                signals.append("Short-term EMAs bullish (trend building)")
+            elif ema_9 < ema_21:
+                score -= 8
+                signals.append("Short-term EMAs bearish (trend building)")
         
         # MTF-Alignment (20%)
         alignment = mtf.get("alignment_score", 0)
@@ -789,14 +798,21 @@ class TechnicalAnalysisAgent(PollingAgent):
             volume.get("current_vs_avg", 0) > 1.3):
             score += 5; signals.append("Breakout candidate up with volume")
         
-        # Volume (10%)
+        # Volume (10%) — session-aware
         vol_ratio = volume.get("current_vs_avg", 1.0)
-        if vol_ratio > 1.5: 
+        session_name = session.get("session", "us") if isinstance(session, dict) else "us"
+
+        if vol_ratio > 1.5:
             score += 8; signals.append("High volume confirmation")
-        elif vol_ratio > 1.2: 
+        elif vol_ratio > 1.2:
             score += 4
-        elif vol_ratio < 0.5: 
-            score -= 5; signals.append("Low volume warning")
+        elif vol_ratio < 0.5:
+            # Nur in aktiven Sessions ist Low Volume ein Warnsignal
+            if session_name in ("europe", "eu_us_overlap", "us"):
+                score -= 5; signals.append("Low volume warning")
+            else:
+                # Asia/Late-US: low volume ist normal, keine Penalty
+                pass
         
         # VWAP (10%)
         if price > vwap * 1.001: 
@@ -940,8 +956,8 @@ class TechnicalAnalysisAgent(PollingAgent):
             delta_analysis = self._calc_15m_delta_bars(candles_15m)
             
             # 13. TA-Score
-            ta_score = self._calculate_ta_score(trend, rsi_14, sr_levels, breakout, 
-                                                 volume, price, ema_9, ema_21, vwap, mtf, wick, regime)
+            ta_score = self._calculate_ta_score(trend, rsi_14, sr_levels, breakout,
+                                                 volume, price, ema_9, ema_21, vwap, mtf, wick, regime, session)
             
             # 13. Snapshot → Redis
             snapshot = {

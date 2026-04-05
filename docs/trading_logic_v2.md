@@ -311,6 +311,19 @@ Component weights:
 - VWAP: 10%
 - Wick bonus: 5%
 
+**Trend-Block mit Ranging-Kompensation (Prompt 7 NEU):**
+- `perfect_bull` / `perfect_bear`: ±25
+- `bull` / `bear`: ±18
+- `mixed`: ±8 wenn EMA9/21 aligned (Trend building)
+  - EMA9 > EMA21: +8 (Short-term EMAs bullish)
+  - EMA9 < EMA21: -8 (Short-term EMAs bearish)
+
+**Volume-Block Session-Aware (Prompt 7 NEU):**
+- `vol_ratio > 1.5`: +8 (High volume confirmation)
+- `vol_ratio > 1.2`: +4
+- `vol_ratio < 0.5`: -5 (nur in EU/US/Overlap Sessions)
+  - Asia/Late-US: Keine Penalty (low volume ist normal)
+
 MTF filter:
 
 - If the resulting direction is long and `aligned_long == false`, multiply the TA score by `0.3`.
@@ -448,6 +461,7 @@ Components:
 - Asymmetry bias: `±10`
 - Confirmed sweep: `±20`
 - Orderbook wall imbalance: `±10`
+- **Nearest-Wall Proximity (Prompt 7 NEU): `±5`**
 
 Wall imbalance interpretation:
 
@@ -456,6 +470,12 @@ Wall imbalance interpretation:
 - `0.83 <= wall_imbalance <= 1.2` → neutral
 - `0.67 <= wall_imbalance < 0.83` → `-5`
 - `wall_imbalance < 0.67` → `-10`
+
+**Nearest-Wall Proximity (Prompt 7):**
+- Bid-Wall innerhalb 1%: `+5` (Support = bullish)
+- Ask-Wall innerhalb 1%: `-5` (Resistance = bearish)
+
+Begründung: Wenn ein Wall in der Nähe ist, wird Preis davon angezogen/abgestoßen.
 
 ## 5. Composite Scoring
 
@@ -535,10 +555,12 @@ Direction:
 
 ### 5.5 Threshold and Sweep Bonus
 
-Thresholds from config:
+Thresholds from config (Prompt 7 Kalibrierung):
 
-- learning: `COMPOSITE_THRESHOLD_LEARNING = 35`
-- production: `COMPOSITE_THRESHOLD_PROD = 55`
+- learning: `COMPOSITE_THRESHOLD_LEARNING = 18` (was 35)
+- production: `COMPOSITE_THRESHOLD_PROD = 40` (was 55)
+
+**Begründung:** Learning Mode soll Daten sammeln - jeder Trade mit Score > 18 und Confluence ist ein Datenpunkt. Production 40 ist selektiv genug nach Score-Fixes.
 
 Sweep bonus:
 
@@ -547,6 +569,43 @@ effective_threshold = max(30, threshold - 15)
 ```
 
 applies when `sweep_confirmed = true`.
+
+### 5.5.1 Signal-Confluence-Bonus (Prompt 7 NEU)
+
+Wenn 3+ unabhängige Signal-Quellen in dieselbe Richtung zeigen, ist die Wahrscheinlichkeit eines erfolgreichen Trades signifikant höher.
+
+**Signal-Quellen:**
+- TA Richtung (ta_score > 10 / < -10)
+- Liq Richtung (liq_score > 5 / < -5)
+- Flow Richtung (flow_score > 10 / < -10)
+- Macro Richtung (macro_score > 5 / < -5)
+- MTF Alignment (mtf_aligned + ta_score direction)
+- VWAP Position (Above/Below VWAP)
+
+**Bonus-Formel:**
+```text
+dominant_count = max(bull_count, bear_count)
+if dominant_count >= 3:
+    bonus = (dominant_count - 2) * 8  # +8 pro Signal ab dem 3.
+```
+
+Beispiel: 5 aligned bull signals → bonus = (5-2) × 8 = +24
+
+### 5.5.2 Regime-Kompensation (Prompt 7 NEU)
+
+Ranging-Märkte produzieren strukturell niedrigere TA-Scores weil der Trend-Block (25 Punkte) bei "mixed" EMA-Stack ~0 ist.
+
+**Boost-Logik:**
+```text
+if regime in ("ranging", "high_vola") and abs(composite) > 10:
+    ranging_boost = abs(composite) * 0.15  # +15% Score Boost
+    if composite > 0:
+        composite += ranging_boost
+    else:
+        composite -= ranging_boost
+```
+
+Kompensiert systematische Benachteiligung von Ranging-Setups.
 
 ### 5.6 MTF Filter
 
@@ -788,8 +847,8 @@ This conservative approach reflects real-world execution where stop-loss orders 
 
 ```json
 {
-  "COMPOSITE_THRESHOLD_LEARNING": 45,
-  "COMPOSITE_THRESHOLD_PROD": 60,
+  "COMPOSITE_THRESHOLD_LEARNING": 18,  // Prompt 7: war 35
+  "COMPOSITE_THRESHOLD_PROD": 40,     // Prompt 7: war 55
   "COMPOSITE_W_TA": 0.40,
   "COMPOSITE_W_LIQ": 0.25,
   "COMPOSITE_W_FLOW": 0.20,
@@ -806,6 +865,15 @@ This conservative approach reflects real-world execution where stop-loss orders 
 ```
 
 If all four `COMPOSITE_W_*` keys are present, config override can replace the default presets. Otherwise the regime defaults apply.
+
+**Prompt 7 Kalibrierungs-Änderungen:**
+- Learning Threshold: 35 → 18 (für mehr Trades im Learning Mode)
+- Production Threshold: 55 → 40 (nach Score-Fixes realistischer)
+- Signal-Confluence-Bonus: +8 pro aligned Signal ab dem 3.
+- Regime-Kompensation: +15% Boost in ranging/high_vola
+- TA Ranging-Kompensation: ±8 für "mixed" EMA mit aligned short-term EMAs
+- Volume Session-Aware: Keine Penalty in Asia/Late-US
+- Liq Nearest-Wall: ±5 für Walls innerhalb 1%
 
 ## 11. Post-Trade Analysis with Deepseek API
 
@@ -870,5 +938,14 @@ Bruno v2.2 is a deterministic, regime-adaptive trading system with institutional
 - **Backtester:** 1-minute candles with intrabar pessimism rule
 - **Execution:** Position-specific state, TP1 maker fee (0.01%), multi-level exits
 - **Purge Complete:** No Max Pain or Google Trends references in system
+- **Prompt 7 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware scoring
+
+**Prompt 7 Kalibrierung (April 2026):**
+- Thresholds angepasst für realistischere Trade-Generierung (Learning: 18, Prod: 40)
+- Signal-Confluence-Bonus: Belohnt überlappende Signale (3+ aligned → +8 pro Signal)
+- Regime-Kompensation: +15% Boost in Ranging-Märkten um strukturelle Benachteiligung auszugleichen
+- TA Ranging-Kompensation: "mixed" EMA Stack gibt ±8 wenn kurzfristige EMAs aligned sind
+- Volume Session-Aware: Keine Penalty in inaktiven Sessions (Asia/Late-US)
+- Liq Nearest-Wall Proximity: ±5 Punkte wenn Orderbuch-Walls innerhalb 1%
 
 This document is the canonical reference for trading logic in v2.2.

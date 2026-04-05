@@ -141,7 +141,7 @@ class CompositeScorer:
         result.liq_score = liq_score
         result.flow_score = flow_score
         result.macro_score = macro_score
-        
+
         # 3. Regime bestimmen → Gewichte wählen (NEU: dynamisch)
         regime = self._determine_regime(ta_data, macro_data)
         result.regime = regime
@@ -149,6 +149,11 @@ class CompositeScorer:
         trend_strength = float(ta_data.get("trend", {}).get("strength", 0.0))
         weights = self._get_weights(regime, trend_strength)
         result.weight_preset = self._blend_label(self._regime_blend(regime, trend_strength), regime)
+
+        # MTF + Sweep Status (VOR Confluence-Bonus setzen!)
+        result.mtf_aligned = ta_data.get("ta_score", {}).get("mtf_aligned", False)
+        sweep = liq_data.get("sweep", {})
+        result.sweep_confirmed = sweep.get("all_confirmed", False)
         
         # 4. Gewichteter Composite Score
         # TA: -100..+100, Liq/Flow/Macro: -50..+50 (×2 normalisiert auf 100)
@@ -159,15 +164,90 @@ class CompositeScorer:
             (macro_score * 2) * weights["macro"]
         )
         result.composite_score = round(max(-100, min(100, composite)), 1)
-        
+
+        # 4b. Signal-Confluence-Bonus (NEU)
+        # Wenn 3+ unabhängige Signal-Quellen in dieselbe Richtung zeigen,
+        # ist die Wahrscheinlichkeit eines erfolgreichen Trades signifikant höher.
+        # Bonus: +8 pro zusätzlichem aligned Signal ab dem 3. Signal.
+        confluence_signals = []
+
+        # TA Richtung
+        if ta_score > 10:
+            confluence_signals.append("ta_bull")
+        elif ta_score < -10:
+            confluence_signals.append("ta_bear")
+
+        # Liq Richtung
+        if liq_score > 5:
+            confluence_signals.append("liq_bull")
+        elif liq_score < -5:
+            confluence_signals.append("liq_bear")
+
+        # Flow Richtung
+        if flow_score > 10:
+            confluence_signals.append("flow_bull")
+        elif flow_score < -10:
+            confluence_signals.append("flow_bear")
+
+        # Macro Richtung
+        if macro_score > 5:
+            confluence_signals.append("macro_bull")
+        elif macro_score < -5:
+            confluence_signals.append("macro_bear")
+
+        # MTF Alignment als eigenständiges Signal
+        if result.mtf_aligned:
+            if ta_score > 0:
+                confluence_signals.append("mtf_bull")
+            elif ta_score < 0:
+                confluence_signals.append("mtf_bear")
+
+        # VWAP Position als eigenständiges Signal
+        ta_signals = ta_data.get("ta_score", {}).get("signals", [])
+        if any("Above VWAP" in s for s in ta_signals):
+            confluence_signals.append("vwap_bull")
+        elif any("Below VWAP" in s for s in ta_signals):
+            confluence_signals.append("vwap_bear")
+
+        # Zähle Bull vs Bear Signale
+        bull_count = sum(1 for s in confluence_signals if s.endswith("_bull"))
+        bear_count = sum(1 for s in confluence_signals if s.endswith("_bear"))
+
+        dominant_count = max(bull_count, bear_count)
+
+        # Confluence Bonus: ab 3 aligned Signale
+        if dominant_count >= 3:
+            bonus = (dominant_count - 2) * 8  # +8 pro Signal ab dem 3.
+            if bull_count > bear_count:
+                composite += bonus
+                result.signals_active.append(f"Confluence Bonus +{bonus} ({bull_count} bull signals)")
+            else:
+                composite -= bonus
+                result.signals_active.append(f"Confluence Bonus -{bonus} ({bear_count} bear signals)")
+
+        result.composite_score = round(max(-100, min(100, composite)), 1)
+
+        # 4c. Regime-Kompensation (NEU)
+        # Ranging-Märkte produzieren strukturell niedrigere TA-Scores weil
+        # der Trend-Block (25 Punkte) bei "mixed" EMA-Stack ~0 ist.
+        # Kompensiere durch Score-Scaling damit Ranging-Setups nicht
+        # systematisch benachteiligt werden.
+        if regime in ("ranging", "high_vola"):
+            # In Ranging: Der relevante Signal ist nicht Trend, sondern
+            # Confluence + Flow + Liq. Wenn diese positiv sind, scale up.
+            if abs(composite) > 10:  # Minimum-Signal vorhanden
+                ranging_boost = abs(composite) * 0.15  # +15% Score Boost
+                if composite > 0:
+                    composite += ranging_boost
+                else:
+                    composite -= ranging_boost
+                result.signals_active.append(f"Ranging regime boost: +{ranging_boost:.1f}")
+
+        result.composite_score = round(max(-100, min(100, composite)), 1)
+
         # 5. Richtung
         result.direction = "long" if composite > 0 else "short" if composite < 0 else "neutral"
-        
-        # 6. MTF + Sweep Status
-        result.mtf_aligned = ta_data.get("ta_score", {}).get("mtf_aligned", False)
-        sweep = liq_data.get("sweep", {})
-        result.sweep_confirmed = sweep.get("all_confirmed", False)
-        
+
         # 7. Threshold + Bonus-Logik
         atr = float(ta_data.get("atr_14", 0.0) or 0.0)
         threshold = self._get_threshold(atr, result.price, macro_data)

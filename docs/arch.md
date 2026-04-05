@@ -1,10 +1,11 @@
 # Architektur-Manifest
 
 > **Referenz: WINDSURF_MANIFEST.md v2.2**
-> 
+>
 > ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
 > ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, None-basierte Data-Gap-Behandlung
 > ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
+> ✅ **Prompt 7 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware TA/Volume/Liq
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
@@ -327,6 +328,19 @@ ADD COLUMN layer3_output JSONB;
 - [x] **Live Marktdaten**: Ticker, Klines, Orderbook, Funding, OI, Liquidations
 - [x] **Frontend Integration**: Frische Daten für Dashboard und Trading-Seite
 
+### Phase v2.3 — Score-Kalibrierung (April 2026) ✅ COMPLETED
+- [x] **Threshold Kalibrierung**: Learning 35→18, Production 55→40
+- [x] **Signal-Confluence-Bonus**: +8 pro aligned Signal ab dem 3. (TA, Liq, Flow, Macro, MTF, VWAP)
+- [x] **Regime-Kompensation**: +15% Score Boost in ranging/high_vola wenn abs(composite) > 10
+- [x] **TA Ranging-Kompensation**: "mixed" EMA Stack gibt ±8 wenn EMA9/21 aligned (Trend building)
+- [x] **Volume Session-Aware**: Keine Penalty in Asia/Late-US Sessions (nur EU/US/Overlap)
+- [x] **Liq Nearest-Wall Proximity**: ±5 Punkte wenn Orderbuch-Wall innerhalb 1%
+- [x] **MTF/Sweep Reihenfolge**: Fix - MTF Status wird VOR Confluence-Bonus gesetzt
+- [x] **Session Parameter**: Fix - session Parameter zu _calculate_ta_score hinzugefügt
+- [x] **Dokumentation**: trading_logic_v2.md mit allen Kalibrierungs-Änderungen aktualisiert
+
+**Begründung:** Bruno erkannte Chancen korrekt, aber der Composite Score konnte in Ranging-Märkten (60-70% der Zeit bei BTC) mathematisch kaum den Threshold überschreiten. Die Kalibrierung ermöglicht jetzt Trade-Generierung bei aligned Signalen ohne die Systemstabilität zu gefährden.
+
 ### Geplant: Phasen v2.1–v2.2
 - [x] **V2.2 Institutionelle Fixes**: Deribit DVOL/Max Pain, aggTrades CVD, Threshold-Fallback
 - [x] **V2.2 3-Phasen Exit**: Fix SL/TP → Breakeven → ATR Trailing
@@ -338,3 +352,4 @@ ADD COLUMN layer3_output JSONB;
 
 *Referenz: WINDSURF_MANIFEST.md v2.2 — Einzige Quelle der Wahrheit*
 *V2.2 Review abgeschlossen: 2026-04-05 – Alle institutionellen Fixes validiert*
+*V2.3 Score-Kalibrierung abgeschlossen: 2026-04-05 – Confluence-Bonus, Regime-Kompensation, Ranging-aware scoring*

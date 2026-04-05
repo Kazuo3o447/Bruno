@@ -1,7 +1,8 @@
 # Bruno Trading Bot
 
-> **Medium-Frequency Bitcoin Trading Bot — Retail-Ready v2.2.1**
-> 
+> **Medium-Frequency Bitcoin Trading Bot — Retail-Ready v2.3**
+>
+> ✅ **V2.3 Score-Kalibrierung:** Confluence-Bonus (+8 pro aligned Signal), Regime-Kompensation (+15% in Ranging), TA Ranging-Kompensation (±8), Volume Session-Aware, Liq Nearest-Wall Proximity
 > ✅ **V2.2.1 Critical Fixes:** ExecutionAgentV4 aktiviert, PAPER_TRADING_ONLY Hardlock entfernt, Dynamisches Regime-Blending, ConfigCache Performance-Optimierung, ~4000 Zeilen Dead Code entfernt, Ollama komplett eliminiert
 > ✅ **V2.2 Retail Features:** Echtes CVD, GRSS v3, Adaptive Thresholds, Event Calendar, Max Pain Integration
 > ✅ **MTF-Filter Regime-Kopplung:** Entspannte Filter im Ranging für bessere Signalqualität
@@ -60,6 +61,7 @@
 - **Data Gap Veto:** DVOL & Long/Short Ratio = None → Conviction ↓, Risk Agent veto
 - **Signal Sources:** Binance Futures Analytics + On-Chain Daten (Blockchain.com / Glassnode Free Tier)
 - **DeepSeek Debrief:** Automatische Post-Trade Analyse für Phantom Trades mit JSON-Output
+- **V2.3 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware TA/Volume/Liq für realistischere Trade-Generierung
 
 ---
 
