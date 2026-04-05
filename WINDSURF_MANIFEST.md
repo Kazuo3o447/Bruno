@@ -1,5 +1,5 @@
 # WINDSURF_MANIFEST.md
-# Bruno Trading Platform — Master Agent Briefing v2.2
+# Bruno Trading Platform — Master Agent Briefing v2.2.1
 
 > **PFLICHTLEKTÜRE. Jeder Agent. Jede Session. Jeder Neustart.**
 > Dieses Dokument ist die einzige Quelle der Wahrheit.
@@ -7,13 +7,24 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2 Retail-Ready mit echtem CVD & GRSS v3)
+> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2.1 Critical Fixes & Dead Code Cleanup)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
 
 ---
 
 ## STATUS UPDATE (April 2026)
+
+### ✅ BRUNO v2.2.1 — Critical Fixes & Dead Code Cleanup
+- **ExecutionAgentV4 aktiviert** – worker.py importiert und registriert jetzt V4 statt V3 (1157 Zeilen Dead Code eliminiert)
+- **PAPER_TRADING_ONLY Hardlock entfernt** – Validator wirft jetzt Warnungen statt Exceptions, sauberer Übergang Paper→Live möglich
+- **Dynamisches Regime-Blending aktiviert** – COMPOSITE_W_* Keys aus config.json entfernt, _regime_blend() wird jetzt verwendet
+- **RiskAgent DVOL/LS-Ratio Veto konfigurierbar** – REQUIRE_INSTITUTIONAL_DATA_FOR_TRADE Flag in config.json (default: false)
+- **ConfigCache in Hot Paths** – composite_scorer.py, execution_v4.py, quant_v4.py, risk.py, context.py nutzen jetzt ConfigCache statt File I/O
+- **Dead Code Cleanup (~4000 Zeilen)** – execution_DEPRECATED.py, execution_v3.py, quant_DEPRECATED.py, quant_v3.py, liquidity_engine_v2.py, regime_config_v2.py, trade_debrief_v2.py gelöscht
+- **Ollama komplett entfernt** – chat.py, llm_client.py, llm_provider.py, llm/ Ordner, routers/llm_cascade.py gelöscht
+- **Config Cleanup** – OLLAMA_HOST aus config.py entfernt
+- **Bugfixes nach Cleanup** – main.py chat import entfernt, context.py ConfigCache statt File I/O, Frontend/Monitoring gate_4_llm_cascade zu gate_4_composite_scorer umbenannt
 
 ### ✅ BRUNO v2.2 — Retail-Ready mit echtem CVD & GRSS v3
 - **Echtes CVD** — aggTrade Delta mit 1-Sekunden-Buckets und Redis Rolling Window (3600 Ticks)

@@ -1,7 +1,8 @@
 # Bruno Trading Bot
 
-> **Medium-Frequency Bitcoin Trading Bot — Retail-Ready v2.2**
+> **Medium-Frequency Bitcoin Trading Bot — Retail-Ready v2.2.1**
 > 
+> ✅ **V2.2.1 Critical Fixes:** ExecutionAgentV4 aktiviert, PAPER_TRADING_ONLY Hardlock entfernt, Dynamisches Regime-Blending, ConfigCache Performance-Optimierung, ~4000 Zeilen Dead Code entfernt, Ollama komplett eliminiert
 > ✅ **V2.2 Retail Features:** Echtes CVD, GRSS v3, Adaptive Thresholds, Event Calendar, Max Pain Integration
 > ✅ **MTF-Filter Regime-Kopplung:** Entspannte Filter im Ranging für bessere Signalqualität
 > ✅ **Realistische Retail Fees:** 5 BPS Taker / 2 BPS Maker / 3 BPS Slippage
@@ -9,7 +10,7 @@
 > ✅ **DeepSeek Post-Trade Analyse:** Professionelle Trade-Evaluation für Phantom Trades
 > ✅ **Adaptive Thresholds:** ATR-basiert mit Event Calendar Guardrails (FOMC/CPI/NFP)
 > ✅ **Pipeline Backtest:** Walk-Forward mit echter CompositeScorer Pipeline
-> ✅ **Paper Trading Lock:** System ist auf Paper Trading beschränkt für sichere Tests
+> ✅ **Paper Trading Lock:** System ist auf Paper Trading beschränkt für sichere Tests (Warnungen statt Hardlock)
 > ✅ **Dashboard Redesign:** Modernes kompaktes Layout mit Entscheidungszyklen-Visualisierung
 > ✅ **OFI Display Fix:** Korrekte Redis Key-Mapping für Order Flow Imbalance
 > ✅ **Log Page:** WebSocket-basierte Logs mit REST Fallback
@@ -311,7 +312,7 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health  # Über Next.js Prox
 | **Context** | GRSS-Berechnung, Makro-Daten | FRED/Deribit | ✅ V2 Online |
 | **Sentiment** | LLM-basierte News-Analyse | RSS/CryptoCompare/CoinMarketCap | ✅ V2 Online |
 | **Risk** | Risiko-Bewertung & 6 Hard Vetos | — | ✅ V2 Online |
-| **Execution** | **Bybit Futures** Order-Ausführung | Bybit | ✅ V3 Online |
+| **Execution** | **Bybit Futures** Order-Ausführung | Bybit | ✅ V4 Online |
 
 **Execution-Details:**
 - Börse: Bybit Unified Account (Futures)
@@ -450,4 +451,4 @@ Invoke-RestMethod -Uri http://localhost:3000/api/v1/health # Über Next.js Proxy
 **API-Dokumentation:** http://localhost:8000/docs  
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
-**Letztes Update:** 5. April 2026 - Bruno V2.2 Retail-Ready mit echtem CVD, GRSS v3, Adaptive Thresholds
+**Letztes Update:** 5. April 2026 - Bruno V2.2.1 mit ExecutionAgentV4, ConfigCache Performance-Optimierung und Dead Code Cleanup

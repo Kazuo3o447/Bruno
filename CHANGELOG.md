@@ -4,6 +4,38 @@ Alle wichtigen Änderungen und Fixes pro Version.
 
 ---
 
+## [v2.2.1] – 2026-04-05
+
+### 🔧 Critical Fixes & Dead Code Cleanup
+
+#### **Execution Engine Upgrade**
+- **ExecutionAgentV4 aktiviert** – worker.py importiert und registriert jetzt V4 statt V3 (1157 Zeilen Dead Code eliminiert)
+- **PAPER_TRADING_ONLY Hardlock entfernt** – Validator wirft jetzt Warnungen statt Exceptions, sauberer Übergang Paper→Live möglich
+- **Dynamisches Regime-Blending aktiviert** – COMPOSITE_W_* Keys aus config.json entfernt, _regime_blend() wird jetzt verwendet
+- **RiskAgent DVOL/LS-Ratio Veto konfigurierbar** – REQUIRE_INSTITUTIONAL_DATA_FOR_TRADE Flag in config.json (default: false)
+
+#### **ConfigCache Implementation**
+- **ConfigCache in Hot Paths** – composite_scorer.py, execution_v4.py, quant_v4.py, risk.py, context.py nutzen jetzt ConfigCache statt File I/O
+- **Performance-Optimierung** – 1×/Minute Reload statt pro Zyklus für Konfigurationswerte
+
+#### **Dead Code Cleanup (~4000 Zeilen)**
+- **Gelöschte Agenten**: execution_DEPRECATED.py, execution_v3.py, quant_DEPRECATED.py, quant_v3.py
+- **Gelöschte Dienste**: liquidity_engine_v2.py, regime_config_v2.py, trade_debrief_v2.py
+- **Ollama komplett entfernt**: chat.py, llm_client.py, llm_provider.py, llm/ Ordner, routers/llm_cascade.py
+- **Config Cleanup**: OLLAMA_HOST aus config.py entfernt
+
+#### **Bugfixes nach Cleanup**
+- **main.py**: chat import entfernt (Startup-Crash durch gelöschtes Modul behoben)
+- **context.py**: ConfigCache statt direktem File I/O in _is_learning_mode()
+- **Frontend/Monitoring**: gate_4_llm_cascade zu gate_4_composite_scorer umbenannt (irreführende Bezeichnung korrigiert)
+
+### 📚 Dokumentation
+- CHANGELOG.md – v2.2.1 Eintrag
+- README.md – ExecutionAgentV4, ConfigCache, Dead Code Cleanup
+- WINDSURF_MANIFEST.md – Status Update
+
+---
+
 ## [v2.2] – 2026-04-05
 
 ### 🚀 Institutionelle Fixes & Datenquellen
