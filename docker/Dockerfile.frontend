@@ -9,7 +9,11 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install
 
-COPY . .
+# Copy source files
+COPY src/ ./src/
+COPY next.config.js ./
+COPY next-env.d.ts ./
+COPY tsconfig.json ./
 
 # Build the application with environment variables
 RUN npm run build
