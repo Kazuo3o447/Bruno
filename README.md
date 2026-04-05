@@ -2,12 +2,16 @@
 
 > **Medium-Frequency Bitcoin Trading Bot — Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
-> ✅ **V2.2 Institutionelle Fixes:** Echte Deribit DVOL & Max Pain, aggTrades CVD, Threshold-Fallback, 3-Phasen Exit
+> ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
+> ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, None-basierte Data-Gap-Behandlung
+> ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT**
-> ✅ **Trading-Engine:** Deterministischer Composite Scorer mit institutioneller Mathematik (VWAP Reset, CVD Deduplizierung, VPOC)
-> ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out (0.01% Maker Fee), Breakeven-Stop
-> ✅ **Risk-Stack:** Daily Drawdown, MAE/MFE-Tracking, Trade-Cooldown, Position-Specific State
-> ✅ **Backtester:** 1-Minuten-Kerzen mit Intrabar Pessimismus-Regel
+> ✅ **Trading-Engine:** Deterministischer Composite Scorer mit V2.2 Features (VPOC, ATR Trailing, Multi-Level Exit)
+> ✅ **Execution-Stack:** Event-driven Liquidation Sweeps, TP1/TP2 Scaling-Out (Maker/Taker Fees), Live Trailing Stop
+> ✅ **Risk-Stack:** Daily Drawdown, MAE/MFE-Tracking, Data Gap Veto, Position-Specific State
+> ✅ **Backtester:** 1-Minuten-Kerzen mit Intrabar Pessimismus-Regel (SL vor TP1)
+> ✅ **Volume Profile:** 10-Step Price Buckets mit VPOC als primäres S/R Level
+> ✅ **Frontend:** ActivePositions UI mit TP1/TP2/Trailing Status, Settings mit Exit-Management
 > ✅ **Post-Trade Analysis:** Deepseek Reasoning API für professionelle Trade-Analyse und Phantom-Auswertung
 > ✅ **Dashboard:** Live-Daten, Decision Feed und Agent-Status
 > ✅ **Purge Complete:** Keine veralteten Heuristiken
@@ -32,7 +36,7 @@
 | **Local Config** | DB_HOST=localhost, REDIS_HOST=localhost, NEXT_PUBLIC_API_URL=http://localhost:8000 |
 | **Config** | Hot-Reload mit 3 Presets (Standard, Konservativ, Aggressiv) |
 
-**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. Keine Zufallsdaten. Keine LLM-Entscheidungskette. **Post-Trade Analyse mit professioneller Deepseek API.** **Live Marktdaten von Binance alle 30 Sekunden.**
+**Primäre Ziele:** Stabilität & Transparenz vor Rendite. Keine HFT-Logik. **V2.2 Features:** Multi-Level Exit, ATR Trailing, Volume Profile VPOC. **Post-Trade Analyse** mit professioneller Deepseek API. **Live Marktdaten** von Binance alle 30 Sekunden.
 
 > ⚠️ **WICHTIG:** Alle Architekturentscheidungen sind in `WINDSURF_MANIFEST.md` dokumentiert. Dieses Dokument überschreibt alle anderen bei Widerspruch.
 
@@ -49,7 +53,10 @@
 ### Trading Flow Highlights
 
 - **Liquidation Events:** Redis Pub/Sub triggert sofortiges Rescoring bei großen Force-Order-Spikes
-- **Position Management:** TP1 Teilverkauf, Breakeven-Stop, TP2 Final Exit
+- **Position Management:** TP1 Teilverkauf (Maker Fee 0.0001), Breakeven-Stop, TP2 Final Exit, ATR Trailing Stop
+- **Multi-Level Exit:** TP1 (50% Scale-Out), TP2 (Final Exit), Live Trailing Stop nach TP1
+- **Volume Profile:** VPOC aus 1m Kerzen mit 10$ Preis-Buckets als primäres S/R Level
+- **Data Gap Veto:** DVOL & Long/Short Ratio = None → Conviction ↓, Risk Agent veto
 - **Signal Sources:** Binance Futures Analytics (Top Trader / Taker Ratios) + On-Chain Daten (Blockchain.com / Glassnode Free Tier)
 - **Learning Loop:** Deepseek analysiert geschlossene Trades und Phantom-Trades mit MAE/MFE
 

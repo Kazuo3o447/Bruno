@@ -8,7 +8,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 class ExecutionAgentV3(StreamingAgent):
     """
@@ -41,6 +41,10 @@ class ExecutionAgentV3(StreamingAgent):
         )
 
         self._portfolio_initialized = False
+
+        # Trade-isolierter Runtime-State: ein Eintrag pro offener Position.
+        # Key = position_id (Fallback: entry_trade_id / symbol), Value = Runtime-Flags.
+        self.active_positions_state: Dict[str, Dict[str, Any]] = {}
         
         # v2 Breakeven Stop & Trailing Stop - FIX: Kein globaler State mehr
         # self._breakeven_enabled = True  # REMOVED - State ist jetzt position-spezifisch
@@ -48,6 +52,38 @@ class ExecutionAgentV3(StreamingAgent):
         # ATR-based Trailing Stop (institutionell)
         self._atr_trailing_multiplier = float(self._load_config_value("ATR_TRAILING_MULTIPLIER", 1.5))
         # self._atr_trailing_enabled = True  # REMOVED - State ist jetzt position-spezifisch
+
+    def _position_state_key(self, pos: Dict[str, Any]) -> str:
+        """Ermittelt den stabilen State-Key für eine Position."""
+        return str(
+            pos.get("id")
+            or pos.get("entry_trade_id")
+            or pos.get("trade_id")
+            or pos.get("symbol")
+        )
+
+    def _get_active_position_state(self, pos: Dict[str, Any]) -> Dict[str, Any]:
+        """Liefert den Runtime-State einer Position und initialisiert ihn bei Bedarf."""
+        key = self._position_state_key(pos)
+        state = self.active_positions_state.get(key)
+        if state is None:
+            entry_price = float(pos.get("entry_price", 0.0) or 0.0)
+            state = {
+                "position_id": key,
+                "trade_id": pos.get("entry_trade_id") or pos.get("trade_id") or key,
+                "symbol": pos.get("symbol"),
+                "side": pos.get("side", "long"),
+                "tp1_hit": bool(pos.get("tp1_hit", False)),
+                "breakeven_active": bool(pos.get("breakeven_active", False)),
+                "highest_price": float(pos.get("highest_price", entry_price) or entry_price),
+            }
+            self.active_positions_state[key] = state
+        return state
+
+    def _discard_active_position_state(self, pos: Dict[str, Any]) -> None:
+        """Entfernt den Runtime-State einer Position, sobald sie geschlossen ist."""
+        key = self._position_state_key(pos)
+        self.active_positions_state.pop(key, None)
 
     def _load_config_value(self, key: str, default: float) -> float:
         """Lädt einen Wert aus config.json. Fallback auf default wenn nicht gefunden."""
@@ -353,7 +389,7 @@ class ExecutionAgentV3(StreamingAgent):
                 tp2_price = fill_price * (1 - tp2_pct)
 
             try:
-                await self.position_tracker.open_position(
+                position_id = await self.position_tracker.open_position(
                     symbol=symbol,
                     side=position_side,
                     entry_price=fill_price,
@@ -373,6 +409,19 @@ class ExecutionAgentV3(StreamingAgent):
                     layer3_output=signal.get("layer3_output"),
                     regime=signal.get("regime", "unknown"),
                 )
+                self.active_positions_state[position_id] = {
+                    "position_id": position_id,
+                    "trade_id": order["id"],
+                    "symbol": symbol,
+                    "side": position_side,
+                    "tp1_hit": False,
+                    "breakeven_active": False,
+                    "atr_trailing_enabled": False,
+                    "highest_price": float(fill_price),
+                    "entry_price": float(fill_price),
+                    "tp1_price": float(tp1_price),
+                    "tp2_price": float(tp2_price),
+                }
             except ValueError as ve:
                 # Guard hat angeschlagen (race condition) — kein Problem
                 self.logger.warning(f"PositionTracker Guard (race): {ve}")
@@ -630,6 +679,7 @@ class ExecutionAgentV3(StreamingAgent):
             try:
                 pos = await self.position_tracker.get_open_position("BTCUSDT")
                 if pos:
+                    position_state = self._get_active_position_state(pos)
                     ticker = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
                     current_price = float(ticker.get("last_price", ticker.get("price", 0)))
                     if current_price <= 0:
@@ -647,10 +697,15 @@ class ExecutionAgentV3(StreamingAgent):
                     tp2_price = float(pos.get("take_profit_2_price", pos.get("take_profit_price", 0)))
                     side = pos["side"]
                     current_pnl_pct = pos.get("current_pnl_pct", 0)
+
+                    # Trade-isolierte Runtime-Updates: höchste gefundene Preisstufe je Position.
+                    if current_price > float(position_state.get("highest_price", current_price)):
+                        position_state["highest_price"] = current_price
+                        self.active_positions_state[position_state["position_id"]] = position_state
                     
                     # TP1 / Breakeven: Teilverkauf bei erstem Ziel, dann Trailing Stop
-                    # FIX: Trade-spezifischer State - prüfe Position-Objekt, nicht globalen State
-                    if pos and not pos.get("tp1_hit", False):
+                    # FIX: Trade-spezifischer State - prüfe den position-isolierten Runtime-State
+                    if pos and not position_state.get("tp1_hit", False):
                         entry_price = float(pos.get("entry_price", 0))
                         position_side = pos.get("side", "long")
                         tp1_size_pct = float(pos.get("tp1_size_pct", 0.5))
@@ -677,9 +732,19 @@ class ExecutionAgentV3(StreamingAgent):
                                 if scaled:
                                     # FIX: Setze tp1_hit direkt im Positions-Objekt
                                     pos["tp1_hit"] = True
+                                    pos["breakeven_active"] = True
+                                    pos["atr_trailing_enabled"] = True
                                     sl_price = pos["stop_loss_price"]
                                     tp1_price = float(pos.get("take_profit_1_price", tp1_price))
                                     tp2_price = float(pos.get("take_profit_2_price", tp2_price))
+                                    position_state["tp1_hit"] = True
+                                    position_state["breakeven_active"] = True
+                                    position_state["atr_trailing_enabled"] = True
+                                    position_state["highest_price"] = max(
+                                        float(position_state.get("highest_price", current_price)),
+                                        current_price,
+                                    )
+                                    self.active_positions_state[position_state["position_id"]] = position_state
                                     self.logger.info(
                                         f"TP1 erreicht für BTCUSDT — Scale-Out {tp1_size_pct:.0%} und SL auf Breakeven gezogen"
                                     )
@@ -782,6 +847,9 @@ class ExecutionAgentV3(StreamingAgent):
                 reason=reason,
                 exit_trade_id=trade_id,
             )
+
+            if closed:
+                self._discard_active_position_state(closed)
 
             # Portfolio P&L aktualisieren
             if closed and self.deps.config.DRY_RUN:

@@ -2,7 +2,9 @@
 
 > **Referenz: WINDSURF_MANIFEST.md v2.2**
 > 
-> ✅ **V2.2 Institutionelle Fixes:** Echte Deribit DVOL & Max Pain, aggTrades CVD, Threshold-Fallback, 3-Phasen Exit
+> ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
+> ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, None-basierte Data-Gap-Behandlung
+> ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
@@ -38,7 +40,7 @@
 | `/monitor` | **System-Überwachung** | API-Health Tests, Agent Heartbeats, Scheduler Steuerung, Datenquellen-Status |
 | `/logs` / `/logviewer` | **System-Logging** | Live WebSocket Logs, Filter (Level/Kategorie/Quelle), Export, Auto-Scroll |
 | `/reports` | **Analysen & Export** | Geschlossene Trades, Deepseek-Analysen, Lern-Logs (24h), Performance-Perioden |
-| `/settings` / `/einstellungen` | **Konfiguration** | 4 Presets (Konservativ/Balanced/Opportunistisch/Test), Parameter-Editor, Deepseek-Test |
+| `/settings` / `/einstellungen` | **Konfiguration** | 4 Presets (Konservativ/Balanced/Opportunistisch/Test), Parameter-Editor, Exit-Management (ATR Trailing, TP1/TP2 Split), Deepseek-Test |
 | `/journey` | **Dokumentation** | 7 Abschnitte: Übersicht, Agenten, Pipeline, APIs, Features, Sicherheit, Tech Stack |
 
 ### Dashboard Abschnitte (v2.1)
@@ -54,6 +56,7 @@
 - Top 3 Blockers (mit Fortschrittsbalken)
 - Blocker Distribution (Bar Chart)
 - Recent Timeline (20 Entscheidungen, Signal vs Blocked)
+- Multi-Level Exit Status (TP1/TP2/Trailing)
 
 **Section 3: Pipeline Status**
 - 6-Gate Pipeline Status (CLEAR/BLOCKED)
@@ -63,6 +66,7 @@
 **Section 4: System Health**
 - Agent Status (Ingestion, Technical, Quant, Context, Risk, Execution)
 - Data Sources Health (mit Zeitstempeln)
+- Volume Profile Status (VPOC Level, Bucket Distribution)
 
 ### Neue API-Endpunkte (Dashboard v2.1)
 

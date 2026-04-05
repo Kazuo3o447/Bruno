@@ -15,6 +15,7 @@ interface Position {
   take_profit_1_price: number | null;
   take_profit_2_price: number | null;
   tp1_hit: boolean;
+  breakeven_active?: boolean;
   atr_trailing_enabled: boolean;
   current_price?: number;
   current_pnl_pct?: number;
@@ -117,15 +118,24 @@ export default function ActivePositions() {
                       <div className={`flex items-center gap-1.5 text-[10px] font-medium font-mono ${
                         pos.tp1_hit ? 'text-emerald-400' : 'text-slate-500'
                       }`}>
-                        <Target className="w-2.5 h-2.5" /> 
-                        TP1: ${pos.take_profit_1_price?.toLocaleString() || '—'}
-                        {pos.tp1_hit && ' ✓'}
+                        <Target className="w-2.5 h-2.5" />
+                        <span className="uppercase tracking-wider">
+                          TP1 {pos.tp1_hit ? 'Hit' : 'Pending'}
+                        </span>
+                        <span className="text-slate-400">
+                          ${pos.take_profit_1_price?.toLocaleString() || '—'}
+                        </span>
                       </div>
                       <div className={`flex items-center gap-1.5 text-[10px] font-medium font-mono ${
-                        pos.tp1_hit ? 'text-slate-500' : 'text-slate-600'
+                        pos.tp1_hit ? 'text-emerald-300' : 'text-slate-600'
                       }`}>
-                        <Target className="w-2.5 h-2.5" /> 
-                        TP2: ${pos.take_profit_2_price?.toLocaleString() || '—'}
+                        <Target className="w-2.5 h-2.5" />
+                        <span className="uppercase tracking-wider">
+                          TP2 {pos.tp1_hit ? 'Live' : 'Pending'}
+                        </span>
+                        <span className="text-slate-400">
+                          ${pos.take_profit_2_price?.toLocaleString() || '—'}
+                        </span>
                       </div>
                     </div>
                   </td>
@@ -136,8 +146,12 @@ export default function ActivePositions() {
                         pos.atr_trailing_enabled ? 'text-orange-400' : 'text-red-400'
                       }`}>
                         <Shield className="w-2.5 h-2.5" /> 
-                        ${pos.stop_loss_price?.toLocaleString() || '—'}
-                        {pos.atr_trailing_enabled && ' (Trailing)'}
+                        <span className="uppercase tracking-wider">
+                          Trailing {pos.atr_trailing_enabled ? 'Live' : 'Waiting'}
+                        </span>
+                        <span className="text-slate-400">
+                          ${pos.stop_loss_price?.toLocaleString() || '—'}
+                        </span>
                       </div>
                     </div>
                   </td>

@@ -83,6 +83,7 @@ class PositionTracker:
         take_profit_1_pct: float = 0.012,
         take_profit_2_pct: float = 0.025,
         tp1_hit: bool = False,
+        atr_trailing_enabled: bool = False,
         max_favorable_price: float = 0.0,
         min_favorable_price: float = 0.0,
         # Phase-C Felder — optional, werden nach LLM-Cascade befüllt
@@ -130,6 +131,7 @@ class PositionTracker:
             "take_profit_1_pct": take_profit_1_pct,
             "take_profit_2_pct": take_profit_2_pct,
             "tp1_hit": tp1_hit,
+            "atr_trailing_enabled": atr_trailing_enabled,
             "max_favorable_price": max_favorable_price or entry_price,
             "min_favorable_price": min_favorable_price or entry_price,
             # LLM Context (Phase C)
@@ -240,6 +242,7 @@ class PositionTracker:
         pos["tp1_exit_price"] = exit_price
         pos["tp1_exit_trade_id"] = exit_trade_id or ""
         pos["breakeven_active"] = bool(move_stop_to_breakeven)
+        pos["atr_trailing_enabled"] = bool(move_stop_to_breakeven)
         pos["tp1_hit_reason"] = reason
 
         if move_stop_to_breakeven:

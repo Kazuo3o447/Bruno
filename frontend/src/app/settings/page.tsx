@@ -447,6 +447,53 @@ export default function SettingsPage() {
           </div>
         </Section>
 
+        <Section id="exit" title="Exit Management" icon={TrendingUp}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {schema && config && [
+              { key: "ATR_TRAILING_MULTIPLIER", label: "ATR Trailing Multiplier", unit: "x" },
+              { key: "TP1_SIZE_PCT", label: "TP1 Size", unit: "" },
+              { key: "TP2_SIZE_PCT", label: "TP2 Size", unit: "" },
+            ].map(({ key, label }) => (
+              <div key={key}>
+                <label className="text-xs text-slate-500 block mb-1">{label}</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={config[key] || 0}
+                    onChange={(e) => updateConfigValue(key, parseFloat(e.target.value))}
+                    min={schema[key]?.min}
+                    max={schema[key]?.max}
+                    step={schema[key]?.type === "float" ? 0.001 : 1}
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm"
+                  />
+                  <span className="text-xs text-slate-500 w-20">
+                    [{schema[key]?.min}-{schema[key]?.max}]
+                  </span>
+                </div>
+              </div>
+            ))}
+
+            {config && [
+              { key: "ENABLE_ATR_TRAILING", label: "ATR Trailing aktiv", desc: "Trailing Stop nach TP1 scharf schalten" },
+              { key: "ENABLE_VOLUME_PROFILE", label: "Volume Profile aktiv", desc: "VPOC in TA Snapshot berücksichtigen" },
+              { key: "ENABLE_DELTA_ABSORPTION", label: "Delta Absorption aktiv", desc: "Absorptionssignale im TA aktivieren" },
+            ].map(({ key, label, desc }) => (
+              <label key={key} className="flex items-center justify-between gap-4 p-4 rounded-xl border border-[#1a1a2e] bg-[#080810]">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">{label}</div>
+                  <div className="text-xs text-slate-500 mt-1">{desc}</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={Boolean(config[key])}
+                  onChange={(e) => updateConfigBoolean(key, e.target.checked)}
+                  className="h-5 w-5 rounded border-slate-700 bg-slate-900 text-indigo-500"
+                />
+              </label>
+            ))}
+          </div>
+        </Section>
+
         <Section id="system" title="System Parameter" icon={Database}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {schema && config && [

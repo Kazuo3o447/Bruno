@@ -39,9 +39,10 @@ class TechnicalAnalysisAgent(PollingAgent):
         self._ob_walls_cache_time = 0
         
         # FIX: Institutioneller VWAP Tages-Reset
-        self._last_vwap_date = None
+        self._last_vwap_reset_date = datetime.min.date()
         self._vwap_cumulative_pv = 0.0
         self._vwap_cumulative_volume = 0.0
+        self.volume_profile: Dict[int, float] = {}
 
     def get_interval(self) -> float:
         """60-Sekunden-Intervall für Technical Analysis."""
@@ -126,6 +127,7 @@ class TechnicalAnalysisAgent(PollingAgent):
         """
         try:
             lookback_map = {
+                "1 minute": "24 hours",
                 "5 minutes": "5 hours",
                 "15 minutes": "24 hours", 
                 "1 hour": "8 days",
@@ -180,7 +182,7 @@ class TechnicalAnalysisAgent(PollingAgent):
                         """))
                     else:
                         # floor-Berechnung für 5m/15m
-                        seconds_map = {"5 minutes": 300, "15 minutes": 900}
+                        seconds_map = {"1 minute": 60, "5 minutes": 300, "15 minutes": 900}
                         seconds = seconds_map.get(interval, 300)
                         
                         result = await session.execute(text(f"""
@@ -216,76 +218,47 @@ class TechnicalAnalysisAgent(PollingAgent):
 
     def _calc_volume_profile(self, candles: List[Dict]) -> dict:
         """
-        Berechnet tägliches Volume Profile und identifiziert VPOC.
-        
-        FIX: Erstelle eine echte Volume-at-Price Matrix für den aktuellen Tag.
-        Nutze ein Dictionary, das das Volumen auf exakte Preis-Level (gerundet auf die nächste sinnvolle Tick-Size von BTC, z.B. 10er oder 50er Schritte) mappt.
-        Der VPOC ist exakt das Level mit dem höchsten Wert im Dictionary.
+        Berechnet ein 1m Volume-at-Price Profil und identifiziert VPOC.
+
+        Volumen jeder Kerze wird auf den auf 10er-Schritte gerundeten Preis-Bucket
+        geschrieben. Der Bucket mit dem höchsten akkumulierten Volumen wird als VPOC
+        und primäres S/R-Level verwendet.
         """
         if not candles:
-            return {"vpoc": 0.0, "profile": [], "high_volume_nodes": []}
-        
-        # FIX: Exakte Tick-Size für BTC (10er Schritte für institutionelle Präzision)
-        price_min = min(c["low"] for c in candles)
-        price_max = max(c["high"] for c in candles)
-        tick_size = 10.0  # BTC Tick-Size: $10 Increments
-        
-        # FIX: Echte Volume-at-Price Matrix
-        volume_at_price = {}
-        
+            self.volume_profile = {}
+            return {"vpoc": 0.0, "vpoc_volume": 0.0, "profile": [], "high_volume_nodes": [], "volume_profile": {}}
+
+        tick_size = 10
+        self.volume_profile = {}
+
         for candle in candles:
-            high_price = candle["high"]
-            low_price = candle["low"]
-            volume = candle["volume"]
-            
-            # Bestimme die Preis-Range dieser Kerze
-            price_range = high_price - low_price
-            if price_range == 0:
-                # Alle Volumen auf exakten Preis
-                bucket_price = round(low_price / tick_size) * tick_size
-                volume_at_price[bucket_price] = volume_at_price.get(bucket_price, 0.0) + volume
-            else:
-                # FIX: Lineare Verteilung über exakte Preis-Levels
-                num_levels = max(1, int(price_range / tick_size) + 1)
-                volume_per_level = volume / num_levels
-                
-                for level in range(num_levels):
-                    level_price = low_price + (level * tick_size)
-                    bucket_price = round(level_price / tick_size) * tick_size
-                    volume_at_price[bucket_price] = volume_at_price.get(bucket_price, 0.0) + volume_per_level
-        
-        # FIX: VPOC = exaktes Level mit höchstem Volumen
-        if not volume_at_price:
-            return {"vpoc": 0.0, "profile": [], "high_volume_nodes": []}
-        
-        # Sortiere nach Volumen (absteigend)
-        sorted_volume_levels = sorted(volume_at_price.items(), key=lambda x: x[1], reverse=True)
-        
+            price_reference = float(candle["close"])
+            bucket_price = int(round(price_reference / tick_size) * tick_size)
+            self.volume_profile[bucket_price] = self.volume_profile.get(bucket_price, 0.0) + float(candle["volume"])
+
+        if not self.volume_profile:
+            return {"vpoc": 0.0, "vpoc_volume": 0.0, "profile": [], "high_volume_nodes": [], "volume_profile": {}}
+
+        sorted_volume_levels = sorted(self.volume_profile.items(), key=lambda x: x[1], reverse=True)
         vpoc_price, vpoc_volume = sorted_volume_levels[0]
-        total_volume = sum(volume_at_price.values())
-        
-        # FIX: High Volume Nodes (Top 20% Volumen)
-        threshold = total_volume * 0.8  # Top 80% Volumen
-        cumulative = 0
+        total_volume = sum(self.volume_profile.values())
+
         high_volume_nodes = []
-        
-        for price, volume in sorted_volume_levels:
-            cumulative += volume
+        for price_level, volume in sorted_volume_levels[:10]:
             high_volume_nodes.append({
-                "price": round(price, 2),
+                "price": float(price_level),
                 "volume": round(volume, 2),
-                "volume_pct": round(volume / total_volume * 100, 1)
+                "volume_pct": round(volume / total_volume * 100, 1) if total_volume > 0 else 0.0,
             })
-            if cumulative >= threshold:
-                break
-        
+
         return {
-            "vpoc": round(vpoc_price, 2),
+            "vpoc": float(vpoc_price),
             "vpoc_volume": round(vpoc_volume, 2),
-            "profile": high_volume_nodes[:10],  # Top 10 Nodes
-            "high_volume_nodes": high_volume_nodes[:5],  # Top 5 für UI
+            "profile": high_volume_nodes,
+            "high_volume_nodes": high_volume_nodes[:5],
             "total_volume": round(total_volume, 2),
-            "price_levels_count": len(volume_at_price)  # FIX: Anzahl der exakten Preis-Levels
+            "price_levels_count": len(self.volume_profile),
+            "volume_profile": dict(self.volume_profile),
         }
 
     def _calc_15m_delta_bars(self, candles_15m: List[Dict]) -> dict:
@@ -403,28 +376,27 @@ class TechnicalAnalysisAgent(PollingAgent):
         """
         Berechnet VWAP mit institutionellem Tages-Reset.
         
-        FIX: Tracke das Datum der letzten verarbeiteten Kerze.
-        Wenn current_candle.timestamp.date() > last_vwap_date: 
+        FIX: Tracke das Datum des letzten VWAP-Resets.
+        Wenn current_candle.timestamp.date() > self._last_vwap_reset_date:
         Setze die Akkumulatoren cumulative_typical_volume und cumulative_volume hart auf 0 zurück.
         """
         if not candles:
             return 0.0
-            
-        # Prüfe auf Tages-Reset
-        current_date = candles[-1]["time"].date() if hasattr(candles[-1]["time"], 'date') else candles[-1]["time"].date()
-        
-        if self._last_vwap_date != current_date:
-            # FIX: Institutioneller Tages-Reset
-            self._last_vwap_date = current_date
-            self._vwap_cumulative_pv = 0.0
-            self._vwap_cumulative_volume = 0.0
-            self.logger.info(f"VWAP Tages-Reset für {current_date}")
-        
-        # Akkumuliere Typical Price * Volume
-        for candle in candles:
-            typical_price = (candle["high"] + candle["low"] + candle["close"]) / 3.0
-            self._vwap_cumulative_pv += typical_price * candle["volume"]
-            self._vwap_cumulative_volume += candle["volume"]
+
+        # Akkumuliere Typical Price * Volume mit hartem Tages-Reset.
+        for current_candle in candles:
+            current_date = current_candle["time"].date()
+            if current_date > self._last_vwap_reset_date:
+                self._last_vwap_reset_date = current_date
+                self._vwap_cumulative_pv = 0.0
+                self._vwap_cumulative_volume = 0.0
+                self.logger.info(f"VWAP Tages-Reset für {current_date}")
+
+            typical_price = (
+                current_candle["high"] + current_candle["low"] + current_candle["close"]
+            ) / 3.0
+            self._vwap_cumulative_pv += typical_price * current_candle["volume"]
+            self._vwap_cumulative_volume += current_candle["volume"]
         
         return self._vwap_cumulative_pv / self._vwap_cumulative_volume if self._vwap_cumulative_volume > 0 else 0.0
 
@@ -583,8 +555,8 @@ class TechnicalAnalysisAgent(PollingAgent):
         support_levels = [l for l in sr_levels if l["type"] == "support"]
         resistance_levels = [l for l in sr_levels if l["type"] == "resistance"]
         
-        nearest_support = min(support_levels, key=lambda x: x["distance_pct"]) if support_levels else None
-        nearest_resistance = min(resistance_levels, key=lambda x: x["distance_pct"]) if resistance_levels else None
+        nearest_support = min(support_levels, key=lambda x: abs(x["distance_pct"])) if support_levels else None
+        nearest_resistance = min(resistance_levels, key=lambda x: abs(x["distance_pct"])) if resistance_levels else None
         
         # Near-Level Definition: innerhalb von 0.5% oder 1x ATR
         near_threshold_pct = 0.5
@@ -885,6 +857,7 @@ class TechnicalAnalysisAgent(PollingAgent):
             start_time = time.perf_counter()
             
             # 1. Multi-Timeframe Candles laden
+            candles_1m = await self._fetch_candles("1 minute", limit=720)
             candles_5m = await self._fetch_candles("5 minutes", limit=60)
             candles_15m = await self._fetch_candles("15 minutes", limit=96)
             candles_1h = await self._fetch_candles("1 hour", limit=200)
@@ -912,6 +885,18 @@ class TechnicalAnalysisAgent(PollingAgent):
             
             # 5. Support/Resistance
             sr_levels = self._detect_sr_levels(candles_1h, candles_4h, price)
+
+            # 5b. Volume Profile (VPOC) als primäres S/R-Level
+            volume_profile = self._calc_volume_profile(candles_1m or candles_1h)
+            vpoc_price = float(volume_profile.get("vpoc", 0.0) or 0.0)
+            if vpoc_price > 0:
+                sr_levels = [{
+                    "price": round(vpoc_price, 2),
+                    "type": "support" if vpoc_price <= price else "resistance",
+                    "strength": 5,
+                    "distance_pct": round((vpoc_price - price) / price * 100, 2),
+                    "source": "vpoc",
+                }] + sr_levels
             
             # 6. Breakout-Proximity
             breakout = self._check_breakout_proximity(price, sr_levels, atr_14)
@@ -927,9 +912,6 @@ class TechnicalAnalysisAgent(PollingAgent):
             
             # 10. Orderbuch-Walls
             ob_walls = await self._fetch_orderbook_walls(price)
-            
-            # 11. NEU: Volume Profile (VPOC)
-            volume_profile = self._calc_volume_profile(candles_1h)
             
             # 12. NEU: 15m Delta Bars mit Absorption
             delta_analysis = self._calc_15m_delta_bars(candles_15m)

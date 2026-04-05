@@ -54,7 +54,7 @@ class Backtester:
     Institutioneller Backtester mit realistischem Kostenmodell.
     
     Features:
-    - TimescaleDB Candle-Data als Ground Truth
+    - TimescaleDB 1m Candle-Data als Ground Truth
     - Deterministische Fee-Berechnung
     - ATR-basiertes Trailing Stop Simulation
     - Multi-Level TP Scaling
@@ -107,7 +107,7 @@ class Backtester:
         return performance
     
     async def _load_candles(self, start: datetime, end: datetime) -> List[Dict]:
-        """Lädt 1h Candles aus TimescaleDB."""
+        """Lädt 1m Candles aus TimescaleDB."""
         try:
             async with self.db() as session:
                 result = await session.execute(text("""
@@ -270,7 +270,14 @@ class Backtester:
             entry_price = signal["price"]
             
             # Find exit candle
-            exit_time, exit_price, exit_reason = await self._find_exit(
+            (
+                exit_time,
+                exit_price,
+                exit_reason,
+                tp1_hit,
+                tp1_exit_time,
+                tp1_exit_price,
+            ) = await self._find_exit(
                 signal, entry_time, candle_dict, config
             )
             
@@ -283,22 +290,34 @@ class Backtester:
             stop_distance = abs(entry_price - signal["stop_loss"])
             quantity = risk_amount / stop_distance if stop_distance > 0 else 0.1
             
-            # Kostenberechnung
+            tp1_quantity = quantity * config.tp1_size_pct if tp1_hit else 0.0
+            remaining_quantity = max(0.0, quantity - tp1_quantity)
+
+            # Kostenberechnung: Entry immer Taker, TP1 immer Maker, finaler Exit abhängig vom Exit-Grund.
             entry_fee = entry_price * quantity * (config.taker_fee_bps / 10000)
-            exit_fee = exit_price * quantity * (
-                config.maker_fee_bps / 10000 if "take_profit" in exit_reason 
-                else config.taker_fee_bps / 10000
-            )
-            slippage = abs(exit_price - entry_price) * quantity * (config.slippage_bps / 10000)
-            
-            # P&L Berechnung
+
+            tp1_fee = 0.0
+            tp1_pnl = 0.0
+            tp1_slippage = 0.0
+            if tp1_hit and tp1_exit_price and tp1_quantity > 0:
+                tp1_fee = tp1_exit_price * tp1_quantity * (config.maker_fee_bps / 10000)
+                if signal["side"] == "long":
+                    tp1_pnl = (tp1_exit_price - entry_price) * tp1_quantity
+                else:
+                    tp1_pnl = (entry_price - tp1_exit_price) * tp1_quantity
+                tp1_slippage = abs(tp1_exit_price - entry_price) * tp1_quantity * (config.slippage_bps / 10000)
+
+            exit_fee_rate = config.maker_fee_bps if exit_reason.startswith("take_profit") else config.taker_fee_bps
+            exit_fee = exit_price * remaining_quantity * (exit_fee_rate / 10000)
+
             if signal["side"] == "long":
-                gross_pnl = (exit_price - entry_price) * quantity
+                gross_pnl = (exit_price - entry_price) * remaining_quantity
             else:
-                gross_pnl = (entry_price - exit_price) * quantity
-            
-            total_cost = entry_fee + exit_fee + slippage
-            net_pnl = gross_pnl - total_cost
+                gross_pnl = (entry_price - exit_price) * remaining_quantity
+
+            slippage = abs(exit_price - entry_price) * remaining_quantity * (config.slippage_bps / 10000)
+            total_cost = entry_fee + exit_fee + tp1_fee + slippage + tp1_slippage
+            net_pnl = gross_pnl + tp1_pnl - total_cost
             
             trade = TradeResult(
                 entry_time=entry_time,
@@ -308,8 +327,8 @@ class Backtester:
                 exit_price=exit_price,
                 quantity=quantity,
                 pnl_eur=gross_pnl,
-                fee_eur=entry_fee + exit_fee,
-                slippage_eur=slippage,
+                fee_eur=entry_fee + exit_fee + tp1_fee,
+                slippage_eur=slippage + tp1_slippage,
                 total_cost_eur=total_cost,
                 net_pnl_eur=net_pnl,
                 hold_time_hours=(exit_time - entry_time).total_seconds() / 3600,
@@ -344,6 +363,8 @@ class Backtester:
         max_favorable = entry_price if side == "long" else entry_price
         current_sl = sl_price
         tp1_hit = False
+        tp1_exit_time: Optional[datetime] = None
+        tp1_exit_price: Optional[float] = None
         
         # FIX: Simuliere 1-Minuten-Kerzen statt Stundenkerzen
         current_time = entry_time + timedelta(minutes=1)
@@ -381,13 +402,15 @@ class Backtester:
                 # Worst-Case: Stop-Loss wird zuerst getroffen
                 exit_price = current_sl  # SL Preis
                 exit_reason = "trailing_stop" if tp1_hit else "stop_loss"
-                return current_time, exit_price, exit_reason
+                return current_time, exit_price, exit_reason, tp1_hit, tp1_exit_time, tp1_exit_price
             elif tp2_hit_in_candle:
                 # TP2 getroffen
-                return current_time, tp2_price, "take_profit_2"
+                return current_time, tp2_price, "take_profit_2", tp1_hit, tp1_exit_time, tp1_exit_price
             elif tp1_hit_in_candle:
                 # TP1 erreicht - Scale-Out (Maker-Fee)
                 tp1_hit = True
+                tp1_exit_time = current_time
+                tp1_exit_price = tp1_price
                 # Update Trailing Stop nach TP1
                 if side == "long":
                     max_favorable = max(max_favorable, high_price)
@@ -419,7 +442,7 @@ class Backtester:
             current_time += timedelta(minutes=1)  # FIX: 1-Minuten-Schritte
         
         # Kein Exit gefunden (Ende von Daten)
-        return None, None, "no_exit"
+        return None, None, "no_exit", tp1_hit, tp1_exit_time, tp1_exit_price
     
     async def _calculate_performance(self, trades: List[TradeResult], 
                                   config: BacktestConfig) -> Dict:

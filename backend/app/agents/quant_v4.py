@@ -26,9 +26,8 @@ class QuantAgentV4(PollingAgent):
         self._last_price: float = 0.0
         self._last_signal_time: float = 0.0  # NEU: Cooldown-Tracking
         
-        # FIX: Strikter Timestamp-Guard für CVD Deduplizierung
-        self._last_processed_kline_ts = 0
-        self._last_trade_id: int = 0  # CVD Trade ID Tracking
+        # FIX: Strikter Timestamp-Guard für CVD Deduplizierung / Restart-Sicherheit
+        self._last_processed_ts: int = 0
         self._score_lock = asyncio.Lock()
         self._liquidation_listener_task: Optional[asyncio.Task] = None
         self._liquidation_spike_threshold_usdt: float = 500_000.0
@@ -46,22 +45,23 @@ class QuantAgentV4(PollingAgent):
         cvd_cached = await self.deps.redis.get_cache("bruno:cvd:BTCUSDT")
         if cvd_cached:
             self.cvd_cumulative = float(cvd_cached.get("value", 0.0))
-            self._last_trade_id = int(cvd_cached.get("last_trade_id", 0))
-            # FIX: Lade letzten verarbeiteten Kline-Timestamp
-            self._last_processed_kline_ts = int(cvd_cached.get("last_processed_kline_ts", 0))
-            self.logger.info(f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f} | Last Trade ID: {self._last_trade_id} | Last Kline TS: {self._last_processed_kline_ts}")
+            self._last_processed_ts = int(
+                cvd_cached.get("last_processed_ts", cvd_cached.get("last_processed_kline_ts", 0))
+            )
+            self.logger.info(
+                f"CVD State aus Redis geladen: {self.cvd_cumulative:.2f} | Last TS: {self._last_processed_ts}"
+            )
         else:
             self.cvd_cumulative = 0.0
-            self._last_trade_id = 0
-            self._last_processed_kline_ts = 0
+            self._last_processed_ts = 0
             self.logger.info("CVD State: Kein Cache — starte bei 0.0")
 
         await self.deps.redis.set_cache(
             "bruno:cvd:BTCUSDT",
             {
                 "value": self.cvd_cumulative,
-                "last_trade_id": self._last_trade_id,
-                "last_processed_kline_ts": self._last_processed_kline_ts,
+                "last_processed_ts": self._last_processed_ts,
+                "last_processed_kline_ts": self._last_processed_ts,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             },
             ttl=86400
@@ -144,7 +144,7 @@ class QuantAgentV4(PollingAgent):
                 # 0. Health Check für Liquidation_Cluster_SQL
                 await self._check_liquidation_cluster_sql()
 
-                # 1. Orderbook + VAMP + CVD (aus quant_v3 kopiert)
+                # 1. Orderbook + VAMP + CVD (1m-Kline, restart-sicher)
                 ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
                 if not ob or not ob.get("bids") or not ob.get("asks"):
                     return
@@ -156,50 +156,49 @@ class QuantAgentV4(PollingAgent):
                 self._last_price = best_bid_p
                 vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
 
-                # CVD - FIXED: Nutze aggTrades mit striktem Trade-ID-Guard für Deduplizierung
+                # CVD - FIXED: Nutze 1m-Klines mit striktem Timestamp-Guard für Deduplizierung
                 try:
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        params = {"symbol": self.symbol, "limit": 1000}
-                        if self._last_trade_id > 0:
-                            params["fromId"] = self._last_trade_id + 1
-                        r = await client.get(
-                            "https://fapi.binance.com/fapi/v1/aggTrades", params=params)
-                        if r.status_code == 200:
-                            trades = r.json() or []
-                            if trades:
-                                processed = 0.0
-                                latest_trade_id = self._last_trade_id
-                                for trade in trades:
-                                    trade_id = int(trade.get("a", 0))
-                                    if trade_id <= self._last_trade_id:
-                                        continue
-                                    qty = float(trade.get("q", 0.0) or 0.0)
-                                    is_buyer_maker = bool(trade.get("m", False))
-                                    minute_delta = -qty if is_buyer_maker else qty
-                                    processed += minute_delta
-                                    latest_trade_id = max(latest_trade_id, trade_id)
+                    klines = await self.exm.binance.fetch_ohlcv(self.symbol, timeframe="1m", limit=5)
+                    if klines:
+                        processed = 0.0
+                        latest_processed_ts = self._last_processed_ts
 
-                                if latest_trade_id > self._last_trade_id:
-                                    self.cvd_cumulative += processed
-                                    self._last_trade_id = latest_trade_id
+                        for kline in klines:
+                            current_ts = int(kline[0])
+                            if current_ts <= self._last_processed_ts:
+                                continue
 
-                                    await self.deps.redis.set_cache(
-                                        "bruno:cvd:BTCUSDT",
-                                        {
-                                            "value": self.cvd_cumulative,
-                                            "last_trade_id": self._last_trade_id,
-                                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                                        },
-                                        ttl=86400,
-                                    )
+                            open_price = float(kline[1])
+                            close_price = float(kline[4])
+                            volume = float(kline[5])
+                            direction = 1.0 if close_price > open_price else -1.0 if close_price < open_price else 0.0
+                            candle_delta = volume * direction
 
-                                    self.logger.debug(
-                                        f"CVD Update (aggTrades): {processed:+.4f} -> {self.cvd_cumulative:.4f} | Last Trade ID: {self._last_trade_id}"
-                                    )
-                            else:
-                                self.logger.debug("CVD aggTrades leer — keine neuen Trades")
+                            processed += candle_delta
+                            latest_processed_ts = max(latest_processed_ts, current_ts)
+
+                        if latest_processed_ts > self._last_processed_ts:
+                            self.cvd_cumulative += processed
+                            self._last_processed_ts = latest_processed_ts
+
+                            await self.deps.redis.set_cache(
+                                "bruno:cvd:BTCUSDT",
+                                {
+                                    "value": self.cvd_cumulative,
+                                    "last_processed_ts": self._last_processed_ts,
+                                    "last_processed_kline_ts": self._last_processed_ts,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                },
+                                ttl=86400,
+                            )
+
+                            self.logger.debug(
+                                f"CVD Update (1m-kline): {processed:+.4f} -> {self.cvd_cumulative:.4f} | Last TS: {self._last_processed_ts}"
+                            )
+                        else:
+                            self.logger.debug("CVD 1m-Kline: keine neuen Kerzen")
                 except Exception as e:
-                    self.logger.warning(f"CVD aggTrades Fehler: {e}")
+                    self.logger.warning(f"CVD 1m-Kline Fehler: {e}")
 
                 # OFI Rolling (kopiere _fetch_ofi_rolling() 1:1 aus quant_v3.py)
                 ofi_data = await self._fetch_ofi_rolling()

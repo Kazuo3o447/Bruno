@@ -43,6 +43,12 @@ CONFIG_SCHEMA = {
     "DAILY_MAX_LOSS_PCT": {"min": 0.0, "max": 100.0, "type": "float", "label": "Daily Max Loss %"},
     "MAX_CONSECUTIVE_LOSSES": {"min": 0, "max": 100, "type": "int", "label": "Max Consecutive Losses"},
     "BREAKEVEN_TRIGGER_PCT": {"min": 0.0, "max": 1.0, "type": "float", "label": "Breakeven Trigger %"},
+    "ATR_TRAILING_MULTIPLIER": {"min": 0.5, "max": 5.0, "type": "float", "label": "ATR Trailing Multiplier"},
+    "TP1_SIZE_PCT": {"min": 0.0, "max": 1.0, "type": "float", "label": "TP1 Position Size %"},
+    "TP2_SIZE_PCT": {"min": 0.0, "max": 1.0, "type": "float", "label": "TP2 Position Size %"},
+    "ENABLE_ATR_TRAILING": {"type": "bool", "label": "ATR Trailing aktiv"},
+    "ENABLE_VOLUME_PROFILE": {"type": "bool", "label": "Volume Profile aktiv"},
+    "ENABLE_DELTA_ABSORPTION": {"type": "bool", "label": "Delta Absorption aktiv"},
     "ENABLE_LLM_CASCADE_V4": {"type": "bool", "label": "Enable LLM Cascade V4"},
 }
 

@@ -166,7 +166,11 @@ class CompositeScorer:
             result.signals_active.append("Sweep-Bonus: Threshold -15")
         
         result.should_trade = abs_score >= effective_threshold
-        result.conviction = min(1.0, abs_score / 100.0)
+        critical_data_gap = macro_data.get("DVOL") is None or macro_data.get("Long_Short_Ratio") is None
+        base_conviction = min(1.0, abs_score / 100.0)
+        result.conviction = round(base_conviction * (0.5 if critical_data_gap else 1.0), 3)
+        if critical_data_gap:
+            result.signals_active.append("Data Gap: DVOL/L-S missing")
         
         # 8. Position Sizing + SL/TP
         atr = ta_data.get("atr_14", 0.0)
@@ -199,6 +203,7 @@ class CompositeScorer:
             "gap_to_threshold": round(effective_threshold - abs_score, 1),
             "regime": regime,
             "weights_used": weights,
+            "critical_data_gap": critical_data_gap,
             "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
         }
         

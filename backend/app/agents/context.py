@@ -46,12 +46,6 @@ class ContextAgent(StreamingAgent):
         self.btc_change_24h: float = 0.0
         self.put_call_ratio: float = 0.60
         self.dvol: float = None  # None = API-Required, Risk-Veto bei None
-        self.max_pain: dict = {
-            "max_pain_price": 0.0,
-            "distance_pct": 0.0,
-            "gravitational_bias": "neutral",
-            "strikes_analyzed": 0,
-        }
         self.grss_history: list = []
         self._grss_ema: float = 50.0
         self._grss_ema_alpha: float = 0.4
@@ -585,81 +579,6 @@ class ContextAgent(StreamingAgent):
             self._etf_flows_3d = self.coinglass.etf_flows_3d
             self._funding_divergence = self.coinglass.funding_divergence
 
-    async def _calculate_max_pain(self) -> dict:
-        """Berechnet Max Pain aus der echten Deribit Options-Chain."""
-        CACHE_KEY = "bruno:macro:max_pain"
-        cached = await self.deps.redis.get_cache(CACHE_KEY)
-        if cached:
-            return cached
-
-        options_chain = self._deribit_options_chain
-        if not options_chain:
-            cached_chain = await self.deps.redis.get_cache("bruno:macro:deribit_options_chain") or {}
-            if isinstance(cached_chain, dict):
-                options_chain = cached_chain.get("options", []) or []
-
-        if not options_chain:
-            return {
-                "max_pain_price": 0.0,
-                "distance_pct": 0.0,
-                "gravitational_bias": "neutral",
-                "strikes_analyzed": 0,
-            }
-
-        ticker = await self.deps.redis.get_cache("market:ticker:BTCUSDT") or {}
-        current_price = float(ticker.get("last_price", 0) or 0)
-        if current_price <= 0:
-            current_price = self.btc_change_24h if self.btc_change_24h > 0 else 60000.0
-
-        strikes = sorted({float(opt.get("strike", 0.0)) for opt in options_chain if opt.get("strike") is not None})
-        if not strikes:
-            return {
-                "max_pain_price": 0.0,
-                "distance_pct": 0.0,
-                "gravitational_bias": "neutral",
-                "strikes_analyzed": 0,
-            }
-
-        exposures: Dict[float, Dict[str, float]] = {strike: {"call": 0.0, "put": 0.0} for strike in strikes}
-        for opt in options_chain:
-            try:
-                strike = float(opt.get("strike", 0.0))
-                option_type = str(opt.get("type", "")).upper()
-                open_interest = float(opt.get("open_interest", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                continue
-            if strike not in exposures:
-                exposures[strike] = {"call": 0.0, "put": 0.0}
-            if option_type == "C":
-                exposures[strike]["call"] += open_interest
-            elif option_type == "P":
-                exposures[strike]["put"] += open_interest
-
-        best_strike = current_price
-        best_pain = None
-        for candidate in strikes:
-            pain = 0.0
-            for strike, book in exposures.items():
-                call_oi = book["call"]
-                put_oi = book["put"]
-                if candidate > strike:
-                    pain += (candidate - strike) * call_oi
-                elif candidate < strike:
-                    pain += (strike - candidate) * put_oi
-            if best_pain is None or pain < best_pain:
-                best_pain = pain
-                best_strike = candidate
-
-        distance_pct = ((best_strike - current_price) / current_price * 100.0) if current_price > 0 else 0.0
-        result = {
-            "max_pain_price": round(best_strike, 0),
-            "distance_pct": round(distance_pct, 2),
-            "gravitational_bias": "bullish" if distance_pct > 2 else "bearish" if distance_pct < -2 else "neutral",
-            "strikes_analyzed": len(strikes),
-        }
-        await self.deps.redis.set_cache(CACHE_KEY, result, ttl=21600)
-        return result
-
     async def _fetch_long_short_ratio(self) -> Optional[float]:
         """
         Binance Global Long/Short Account Ratio.
@@ -974,8 +893,7 @@ class ContextAgent(StreamingAgent):
 
             self.oi_trend = await self._fetch_oi_trend()
             self.etf_flows = await self._fetch_etf_flows()
-            self.max_pain = await self._calculate_max_pain()
-        
+
             await self._fetch_binance_rest_data()
             await self._fetch_coinglass_data()
         
@@ -1116,7 +1034,6 @@ class ContextAgent(StreamingAgent):
                 "Long_Short_Ratio": round(self.long_short_ratio, 4) if self.long_short_ratio is not None else None,
                 "Put_Call_Ratio": round(self.put_call_ratio, 4),
                 "DVOL": round(self.dvol, 2) if self.dvol is not None else None,
-                "Max_Pain": self.max_pain,
                 "Stablecoin_Delta_Bn": round(self.stablecoin_delta_bn, 2),
                 "Retail_Score": round(retail_score, 3),
                 "Retail_FOMO_Warning": retail_fomo_warning,
