@@ -374,24 +374,26 @@ class TechnicalAnalysisAgent(PollingAgent):
 
     def _calc_vwap(self, candles: List[Dict]) -> float:
         """
-        Berechnet VWAP mit institutionellem Tages-Reset.
+        Berechnet VWAP mit institutionellem Tages-Reset exakt um 00:00:00 UTC.
         
-        FIX: Tracke das Datum des letzten VWAP-Resets.
-        Wenn current_candle.timestamp.date() > self._last_vwap_reset_date:
-        Setze die Akkumulatoren cumulative_typical_volume und cumulative_volume hart auf 0 zurück.
+        FIX: Reset exakt um 00:00:00 UTC (Typical Price Basis).
+        Tracke _last_reset_day (YYYY-MM-DD).
+        Wenn datetime.now(timezone.utc).date() > _last_reset_day:
+        Setze Akkumulatoren hart auf 0 zurück.
         """
         if not candles:
             return 0.0
 
-        # Akkumuliere Typical Price * Volume mit hartem Tages-Reset.
-        for current_candle in candles:
-            current_date = current_candle["time"].date()
-            if current_date > self._last_vwap_reset_date:
-                self._last_vwap_reset_date = current_date
-                self._vwap_cumulative_pv = 0.0
-                self._vwap_cumulative_volume = 0.0
-                self.logger.info(f"VWAP Tages-Reset für {current_date}")
+        # Prüfe ob UTC Tages-Reset nötig (exakt 00:00:00 UTC)
+        current_utc_date = datetime.now(timezone.utc).date()
+        if current_utc_date > self._last_vwap_reset_date:
+            self._last_vwap_reset_date = current_utc_date
+            self._vwap_cumulative_pv = 0.0
+            self._vwap_cumulative_volume = 0.0
+            self.logger.info(f"VWAP UTC Tages-Reset für {current_utc_date} (00:00:00 UTC)")
 
+        # Akkumuliere Typical Price * Volume (Typical Price Basis)
+        for current_candle in candles:
             typical_price = (
                 current_candle["high"] + current_candle["low"] + current_candle["close"]
             ) / 3.0

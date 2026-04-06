@@ -65,6 +65,8 @@ services:
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-2f93b3854d8b4d1f8a42e2fc00d55da3}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - LUNARCRUSH_API_KEY=${LUNARCRUSH_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
       - DRY_RUN=${DRY_RUN:-true}
       - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
     ports:
@@ -100,6 +102,8 @@ services:
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-sk-2f93b3854d8b4d1f8a42e2fc00d55da3}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - LUNARCRUSH_API_KEY=${LUNARCRUSH_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
       - DRY_RUN=${DRY_RUN:-true}
       - PAPER_TRADING_ONLY=${PAPER_TRADING_ONLY:-true}
     volumes:

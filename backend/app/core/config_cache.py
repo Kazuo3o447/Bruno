@@ -4,34 +4,34 @@ from typing import Any, Optional
 
 class ConfigCache:
     """
-    Cached config.json reader. Lädt max 1× pro Minute.
-    Vermeidet wiederholtes File I/O in Agent-Loops.
+    Cached config.json reader. Lädt nur 1× beim Startup.
+    Laufzeit-Änderungen erfolgen über das Objekt im RAM.
+    Stoppt die ständigen Disk-Reads.
     """
     _instance = None
     _config: dict = {}
     _last_load: float = 0
     _path: str = ""
-    TTL = 60.0  # Sekunden
+    _loaded_once = False  # NEU: Flag für einmaliges Laden beim Startup
 
     @classmethod
     def init(cls, path: str) -> None:
-        """Initialisiert den Cache mit dem Pfad zur config.json."""
+        """Initialisiert den Cache mit dem Pfad zur config.json (lädt nur einmal)."""
         cls._path = path
         cls._reload()
+        cls._loaded_once = True
 
     @classmethod
     def get(cls, key: str, default: Any = None) -> Any:
         """
         Gibt einen Konfigurationswert zurück.
-        Lädt die Datei neu, wenn TTL abgelaufen ist.
+        Lädt die Datei NICHT neu - nur beim Startup.
         """
-        if time.time() - cls._last_load > cls.TTL:
-            cls._reload()
         return cls._config.get(key, default)
 
     @classmethod
     def _reload(cls) -> None:
-        """Lädt die config.json Datei neu."""
+        """Lädt die config.json Datei neu (nur beim Startup)."""
         try:
             with open(cls._path, 'r', encoding='utf-8') as f:
                 cls._config = json.load(f)
@@ -50,11 +50,10 @@ class ConfigCache:
     @classmethod
     def get_all(cls) -> dict:
         """Gibt die gesamte Konfiguration zurück."""
-        if time.time() - cls._last_load > cls.TTL:
-            cls._reload()
         return cls._config.copy()
 
     @classmethod
     def force_reload(cls) -> None:
-        """Erzwingt ein sofortiges Neuladen der Konfiguration."""
+        """Erzwingt ein sofortiges Neuladen der Konfiguration (für manuelle Updates)."""
         cls._reload()
+

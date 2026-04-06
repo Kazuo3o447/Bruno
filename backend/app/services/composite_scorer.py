@@ -305,9 +305,12 @@ class CompositeScorer:
             "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
         }
 
-        self.logger.debug(
-            f"Effective threshold: base={threshold:.1f} | ATR={atr:.2f} | price={result.price:.2f} | "
-            f"score={abs_score:.1f} | trade={result.should_trade}"
+        # SYNCHRONES LOGGING: Reason und Scores zusammen mit composite_score
+        reason_str = "; ".join(result.signals_active[:3]) if result.signals_active else "Score below threshold"
+        self.logger.info(
+            f"Composite Score: {result.composite_score:+.1f} | "
+            f"TA: {result.ta_score:+.1f} | Liq: {result.liq_score:+.1f} | Flow: {result.flow_score:+.1f} | Macro: {result.macro_score:+.1f} | "
+            f"Reason: {reason_str} | Trade: {result.should_trade}"
         )
         
         return result
@@ -560,10 +563,13 @@ class CompositeScorer:
         # Flow Signale
         ofi_raw = flow_data.get("OFI_Buy_Pressure")
         ofi = float(ofi_raw) if ofi_raw is not None else 0.5
-        if ofi > 0.65:
+        # FIX: Wenn OFI = 0, keine "Strong" Meldung
+        if ofi > 0.65 and ofi != 0:
             signals.append("Strong OFI Buy Pressure")
-        elif ofi < 0.35:
+        elif ofi < 0.35 and ofi != 0:
             signals.append("Strong OFI Sell Pressure")
+        elif ofi == 0:
+            signals.append("OFI Neutral (No Flow Data)")
         
         # Macro Signale
         grss_raw = macro_data.get("GRSS_Score")

@@ -2,6 +2,7 @@
 transformers
 torch
 feedparser
+pybit
 fastapi
 uvicorn[standard]
 redis

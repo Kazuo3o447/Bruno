@@ -1,7 +1,9 @@
 # Architektur-Manifest
 
-> **Referenz: WINDSURF_MANIFEST.md v2.2**
+> **Referenz: WINDSURF_MANIFEST.md v3.0**
 >
+> ✅ **V3.0 Bybit Data-Hub:** Bybit V5 WebSocket als primäre "Single Source of Truth", Binance Fallback (5s Heartbeat), Institutionelle CVD mit Bybit side-Field
+> ✅ **V3.0 Privacy & Stability:** CryptoPanic API (diskrete News), HF_TOKEN für HuggingFace, ConfigCache Singleton, CompositeScorer Logging Sync
 > ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
 > ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, None-basierte Data-Gap-Behandlung
 > ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
@@ -162,24 +164,25 @@ market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]  # 300 Ticks
 
 ---
 
-## Börsen-Architektur (Manifest v2.1)
+## Börsen-Architektur (Manifest v3.0)
 
 ```
-Binance WS/REST  ──► IngestionAgent + ContextAgent ──► Redis
+Bybit V5 WS ──► IngestionAgent + TechnicalAgent + QuantAgent ──► Redis
                                                            │
                                                       alle Agenten
                                                            │
-Bybit REST  ◄── ExecutionAgentV4 ◄── RiskAgent (RAM-Veto) ◄─┘
+Binance REST ◄── ContextAgent (Fallback) ◄── RiskAgent (RAM-Veto) ◄─┘
                         │
                         └──► PositionTracker (Redis Live-State + DB Audit)
 ```
 
 | Börse | Nutzung | Daten |
 |-------|---------|-------|
-| **Binance** | Daten & Analyse | WebSocket (5 Streams), REST (OI, Funding, Perp-Basis) |
+| **Bybit V5** | **Daten (Primär)** | WebSocket (kline.1, publicTrade, orderbook.50) - Single Source of Truth |
+| **Binance** | **Daten (Fallback)** | REST (OI, Funding, Perp-Basis) - 5s Heartbeat Monitoring |
 | **Bybit** | **Execution** | Unified Account Futures (max 1.0× Leverage) |
 | **Deribit** | Options-Daten | Put/Call Ratio, DVOL (kostenlos, kein Key) |
-| **Free-Tier Analytics** | Context + Flow | Binance Analytics (Top Trader / Taker Ratios) + On-Chain (Blockchain.com / Glassnode Free) |
+| **Free-Tier Analytics** | Context + Flow | Binance Analytics (Top Trader / Taker Ratios) + On-Chain (Blockchain.com / Glassnode Free) + CryptoPanic News |
 
 **Bybit Order-Format:**
 ```python
@@ -328,28 +331,32 @@ ADD COLUMN layer3_output JSONB;
 - [x] **Live Marktdaten**: Ticker, Klines, Orderbook, Funding, OI, Liquidations
 - [x] **Frontend Integration**: Frische Daten für Dashboard und Trading-Seite
 
-### Phase v2.3 — Score-Kalibrierung (April 2026) ✅ COMPLETED
-- [x] **Threshold Kalibrierung**: Learning 35→18, Production 55→40
-- [x] **Signal-Confluence-Bonus**: +8 pro aligned Signal ab dem 3. (TA, Liq, Flow, Macro, MTF, VWAP)
-- [x] **Regime-Kompensation**: +15% Score Boost in ranging/high_vola wenn abs(composite) > 10
-- [x] **TA Ranging-Kompensation**: "mixed" EMA Stack gibt ±8 wenn EMA9/21 aligned (Trend building)
-- [x] **Volume Session-Aware**: Keine Penalty in Asia/Late-US Sessions (nur EU/US/Overlap)
-- [x] **Liq Nearest-Wall Proximity**: ±5 Punkte wenn Orderbuch-Wall innerhalb 1%
-- [x] **MTF/Sweep Reihenfolge**: Fix - MTF Status wird VOR Confluence-Bonus gesetzt
-- [x] **Session Parameter**: Fix - session Parameter zu _calculate_ta_score hinzugefügt
-- [x] **Dokumentation**: trading_logic_v2.md mit allen Kalibrierungs-Änderungen aktualisiert
+### Phase v3.0 — Bybit Data-Hub & Core Math (April 2026) ✅ COMPLETED
+- [x] Phase 1 ✅ COMPLETED — Infrastructure Upgrade & Privacy (HF_TOKEN, CryptoPanic API, Browser-Scraper Entfernung)
+- [x] Phase 2 ✅ COMPLETED — Bybit V5 Primary Integration (WebSocket Client, Binance Fallback, Institutionelle CVD, VWAP Reset, VPOC)
+- [x] Phase 3 ✅ COMPLETED — Data Validation & Config Caching (ConfigCache Singleton, CompositeScorer Logging Sync)
+- [x] **Bybit V5 WebSocket:** kline.1.BTCUSDT, publicTrade.BTCUSDT, orderbook.50.BTCUSDT (Single Source of Truth)
+- [x] **Institutionelle CVD:** Bybit side-Field (Buy=Taker Buy, Sell=Taker Sell) mit execId Deduplizierung (deque maxlen=200)
+- [x] **Binance Fallback:** 5-Sekunden Heartbeat-Monitoring, Primary First (sofort zurück zu Bybit wenn verfügbar)
+- [x] **CryptoPanic API:** Diskrete News-Quelle als Ersatz für Browser-Scraping
+- [x] **HuggingFace Login:** HF_TOKEN für schnellere Model-Downloads, CRITICAL-Log bei Fehlschlag, Sentiment-Einfluss=0 bei Ausfall
+- [x] **VWAP Reset:** Exakt um 00:00:00 UTC (Typical Price Basis)
+- [x] **VPOC:** Volume Point of Control mit 10-Dollar-Preisstufen
+- [x] **ConfigCache Singleton:** config.json nur beim Startup laden (keine ständigen Disk-Reads)
+- [x] **CompositeScorer Logging:** Synchrones Logging von Reason und Scores mit composite_score
+- [x] **OFI=0 Schutz:** Keine "Strong Buy/Sell Pressure" Meldung wenn OFI = 0
 
 **Begründung:** Bruno erkannte Chancen korrekt, aber der Composite Score konnte in Ranging-Märkten (60-70% der Zeit bei BTC) mathematisch kaum den Threshold überschreiten. Die Kalibrierung ermöglicht jetzt Trade-Generierung bei aligned Signalen ohne die Systemstabilität zu gefährden.
 
-### Geplant: Phasen v2.1–v2.2
-- [x] **V2.2 Institutionelle Fixes**: Deribit DVOL/Max Pain, aggTrades CVD, Threshold-Fallback
-- [x] **V2.2 3-Phasen Exit**: Fix SL/TP → Breakeven → ATR Trailing
-- [x] **V2.2 Veto Matrix**: GRSS Threshold (35/55), Daily Drawdown Circuit Breaker
+### Geplant: Phasen v3.0+
+- [x] **V3.0 Bybit Data-Hub**: Bybit V5 WebSocket Primary, Binance Fallback, Institutionelle CVD
+- [x] **V3.0 Privacy & Stability**: CryptoPanic API, HF_TOKEN, ConfigCache Singleton, Logging Sync
 - [ ] Advanced Regimes, ML Integration
 - [ ] Portfolio Management, Advanced Risk Analytics
 
 ---
 
-*Referenz: WINDSURF_MANIFEST.md v2.2 — Einzige Quelle der Wahrheit*
+*Referenz: WINDSURF_MANIFEST.md v3.0 — Einzige Quelle der Wahrheit*
+*V3.0 Bybit Data-Hub abgeschlossen: 2026-04-06 – Bybit V5 Primary, CryptoPanic API, ConfigCache Singleton*
 *V2.2 Review abgeschlossen: 2026-04-05 – Alle institutionellen Fixes validiert*
 *V2.3 Score-Kalibrierung abgeschlossen: 2026-04-05 – Confluence-Bonus, Regime-Kompensation, Ranging-aware scoring*

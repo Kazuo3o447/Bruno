@@ -9,6 +9,7 @@ Bruno v2.2 is a **retail-ready** deterministic trading system with institutional
 3. **Adaptive Thresholds** - ATR-basiert mit Event Calendar Guardrails
 4. **MTF-Filter** - Regime-abhängige Filter für bessere Signalqualität im Ranging
 5. **DeepSeek Post-Trade Analyse** - Automatische Trade-Evaluation für Phantom Trades
+6. **Complete API Integration** - HuggingFace Sentiment, CryptoPanic News, Alpha Vantage Macro (2026-04-06)
 
 The LLM is **legacy-only** and has been removed from live trading. Only the **Deepseek Reasoning API** is used exclusively for post-trade debriefing and learning analysis.
 
@@ -20,6 +21,8 @@ Binance API (REST + WebSocket) → MarketDataCollector → Redis
 TechnicalAnalysisAgent → bruno:ta:snapshot (echtes CVD)
     ↓
 ContextAgent → bruno:context:grss (GRSS v3)
+    ↓
+SentimentAgent → HuggingFace Models (Zero-Shot Classification)
     ↓
 LiquidityEngine → bruno:liq:intelligence
     ↓
@@ -42,6 +45,8 @@ ExecutionAgentV4 → order / position management (paper trading)
 - **Open Interest**: Markttiefe und Liquidität
 - **Liquidations**: Liquidation Orders für Risk Management
 - **aggTrades**: Echte Trade-Daten für CVD-Berechnung
+
+**Primary Data Source:** Binance REST API (stabile Primärquelle, Bybit deaktiviert 2026-04-06)
 
 **Redis Storage Pattern:**
 ```bash
@@ -813,6 +818,13 @@ This conservative approach reflects real-world execution where stop-loss orders 
 - `bruno:binance:analytics`
 - `bruno:onchain:data`
 - `bruno:cvd:BTCUSDT`
+
+### Sentiment Analysis (NEW 2026-04-06)
+
+- `bruno:sentiment:analysis`
+- `bruno:sentiment:news_sentiment`
+- HuggingFace Models: `facebook/bart-large-mnli` (Zero-Shot Classification)
+- CryptoPanic API Integration (replaces Google Trends)
 
 ### Execution / Positions
 

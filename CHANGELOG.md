@@ -4,6 +4,37 @@ Alle wichtigen Änderungen und Fixes pro Version.
 
 ---
 
+## [v3.0] – 2026-04-06
+
+### 🚀 Bybit Data-Hub & Core Math
+
+#### **Phase 1: Infrastructure Upgrade & Privacy**
+- **HF_TOKEN Implementierung** – HuggingFace Login für schnellere Model-Downloads
+- **CRITICAL-Log bei Fehlschlag** – SentimentAgent loggt kritisch wenn HF_TOKEN fehlt oder Login fehlschlägt
+- **Sentiment-Einfluss auf 0** – RiskAgent setzt Sentiment-Score-Einfluss auf 0 wenn HF_TOKEN nicht verfügbar
+- **CryptoPanic API** – Diskrete News-Quelle als Ersatz für Browser-Scraping
+- **Browser-Scraper Entfernung** – Alle Browser-basierten News-Scraper und Google-Trends-Logiken gelöscht
+- **Dossier-Bereinigung** – Max Pain und Google Trends Referenzen bereinigt (nur in institutionellen GRSS v3 System belassen)
+
+#### **Phase 2: Bybit V5 Primary Integration**
+- **Bybit V5 WebSocket Client** – kline.1.BTCUSDT, publicTrade.BTCUSDT, orderbook.50.BTCUSDT (Single Source of Truth)
+- **Institutionelle CVD** – Bybit side-Field (Buy=Taker Buy, Sell=Taker Sell) mit execId Deduplizierung (deque maxlen=200)
+- **Binance Fallback** – 5-Sekunden Heartbeat-Monitoring, Primary First (sofort zurück zu Bybit wenn verfügbar)
+- **VWAP Reset** – Exakt um 00:00:00 UTC (Typical Price Basis)
+- **VPOC** – Volume Point of Control mit 10-Dollar-Preisstufen
+
+#### **Phase 3: Data Validation & Config Caching**
+- **ConfigCache Singleton** – config.json nur beim Startup laden (keine ständigen Disk-Reads)
+- **CompositeScorer Logging Sync** – Synchrones Logging von Reason und Scores mit composite_score
+- **OFI=0 Schutz** – Keine "Strong Buy/Sell Pressure" Meldung wenn OFI = 0
+
+### 📚 Dokumentation
+- README.md – v3.0 Bybit Data-Hub & Core Math
+- docs/arch.md – Bybit V5 Architektur, Binance Fallback
+- WINDSURF_MANIFEST.md – v3.0 Status Update
+
+---
+
 ## [v2.2.1] – 2026-04-05
 
 ### 🔧 Critical Fixes & Dead Code Cleanup

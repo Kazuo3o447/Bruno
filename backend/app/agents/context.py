@@ -88,14 +88,14 @@ class ContextAgent(StreamingAgent):
         from app.services.coinglass_client import CoinGlassClient
         from app.services.retail_sentiment import RetailSentimentService
         from app.services.sentiment_analyzer import analyzer as nlp_analyzer
-        from app.services.binance_analytics import BinanceAnalyticsService
         from app.services.onchain_client import OnChainClient
+        from app.services.cryptopanic_client import CryptoPanicClient
 
         self.latency_monitor = LatencyMonitor(redis_client=deps.redis)
         self.coinglass = CoinGlassClient(api_key=deps.config.COINGLASS_API_KEY, redis_client=deps.redis)
         self.retail_sentiment_service = RetailSentimentService(redis_client=deps.redis, sentiment_analyzer=nlp_analyzer, config=deps.config)
-        self.binance_analytics = BinanceAnalyticsService(redis_client=deps.redis)
         self.onchain_client = OnChainClient(redis_client=deps.redis, glassnode_api_key=getattr(deps.config, 'GLASSNODE_API_KEY', None))
+        self.cryptopanic = CryptoPanicClient(api_key=deps.config.CRYPTOPANIC_API_KEY, redis_client=deps.redis)
 
         self.macro_feeds = ["https://feeds.bloomberg.com/markets/news.rss"]
         self.crypto_feeds = ["https://cointelegraph.com/rss"]
@@ -561,7 +561,7 @@ class ContextAgent(StreamingAgent):
                 else:
                     self.dvol = None
 
-                # Options-Chain für PCR + Max Pain
+                # Options-Chain für PCR (Max Pain entfernt)
                 call_oi = 0.0
                 put_oi = 0.0
                 options_chain: List[Dict] = []
@@ -723,17 +723,7 @@ class ContextAgent(StreamingAgent):
         return max(low, min(high, value))
 
     def _normalize_max_pain_effect(self, price: float, max_pain: Optional[float]) -> float:
-        if not price or not max_pain:
-            return 0.0
-
-        distance_pct = ((float(max_pain) - float(price)) / float(price)) * 100.0
-        abs_distance = abs(distance_pct)
-
-        # Promptvorgabe: innerhalb 1% leicht bearish, >3% über Max Pain leicht bullish
-        if abs_distance <= 1.0:
-            return -0.3
-        if distance_pct < -3.0:
-            return 0.2
+        # DEAKTIVIERT - Max Pain Logik entfernt
         return 0.0
 
     def _calc_deriv_subscore(self, data: dict) -> float:
@@ -982,37 +972,9 @@ class ContextAgent(StreamingAgent):
 
     def _calc_max_pain(self) -> dict:
         """
-        Max Pain = Strike-Preis bei dem die Summe aller Optionsverluste
-        (Call + Put) für Käufer maximal ist = Market Maker profitieren am meisten.
-
-        An Monthly Expiries ist Max Pain ein Preismagnet.
+        DEAKTIVIERT - Max Pain Berechnung entfernt.
         """
-        if not self._deribit_options_chain:
-            return {"max_pain": None, "distance_pct": None}
-
-        strikes = sorted({float(opt.get("strike", 0.0)) for opt in self._deribit_options_chain if opt.get("strike") is not None})
-        if not strikes:
-            return {"max_pain": None, "distance_pct": None}
-
-        min_pain_value = float("inf")
-        max_pain_strike = 0.0
-
-        for test_strike in strikes:
-            total_pain = 0.0
-            for opt in self._deribit_options_chain:
-                oi = float(opt.get("open_interest", 0.0) or 0.0)
-                strike = float(opt.get("strike", 0.0) or 0.0)
-                opt_type = str(opt.get("type", "")).upper()
-                if opt_type == "C":
-                    total_pain += max(0.0, test_strike - strike) * oi
-                elif opt_type == "P":
-                    total_pain += max(0.0, strike - test_strike) * oi
-
-            if total_pain < min_pain_value:
-                min_pain_value = total_pain
-                max_pain_strike = test_strike
-
-        return {"max_pain": max_pain_strike, "distance_pct": None}
+        return {"max_pain": None, "distance_pct": None}
 
     def _determine_regime_hint(self, data: dict, grss: float) -> str:
         vix = float(data.get("vix", 20.0) or 20.0)
@@ -1093,15 +1055,12 @@ class ContextAgent(StreamingAgent):
             await self._fetch_binance_rest_data()
             await self._fetch_coinglass_data()
         
-            # Neue Datenquellen
-            analytics_start = time.perf_counter()
-            analytics = await self.binance_analytics.update()
-            self.long_short_ratio = analytics.get("global_ls_ratio", self.long_short_ratio)
-            await self._report_health(
-                "Binance_Analytics",
-                "online" if analytics else "offline",
-                (time.perf_counter() - analytics_start) * 1000,
-            )
+            # NEU: CryptoPanic News (Phase 1 - Ersatz für Browser-Scraping)
+            if self.cryptopanic.is_active():
+                await self.cryptopanic.update()
+        
+            # Binance Analytics REMOVED (Phase 3 Purge)
+            # Bybit V5 is now the Single Source of Truth
 
             onchain_start = time.perf_counter()
             self.onchain_data = await self.onchain_client.update()
@@ -1155,6 +1114,12 @@ class ContextAgent(StreamingAgent):
             retail_data = await self.deps.redis.get_cache("bruno:retail:sentiment") or {}
             ingestion_data = await self.deps.redis.get_cache("bruno:ingestion:last_message") or {}
 
+            # NEU: HuggingFace Verfügbarkeit prüfen - Sentiment-Einfluss auf 0 wenn nicht verfügbar
+            sentiment_avg_score = float(sentiment_data.get("average_score", 0))
+            if not nlp_analyzer.hf_available:
+                sentiment_avg_score = 0.0
+                self.logger.warning("HuggingFace nicht verfügbar - Sentiment-Score-Einfluss auf 0 gesetzt")
+
             funding_rate = float(funding_data.get("rate", self.perp_basis_pct / 100.0))
             retail_score = float(retail_data.get("retail_score", self._retail_score))
             retail_fomo_warning = bool(retail_data.get("fomo_warning", self._retail_fomo_warning))
@@ -1195,7 +1160,7 @@ class ContextAgent(StreamingAgent):
             grss_input = {
                 **pattern_data,
                 "vix": self.vix, "ndx_status": self.ndx_status,
-                "llm_news_sentiment": float(sentiment_data.get("average_score", 0)),
+                "llm_news_sentiment": sentiment_avg_score,  
                 "fresh_source_count": fresh_count,
                 "retail_score": retail_score,
                 "retail_fomo_warning": retail_fomo_warning,
@@ -1252,7 +1217,7 @@ class ContextAgent(StreamingAgent):
                 "Stablecoin_Delta_Bn": round(self.stablecoin_delta_bn, 2),
                 "Retail_Score": round(retail_score, 3),
                 "Retail_FOMO_Warning": retail_fomo_warning,
-                "LLM_News_Sentiment": round(float(sentiment_data.get("average_score", 0)), 3),
+                "LLM_News_Sentiment": round(sentiment_avg_score, 3),  # NEU: uses checked value
                 "Fresh_Source_Count": fresh_count,
                 "Data_Freshness_Active": fresh_count > 0,
                 "News_Silence_Seconds": round(news_silence_seconds, 1),

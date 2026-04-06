@@ -104,15 +104,15 @@ async def main():
     if not telegram_started:
         logger.warning("Telegram nicht aktiv — Keys fehlen in .env")
     
-    # Binance API Health Check
-    from app.core.binance_client import binance_client
+    # Bybit V5 WebSocket Health Check
     from app.core.market_data_collector import MarketDataCollector
-    binance_ok = await binance_client.health_check()
-    logger.info(f"Binance API Status: {'✅ Ok' if binance_ok else '⚠️ Down'}")
-    
-    # Market Data Collector
     market_collector = MarketDataCollector(redis)
-    logger.info("Market Data Collector initialisiert")
+    bybit_ok = await market_collector.health_check()
+    logger.info(f"Bybit V5 WebSocket Status: {'✅ Connected' if bybit_ok else '⚠️ Disconnected'}")
+    
+    # News Ingestion Service
+    from app.services.news_ingestion import news_ingestion_service
+    logger.info("News Ingestion Service initialisiert")
 
     # 2. Dependency Injection
     deps = AgentDependencies(
@@ -137,7 +137,7 @@ async def main():
     await orchestrator.start_all()
     cmd_task = asyncio.create_task(orchestrator.listen_for_commands())
     
-    # Market Data Collection Task
+    # Market Data Collection Task (Bybit V5 WebSocket)
     async def market_data_loop():
         while True:
             try:
@@ -147,8 +147,19 @@ async def main():
                 logger.error(f"Market data collection error: {e}")
                 await asyncio.sleep(60)  # Bei Fehler länger warten
     
+    # News Ingestion Task
+    async def news_ingestion_loop():
+        while True:
+            try:
+                await news_ingestion_service.start_ingestion_loop()
+                await asyncio.sleep(1)  # Service hat eigene Timing-Logik
+            except Exception as e:
+                logger.error(f"News ingestion error: {e}")
+                await asyncio.sleep(10)  # Bei Fehler kurz warten
+    
     market_task = asyncio.create_task(market_data_loop())
-    logger.info("Market Data Collection gestartet")
+    news_task = asyncio.create_task(news_ingestion_loop())
+    logger.info("Market Data Collection & News Ingestion gestartet")
 
     # 5. Shutdown Handling (signal für Windows nicht 100% kompatibel, daher try/except)
     loop = asyncio.get_event_loop()
@@ -163,7 +174,9 @@ async def main():
     # 6. Cleanup
     cmd_task.cancel()
     market_task.cancel()
+    news_task.cancel()
     await market_collector.close()
+    await news_ingestion_service.shutdown()
     await redis.disconnect()
     
     # Telegram Bot stoppen

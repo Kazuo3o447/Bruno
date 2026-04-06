@@ -1,5 +1,5 @@
 # WINDSURF_MANIFEST.md
-# Bruno Trading Platform — Master Agent Briefing v2.2.1
+# Bruno Trading Platform — Master Agent Briefing v3.0
 
 > **PFLICHTLEKTÜRE. Jeder Agent. Jede Session. Jeder Neustart.**
 > Dieses Dokument ist die einzige Quelle der Wahrheit.
@@ -7,13 +7,25 @@
 > Bei Änderungen: ERST hier dokumentieren, DANN Code ändern.
 >
 > Erstellt: 2026-03-27 | Architekt: Ruben | Review: Claude (Anthropic)
-> Letzte Aktualisierung: 2026-04-05 (Bruno v2.2.1 Critical Fixes & Dead Code Cleanup)
+> Letzte Aktualisierung: 2026-04-06 (Bruno v3.0 Bybit Data-Hub & Core Math)
 > Repository: https://github.com/Kazuo3o447/Bruno
 >
 
 ---
 
 ## STATUS UPDATE (April 2026)
+
+### ✅ BRUNO v3.0 — Bybit Data-Hub & Core Math
+- **Bybit V5 WebSocket als Primärquelle:** kline.1.BTCUSDT, publicTrade.BTCUSDT, orderbook.50.BTCUSDT (Single Source of Truth)
+- **Binance Fallback (5s Heartbeat):** Primary First - sofort zurück zu Bybit wenn verfügbar
+- **Institutionelle CVD:** Bybit side-Field (Buy=Taker Buy, Sell=Taker Sell) mit execId Deduplizierung (deque maxlen=200)
+- **CryptoPanic API:** Diskrete News-Quelle als Ersatz für Browser-Scraping
+- **HuggingFace Login:** HF_TOKEN für schnellere Model-Downloads, CRITICAL-Log bei Fehlschlag, Sentiment-Einfluss=0 bei Ausfall
+- **VWAP Reset:** Exakt um 00:00:00 UTC (Typical Price Basis)
+- **VPOC:** Volume Point of Control mit 10-Dollar-Preisstufen
+- **ConfigCache Singleton:** config.json nur beim Startup laden (keine ständigen Disk-Reads)
+- **CompositeScorer Logging:** Synchrones Logging von Reason und Scores mit composite_score
+- **OFI=0 Schutz:** Keine "Strong Buy/Sell Pressure" Meldung wenn OFI = 0
 
 ### ✅ BRUNO v2.2.1 — Critical Fixes & Dead Code Cleanup
 - **ExecutionAgentV4 aktiviert** – worker.py importiert und registriert jetzt V4 statt V3 (1157 Zeilen Dead Code eliminiert)
@@ -43,43 +55,61 @@
 - **OFI Display Fix** — Korrekte Redis Key-Mapping (OFI_Buy_Pressure statt OFI)
 - **Log Page** — WebSocket-basierte Logs mit REST Fallback für Robustheit
 
-## AGENT-PIPELINE v2
+### AGENT-PIPELINE v3.0
 
 | Stage | Agenten | Redis Output |
 |-------|---------|-------------|
-| 1 | ingestion | market_candles, liquidations, market:ticker, market:funding, market:ofi:ticks, market:orderbook |
-| 2 | technical, context, sentiment | bruno:ta:snapshot, bruno:context:grss, bruno:sentiment:aggregate |
+| 1 | ingestion (Bybit V5 WS) | market_candles, liquidations, market:ticker, market:funding, market:ofi:ticks, market:orderbook, market:cvd:cumulative |
+| 2 | technical, context, sentiment | bruno:ta:snapshot, bruno:context:grss, bruno:sentiment:aggregate, bruno:cryptopanic:news |
 | 3 | quant | bruno:quant:micro, bruno:liq:intelligence, bruno:decisions:feed, bruno:pubsub:signals |
 | 4 | risk | bruno:veto:state |
 | 5 | execution | bruno:portfolio:state |
 
-### Binance API Integration (v2.1)
+### Bybit V5 WebSocket Integration (v3.0)
 
-**MarketDataCollector** (Worker-Task, 30s Intervall):
+**Streams (Single Source of Truth):**
 ```python
-# API Endpoints (keine Keys erforderlich)
-get_ticker()           # 67263.7 USD
-get_klines()           # 500 Candlesticks
-get_orderbook()        # 100 Bids/Asks
-get_funding_rate()     # 0.0001
-get_open_interest()    # 123456 BTC
-get_liquidations()     # [{"side": "SELL", "price": 67000}]
+# Bybit V5 WebSocket
+kline.1.BTCUSDT          # 1-Minuten-Kerzen für TA
+publicTrade.BTCUSDT      # Trades für CVD (institutionelle side-Handling)
+orderbook.50.BTCUSDT     # Orderbook für OFI (50 Levels)
 ```
 
-**Redis Storage Pattern:**
+**Institutionelle CVD-Berechnung:**
+```python
+# Bybit side-Field Handling
+if side == "Buy":
+    # Taker Buy: Aggressives Kaufvolumen (Market Buy Order)
+    cvd_cumulative += volume
+elif side == "Sell":
+    # Taker Sell: Aggressives Verkaufvolumen (Market Sell Order)
+    cvd_cumulative -= volume
+
+# Deduplizierung mit execId
+if exec_id not in last_exec_ids:  # deque maxlen=200
+    last_exec_ids.append(exec_id)
+```
+
+**Binance Fallback (5s Heartbeat):**
+```python
+# Heartbeat Monitoring
+if current_time - last_data_time > 5.0:
+    # Fallback zu Binance aktivieren
+    use_fallback = True
+    # Primary First: sofort zurück zu Bybit wenn verfügbar
+```
+
+**Redis Storage Pattern (v3.0):**
 ```bash
-# 5-10s TTL (sehr frisch)
-market:ticker:BTCUSDT           # {"last_price": 67263.7}
-market:orderbook:BTCUSDT        # {"imbalance_ratio": 1.23}
-market:ofi:ticks               # [{"t": "...", "r": 1.23}]
+# Bybit Primary Data
+market:cvd:cumulative           # CVD Wert (institutionell berechnet)
+bruno:cvd:BTCUSDT              # CVD Details mit execId, side, volume
+bruno:ta:klines:BTCUSDT        # Klines für TA (Bybit)
+market:orderbook:BTCUSDT        # Orderbook für OFI (Bybit)
+market:ofi:ticks               # OFI Ticks für QuantAgent
 
-# 60s TTL (frisch)
-bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
-market:liquidations:BTCUSDT    # [{"side": "SELL", "price": 67000}]
-
-# 300s TTL (mittel-frisch)
-market:funding:BTCUSDT         # {"fundingRate": 0.0001}
-market:open_interest:BTCUSDT   # {"openInterest": "123456.78"}
+# CryptoPanic News
+bruno:cryptopanic:news          # Hot & Latest News (diskret)
 ```
 
 ### Entscheidungslogik: Composite Scorer

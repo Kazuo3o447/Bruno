@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # StockTwits (optional, leer lassen = wird übersprungen)
     STOCKTWITS_API_KEY: Optional[str] = None
 
+    # CryptoPanic API (Ersatz für Browser-Scraping)
+    # API Key: https://cryptopanic.com/developers/api/
+    CRYPTOPANIC_API_KEY: Optional[str] = None
+
     # HuggingFace Token für schnellere Model-Downloads
     # https://huggingface.co/settings/tokens → Read-Token
     HF_TOKEN: Optional[str] = None
