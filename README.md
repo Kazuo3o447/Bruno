@@ -1,7 +1,9 @@
 # Bruno Trading Bot
 
-> **Privacy-First Institutional Bitcoin Trading Bot — v8.0 Data Core**
+> **Privacy-First Institutional Bitcoin Trading Bot — v2.1 Logic-Bugs Fixed**
 >
+> ✅ **V2.1 Logic-Bugs Fixed:** Sequentielle should_trade Logik, Single OFI Penalty, Conservative insufficient_data, F&G Retry, Dynamic EUR/USD, Rock-Solid Decision Engine
+> ✅ **V2.1 Integration Fixes:** Multi-Strategy Slots (trend, sweep, funding), Scaled Entry Engine, Position Tracker Slot-Aware, Cooldowns (Sweep 60s, Funding 1800s)
 > ✅ **V8.0 Privacy-First News & Bybit Core:** Multi-Source News Ingestion (CryptoPanic, RSS, Tier-3 FreeCryptoNews) mit SHA256 Deduplizierung, Zero-Trust Defensive Architecture, Bybit V5 WebSocket als exklusive "Single Source of Truth", Complete Binance REST Purge
 > ✅ **V8.0 Mathematical Purity:** Präzise CVD Taker-Mathematik, VWAP/VPOC tägliche Resets, Trade-Deduplizierung via execution IDs, Zero Tolerance für Heuristiken
 > ✅ **V3.0 API Integration Complete:** Alle API-Keys konfiguriert (HF_TOKEN, ALPHA_VANTAGE, DEEPSEEK, FRED, LUNARCRUSH), HuggingFace Sentiment Models aktiv, CryptoPanic News Integration
@@ -22,12 +24,12 @@
 
 ---
 
-## 🎯 Projekt-Identität (Manifest v8.0)
+## 🎯 Projekt-Identität (Manifest v2.1)
 
 | Parameter | Wert |
 |---|---|
-| **Strategie** | Medium-Frequency (5–15 Minuten Signale) |
-| **Datenquelle** | Bybit V5 WebSocket (Single Source of Truth) |
+| **Strategie** | Multi-Strategy (Trend, Sweep, Funding) |
+| **Datenquelle** | Binance WebSocket + Yahoo Finance (FX) |
 | **News-Quellen** | CryptoPanic API + RSS Feeds + Tier-3 FreeCryptoNews (Zero-Trust) |
 | **Sentiment** | HuggingFace Models (FinBERT, CryptoBERT) |
 | **Post-Trade Analyse** | Deepseek Reasoning API |

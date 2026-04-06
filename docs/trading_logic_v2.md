@@ -1,8 +1,8 @@
-# Bruno v9.0 Trading Logic (Multi-Strategy Architecture)
+# Bruno v2.1 Trading Logic (Multi-Strategy Architecture)
 
 ## 1. Purpose
 
-Bruno v9.0 is a **multi-strategy institutional** deterministic trading system with zero tolerance for heuristics. The system features:
+Bruno v2.1 is a **multi-strategy institutional** deterministic trading system with zero tolerance for heuristics and logic bugs. The system features:
 
 1. **Multi-Strategy Architecture** - 3 unkorrelierte Strategie-Slots (Trend, Sweep, Funding)
 2. **Scaled Entry Engine** - Pyramiding für Trend-Strategie (40%/30%/30% Tranchen)
@@ -11,28 +11,31 @@ Bruno v9.0 is a **multi-strategy institutional** deterministic trading system wi
 5. **Macro Trend Filter** - Daily EMA 50/200 Override gegen Bear Market Rallies
 6. **OFI Pipeline Quality Gate** - Datenqualitäts-Checks für Order Flow
 7. **RegimeConfig Integration** - Regime-spezifische Trading-Regeln
-8. **Binance Hedge Mode** - Gleichzeitige Long+Short Positionen
-9. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
-10. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
+8. **Sequential should_trade Logic** - Deterministische Entscheidungsreihenfolge
+9. **Robust Data Sources** - Retry-Logik für alle externen APIs
+10. **Dynamic FX Rates** - EUR/USD via Yahoo Finance mit Redis-Cache
+11. **Binance Hedge Mode** - Gleichzeitige Long+Short Positionen
+12. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
+13. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
 
-The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing professional multi-strategy risk management.
+The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing professional multi-strategy risk management and **rock-solid logic**.
 
-## 2. Data Flow Overview (v9.0 Multi-Strategy Architecture)
+## 2. Data Flow Overview (v2.1 Logic-Bugs Fixed)
 
 ```text
 Bybit V5 WebSocket → BybitV5Client → Redis (CVD, VWAP, VPOC)
     ↓
 News Sources (CryptoPanic, RSS, Free-Crypto-News) → NewsIngestionService → SentimentAnalyzer
     ↓
-TechnicalAnalysisAgent → bruno:ta:snapshot (Daily EMA Macro Trend)
+TechnicalAnalysisAgent → bruno:ta:snapshot (Daily EMA Macro Trend + Retry Logic)
     ↓
-ContextAgent → bruno:context:grss (GRSS v3, Funding Rate)
+ContextAgent → bruno:context:grss (GRSS v3, Funding Rate, EUR/USD from Yahoo Finance)
     ↓
-QuantAgentV4 → Multi-Strategy Dispatch (Trend/Sweep/Funding)
+QuantAgentV4 → Multi-Strategy Dispatch (Trend/Sweep/Funding + Cooldowns)
     ↓
 StrategyManager → Portfolio Risk Checks → Slot Allocation
     ↓
-CompositeScorer → Signal Generation (per Slot)
+CompositeScorer → Sequential Signal Generation (Threshold → Conviction → Regime → Macro → Sizing)
     ↓
 ScaledEntryEngine → Tranche Management (Trend-Slot)
     ↓
@@ -41,7 +44,17 @@ ExecutionAgentV4 → Slot-Aware Order Execution
 PositionTracker → Multi-Slot Position Management
 ```
 
-### 2.1 Multi-Strategy Slots
+### 2.1 Critical Logic Fixes (v2.1)
+
+**🔴 SHOWSTOPPER BUGS FIXED:**
+
+1. **Sequential should_trade Logic** - Regime/Macro-Blöcke können nicht von Threshold überschrieben werden
+2. **Single OFI Penalty** - Keine Vierfach-Strafe mehr (nur Threshold +8 + Conviction*0.5)
+3. **Conservative insufficient_data** - Bei <200 Daily Candles: keine Longs/Shorts
+4. **F&G Retry Logic** - 5× Retry mit exponentiellem Backoff + 6h Polling
+5. **Dynamic EUR/USD** - Yahoo Finance API statt hardcoded 1.08
+
+### 2.2 Multi-Strategy Slots
 
 **3 unabhängige Strategie-Slots mit eigenem Kapital und Risk Management:**
 
@@ -400,9 +413,209 @@ def _calc_macro_trend(self, candles_1d):
     }
 ```
 
-### 8.2 Indicators
+## 9. Sequential should_trade Logic (v2.1 Critical Fix)
 
-#### EMA Stack
+### 9.1 Problem Statement
+
+**Vor v2.1:** Regime/Macro-Blöcke konnten von Threshold überschrieben werden:
+```python
+# Regime Block (wird überschrieben)
+if result.direction == "long" and not regime_cfg.allow_longs:
+    result.should_trade = False
+
+# Threshold Check (überschreibt alles)
+result.should_trade = abs_score >= effective_threshold  # ← PROBLEM!
+```
+
+**Nach v2.1:** Sequenzielle Logik - Blöcke können nur blockieren, nie freigeben:
+```python
+# === SEQUENTIELLE SHOULD_TRADE LOGIK ===
+
+# SCHRITT 1: Threshold Check (setzt should_trade initial)
+result.should_trade = abs_score >= effective_threshold
+
+# SCHRITT 2: Conviction Check
+if result.conviction < regime_cfg.confidence_threshold:
+    result.should_trade = False
+    result.signals_active.append(f"Low conviction {result.conviction:.2f}")
+
+# SCHRITT 3: Regime Direction Filter (kann nur blockieren)
+if result.should_trade and result.direction == "long" and not regime_cfg.allow_longs:
+    result.should_trade = False
+    result.signals_active.append(f"BLOCKED: {regime} regime disallows longs")
+
+# SCHRITT 4: Macro Trend Hard Block (kann nur blockieren)
+if result.should_trade and result.direction == "long" and not mt_allow_longs:
+    result.should_trade = False
+    result.signals_active.append(f"⛔ MACRO BLOCK: No longs in {macro_trend}")
+
+# SCHRITT 5: Sizing Check (kann nur blockieren)
+if result.should_trade and not sizing.get("sizing_valid", False):
+    result.should_trade = False
+    result.signals_active.append(f"SIZING REJECT: {sizing.get('reject_reason')}")
+```
+
+### 9.2 Decision Flow Examples
+
+**Example 1: High Score aber Regime Block**
+```text
+Score: 80 (>= Threshold 40) → should_trade = True
+Regime: high_vola, allow_longs = False → should_trade = False
+Result: BLOCKED despite high score ✅
+```
+
+**Example 2: Low Score**
+```text
+Score: 25 (< Threshold 40) → should_trade = False
+Regime: normal, allow_longs = True → bleibt False
+Result: No trade due to low score ✅
+```
+
+### 9.3 Logic Invariants
+
+1. **Threshold sets initial state** - can only enable trading
+2. **All subsequent steps can only disable** - never enable
+3. **Order is deterministic** - Threshold → Conviction → Regime → Macro → Sizing
+4. **No overrides possible** - once blocked, stays blocked
+
+## 10. Robust Data Sources (v2.1)
+
+### 10.1 Fear & Greed Index with Retry
+
+**Problem:** Single API failure → 24h no F&G data
+**Solution:** 5× Retry with exponential backoff
+
+```python
+async def _poll_fg_index(self):
+    while self.state.running:
+        success = False
+        for attempt in range(5):  # Max 5 Versuche
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get("https://api.alternative.me/fng/")
+                    if response.status_code == 200:
+                        # ... process data ...
+                        success = True
+                        break
+            except Exception as e:
+                self.logger.warning(f"F&G Polling Versuch {attempt+1}/5 fehlgeschlagen: {e}")
+            
+            # Exponentieller Backoff: 30s, 60s, 120s, 240s, 480s
+            await asyncio.sleep(30 * (2 ** attempt))
+        
+        if not success:
+            self.logger.error("F&G Index NICHT verfügbar nach 5 Versuchen")
+        
+        # Nächstes Update: alle 6 Stunden (statt 24h)
+        await asyncio.sleep(21600)
+```
+
+### 10.2 Dynamic EUR/USD Rates
+
+**Problem:** Hardcoded 1.08 rate
+**Solution:** Yahoo Finance API with Redis cache
+
+```python
+# ContextAgent
+async def _fetch_eur_usd(self) -> float:
+    CACHE_KEY = "macro:eurusd"
+    cached = await self.deps.redis.get_cache(CACHE_KEY)
+    if cached is not None:
+        return float(cached)
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X",
+                headers={"User-Agent": self._user_agent}
+            )
+            if r.status_code == 200:
+                rate = float(r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"])
+                await self.deps.redis.set_cache(CACHE_KEY, rate, ttl=3600)
+                return rate
+    except Exception as e:
+        self.logger.warning(f"EUR/USD Fetch Fehler: {e}")
+    return 1.08  # Fallback
+
+# CompositeScorer + ExecutionAgent
+eurusd_cached = await self.redis.get_cache("macro:eurusd")
+eur_to_usd = float(eurusd_cached) if eurusd_cached else 1.08
+capital_usd = capital_eur * eur_to_usd
+```
+
+### 10.3 Macro Trend insufficient_data Conservative
+
+**Problem:** <200 Daily candles → allow_longs=True, allow_shorts=True
+**Solution:** Conservative - no trading without data
+
+```python
+if len(candles_1d) < 200:
+    return {
+        "macro_trend": "insufficient_data",
+        "allow_longs": False,   # GEÄNDERT: konservativ
+        "allow_shorts": False,  # GEÄNDERT: konservativ
+        "insufficient_data": True,
+    }
+```
+
+### 10.4 Daily Backfill Retry Logic
+
+```python
+# Daily Backfill mit Retry
+for attempt in range(3):
+    self.logger.info(f"Daily Backfill Versuch {attempt+1}/3: {day_count} Tage vorhanden")
+    await self._backfill_daily_candles()
+    # Re-check
+    day_count = await self._check_daily_candles()
+    if day_count >= 200:
+        self.logger.info(f"Daily Backfill erfolgreich: {day_count} Tage")
+        break
+    await asyncio.sleep(5)  # 5s warten zwischen Versuchen
+else:
+    self.logger.error(f"Daily Backfill FEHLGESCHLAGEN nach 3 Versuchen")
+```
+
+## 11. OFI Penalty Cleanup (v2.1)
+
+### 11.1 Problem: Vierfach-Strafe
+
+**Vor v2.1:** OFI unavailable → 4 separate penalties:
+1. `_score_flow()`: `score -= 10` (hardcoded)
+2. `score()`: `threshold += 8` (Threshold penalty)
+3. `score()`: `flow_score *= 0.5` (dead code)
+4. `score()`: `conviction *= 0.5` (Data gap penalty)
+
+### 11.2 Solution: Single Penalty
+
+**Nach v2.1:** Only 2 penalties:
+1. **Threshold +8** - Makes trading harder
+2. **Conviction * 0.5** - Reduces confidence
+
+```python
+# ENTFERNT: Hardcoded -10 Penalty aus _score_flow()
+# ENTFERNT: Dead flow_score *= 0.5 Block
+
+# BEHALTEN: Threshold +8
+if flow_data.get("OFI_Buy_Pressure") is None:
+    effective_threshold += 8
+    result.signals_active.append("OFI Data Gap: Threshold +8")
+
+# BEHALTEN: Conviction * 0.5 mit deduplizierter Message
+critical_data_gap = macro_data.get("DVOL") is None or macro_data.get("Long_Short_Ratio") is None
+if not flow_data.get("OFI_Available", True):
+    critical_data_gap = True
+
+if critical_data_gap:
+    missing = []
+    if not ofi_available: missing.append("OFI")
+    if macro_data.get("DVOL") is None: missing.append("DVOL")
+    if macro_data.get("Long_Short_Ratio") is None: missing.append("L/S Ratio")
+    result.signals_active.append(f"Data Gap ({', '.join(missing)}): Conviction halved")
+```
+
+## 12. Indicators
+
+### 12.1 EMA Stack
 
 **Multi-Timeframe EMA Analyse:**
 

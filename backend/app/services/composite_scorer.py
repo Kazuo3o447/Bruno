@@ -245,14 +245,6 @@ class CompositeScorer:
         # 5b. RegimeConfig Integration (NEU)
         regime_cfg = REGIME_CONFIGS.get(regime, REGIME_CONFIGS["unknown"])
         
-        # Regime Direction Filter
-        if result.direction == "long" and not regime_cfg.allow_longs:
-            result.should_trade = False
-            result.signals_active.append(f"BLOCKED: {regime} regime disallows longs")
-        elif result.direction == "short" and not regime_cfg.allow_shorts:
-            result.should_trade = False
-            result.signals_active.append(f"BLOCKED: {regime} regime disallows shorts")
-
         # 7. Threshold + Bonus-Logic
         atr = float(ta_data.get("atr_14", 0.0) or 0.0)
         threshold = self._get_threshold(atr, result.price, macro_data)
@@ -270,15 +262,8 @@ class CompositeScorer:
             effective_threshold += 8
             result.signals_active.append("OFI Data Gap: Threshold +8")
         
-        # OFI Pipeline Down: Halbiere Flow Score wenn OFI nicht verfügbar
-        ofi_available = flow_data.get("OFI_Available", True)
-        if not ofi_available:
-            flow_score = flow_score * 0.5
-            result.signals_active.append("OFI Pipeline Down: Flow data unreliable")
-        
+        # Critical Data Gap Check (für Conviction)
         critical_data_gap = macro_data.get("DVOL") is None or macro_data.get("Long_Short_Ratio") is None
-        
-        # OFI Data Gap Check
         ofi_available = flow_data.get("OFI_Available", True)
         if not ofi_available:
             critical_data_gap = True
@@ -286,35 +271,19 @@ class CompositeScorer:
         base_conviction = min(1.0, abs_score / 100.0)
         result.conviction = round(base_conviction * (0.5 if critical_data_gap else 1.0), 3)
         if critical_data_gap:
+            # EINE Message, die beschreibt WAS fehlt
+            missing = []
             if not ofi_available:
-                result.signals_active.append("OFI Pipeline Down: Flow data unreliable")
-            else:
-                result.signals_active.append("Data Gap: DVOL/L-S missing")
+                missing.append("OFI")
+            if macro_data.get("DVOL") is None:
+                missing.append("DVOL")
+            if macro_data.get("Long_Short_Ratio") is None:
+                missing.append("L/S Ratio")
+            result.signals_active.append(f"Data Gap ({', '.join(missing)}): Conviction halved")
         
-        result.should_trade = abs_score >= effective_threshold
-        
-        # Confidence Threshold Check (NEU)
-        if result.conviction < regime_cfg.confidence_threshold:
-            result.should_trade = False
-            result.signals_active.append(
-                f"Low conviction {result.conviction:.2f} < {regime_cfg.confidence_threshold}"
-            )
-        
-        # Macro Trend Hard Block
+        # Macro Trend Hard Block Daten
         mt_allow_longs = macro_trend.get("allow_longs", True)
         mt_allow_shorts = macro_trend.get("allow_shorts", True)
-        
-        if result.direction == "long" and not mt_allow_longs:
-            result.should_trade = False
-            result.signals_active.append(
-                f"⛔ MACRO BLOCK: No longs in {macro_trend.get('macro_trend')} "
-                f"(Price {macro_trend.get('ema200_distance_pct', 0):+.1f}% vs Daily EMA200)"
-            )
-        elif result.direction == "short" and not mt_allow_shorts:
-            result.should_trade = False
-            result.signals_active.append(
-                f"⛔ MACRO BLOCK: No shorts in {macro_trend.get('macro_trend')}"
-            )
         
         # 8. Position Sizing (NEU: mit Capital)
         portfolio = await self.redis.get_cache("bruno:portfolio:state") or {}
@@ -323,8 +292,41 @@ class CompositeScorer:
         session = ta_data.get("session", {})
         sizing = self._calc_position_size(abs_score, atr, result.price, session, capital_eur)
         
-        # Wenn Sizing invalid → should_trade = False
-        if not sizing.get("sizing_valid", False):
+        # === SEQUENTIELLE SHOULD_TRADE LOGIK (BUG 8 FIX) ===
+        
+        # SCHRITT 1: Threshold Check (setzt should_trade initial)
+        result.should_trade = abs_score >= effective_threshold
+        
+        # SCHRITT 2: Conviction Check
+        if result.conviction < regime_cfg.confidence_threshold:
+            result.should_trade = False
+            result.signals_active.append(
+                f"Low conviction {result.conviction:.2f} < {regime_cfg.confidence_threshold}"
+            )
+        
+        # SCHRITT 3: Regime Direction Filter (kann nur blockieren, nie freigeben)
+        if result.should_trade and result.direction == "long" and not regime_cfg.allow_longs:
+            result.should_trade = False
+            result.signals_active.append(f"BLOCKED: {regime} regime disallows longs")
+        elif result.should_trade and result.direction == "short" and not regime_cfg.allow_shorts:
+            result.should_trade = False
+            result.signals_active.append(f"BLOCKED: {regime} regime disallows shorts")
+        
+        # SCHRITT 4: Macro Trend Hard Block (kann nur blockieren, nie freigeben)
+        if result.should_trade and result.direction == "long" and not mt_allow_longs:
+            result.should_trade = False
+            result.signals_active.append(
+                f"⛔ MACRO BLOCK: No longs in {macro_trend.get('macro_trend')} "
+                f"(Price {macro_trend.get('ema200_distance_pct', 0):+.1f}% vs Daily EMA200)"
+            )
+        elif result.should_trade and result.direction == "short" and not mt_allow_shorts:
+            result.should_trade = False
+            result.signals_active.append(
+                f"⛔ MACRO BLOCK: No shorts in {macro_trend.get('macro_trend')}"
+            )
+        
+        # SCHRITT 5: Sizing Check (kann nur blockieren, nie freigeben)
+        if result.should_trade and not sizing.get("sizing_valid", False):
             result.should_trade = False
             result.signals_active.append(
                 f"SIZING REJECT: {sizing.get('reject_reason', 'unknown')}"
@@ -373,6 +375,7 @@ class CompositeScorer:
                 else True
             ),
             "macro_trend": macro_trend.get("macro_trend", "unknown"),
+            "macro_data_sufficient": not macro_trend.get("insufficient_data", False),
             "macro_allows_direction": (
                 mt_allow_longs if result.direction == "long"
                 else mt_allow_shorts if result.direction == "short"
@@ -470,8 +473,8 @@ class CompositeScorer:
                 "reject_reason": "No price or capital",
             }
         
-        # EUR → USD Konversion (vereinfacht, später via API)
-        eur_to_usd = 1.08  # TODO: aus Redis laden
+        # EUR → USD (hardcoded - non-async context)
+        eur_to_usd = 1.08  # Fallback für _calc_position_size
         capital_usd = capital_eur * eur_to_usd
         
         # 1. Risikobetrag = fixer Prozentsatz des EIGENKAPITALS
@@ -572,12 +575,6 @@ class CompositeScorer:
         Range: -50 bis +50
         """
         score = 0.0
-        
-        # OFI Data Gap Handling: Wenn OFI nicht verfügbar, reduziere Score um 50%
-        ofi_available = flow_data.get("OFI_Available", True)
-        if not ofi_available:
-            # OFI ist 20 Punkte wert → 50% Reduction = -10 Punkte
-            score -= 10
         
         # OFI (±20)
         ofi_raw = flow_data.get("OFI_Buy_Pressure")

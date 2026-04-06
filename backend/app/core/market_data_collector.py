@@ -47,7 +47,6 @@ class BybitV5Client:
         try:
             # Real data for paper-trading (testnet=False)
             # TODO: Implement actual Bybit V5 WebSocket connection
-                testnet=False,
             self.logger.info("Bybit V5 WebSocket simulated connection successful")
             
         except Exception as e:

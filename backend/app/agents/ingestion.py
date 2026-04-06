@@ -59,26 +59,37 @@ class IngestionAgentV2(StreamingAgent):
         asyncio.create_task(self.run_stream())
 
     async def _poll_fg_index(self):
-        """Pollen des Fear & Greed Index 1x am Tag"""
+        """Pollen des Fear & Greed Index mit Retry."""
         while self.state.running:
-            try:
-                async with httpx.AsyncClient() as client:
-                    response = await client.get("https://api.alternative.me/fng/")
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data and "data" in data:
-                            fng_value = int(data["data"][0]["value"])
-                            fng_class = data["data"][0]["value_classification"]
-                            await self.deps.redis.set_cache("macro:fear_and_greed", {
-                                "value": fng_value,
-                                "classification": fng_class,
-                                "timestamp": datetime.now(timezone.utc).isoformat()
-                            }, ttl=86400)
-                            self.logger.info(f"F&G Index aktualisiert: {fng_value} ({fng_class})")
-            except Exception as e:
-                self.logger.warning(f"Fehler beim F&G Polling: {e}")
+            success = False
+            for attempt in range(5):  # Max 5 Versuche
+                try:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        response = await client.get("https://api.alternative.me/fng/")
+                        if response.status_code == 200:
+                            data = response.json()
+                            if data and "data" in data:
+                                fng_value = int(data["data"][0]["value"])
+                                fng_class = data["data"][0]["value_classification"]
+                                await self.deps.redis.set_cache("macro:fear_and_greed", {
+                                    "value": fng_value,
+                                    "classification": fng_class,
+                                    "timestamp": datetime.now(timezone.utc).isoformat()
+                                }, ttl=86400)
+                                self.logger.info(f"F&G Index: {fng_value} ({fng_class})")
+                                success = True
+                                break
+                except Exception as e:
+                    self.logger.warning(f"F&G Polling Versuch {attempt+1}/5 fehlgeschlagen: {e}")
+                
+                # Exponentieller Backoff: 30s, 60s, 120s, 240s, 480s
+                await asyncio.sleep(30 * (2 ** attempt))
             
-            await asyncio.sleep(86400) # 24 Stunden
+            if not success:
+                self.logger.error("F&G Index NICHT verfügbar nach 5 Versuchen")
+            
+            # Nächstes Update: alle 6 Stunden (nicht 24h)
+            await asyncio.sleep(21600)  # 6h statt 24h
     async def _cleanup_old_data(self):
         """Löscht alle 24h Daten, die älter als 24h sind, um die DB effizient zu halten."""
         while self.state.running:

@@ -11,6 +11,7 @@ if _hf_token:
     try:
         from huggingface_hub import login
         _hf_available = True
+    except Exception as e:
         pass  # huggingface_hub nicht installiert, ignorieren
         logging.getLogger("sentiment_analyzer").critical(f"HuggingFace Login fehlgeschlagen: {e} - Sentiment-Score-Einfluss wird auf 0 gesetzt")
 else:

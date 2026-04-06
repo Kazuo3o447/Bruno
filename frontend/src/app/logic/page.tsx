@@ -83,6 +83,7 @@ interface GRSSBreakdown {
   sentiment: number | null;
   etf_flows: number | null;
   stablecoin_delta: number | null;
+  institutional: number | null; // NEU: Institutional Accumulation Score
 }
 
 function timeAgo(isoStr: string | null | undefined): string {
@@ -196,6 +197,7 @@ export default function LogicPage() {
       { name: "PCR", value: (grssBreakdown.pcr ?? 1) * 50, weight: 0.15, impact: 0 },
       { name: "Funding", value: Math.abs(grssBreakdown.funding ?? 0) * 2000, weight: 0.10, impact: 0 },
       { name: "Sentiment", value: ((grssBreakdown.sentiment ?? 0) + 1) * 50, weight: 0.10, impact: 0 },
+      { name: "Institutional", value: grssBreakdown.institutional ?? 50, weight: 0.05, impact: 0 }, // NEU: Institutional Accumulation
     ];
   }, [grssBreakdown]);
 
@@ -316,6 +318,10 @@ export default function LogicPage() {
             <div className="flex justify-between">
               <span>Sentiment:</span>
               <span className="text-slate-300">10%</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Institutional:</span>
+              <span className="text-slate-300">5% (accumulation/distribution)</span>
             </div>
           </div>
         </div>

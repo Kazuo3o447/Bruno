@@ -74,8 +74,23 @@ class TechnicalAnalysisAgent(PollingAgent):
                 day_count = result.scalar() or 0
                 
                 if day_count < 200:
-                    self.logger.info(f"Daily Backfill nötig: Nur {day_count} Tage vorhanden")
-                    await self._backfill_daily_candles()
+                    # Daily Backfill mit Retry
+                    for attempt in range(3):
+                        self.logger.info(f"Daily Backfill Versuch {attempt+1}/3: {day_count} Tage vorhanden")
+                        await self._backfill_daily_candles()
+                        # Re-check
+                        result2 = await session.execute(text("""
+                            SELECT COUNT(DISTINCT date_trunc('day', time)) as days 
+                            FROM market_candles 
+                            WHERE symbol = 'BTCUSDT' AND time >= NOW() - INTERVAL '250 days'
+                        """))
+                        day_count = result2.scalar() or 0
+                        if day_count >= 200:
+                            self.logger.info(f"Daily Backfill erfolgreich: {day_count} Tage")
+                            break
+                        await asyncio.sleep(5)  # 5s warten zwischen Versuchen
+                    else:
+                        self.logger.error(f"Daily Backfill FEHLGESCHLAGEN nach 3 Versuchen. Nur {day_count} Tage. MACRO TREND FILTER INAKTIV!")
                     
         except Exception as e:
             self.logger.warning(f"Backfill-Check Fehler: {e}")
@@ -802,10 +817,11 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "daily_ema_50": 0.0,
                 "daily_ema_200": 0.0,
                 "price_vs_ema200": "unknown",
-                "allow_longs": True,  # Bei fehlenden Daten: konservativ
-                "allow_shorts": True,
+                "allow_longs": False,   # GEÄNDERT: Bei fehlenden Daten → KEINE Longs
+                "allow_shorts": False,  # GEÄNDERT: Bei fehlenden Daten → KEINE Shorts
                 "golden_cross": False,
                 "death_cross": False,
+                "insufficient_data": True,  # NEU: Flag für Logging
             }
         
         ema_50d = self._calc_ema(candles_1d, 50)

@@ -226,6 +226,26 @@ class ContextAgent(StreamingAgent):
     def _oi_trend_fallback(self) -> dict:
         return {"oi_current": 0.0, "oi_24h_change_pct": 0.0, "oi_7d_change_pct": 0.0, "oi_trend": "unknown", "deleveraging_complete": False}
 
+    async def _fetch_eur_usd(self) -> float:
+        """Holt EUR/USD Kurs von Yahoo Finance."""
+        CACHE_KEY = "macro:eurusd"
+        cached = await self.deps.redis.get_cache(CACHE_KEY)
+        if cached is not None:
+            return float(cached)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(
+                    "https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X",
+                    headers={"User-Agent": self._user_agent}
+                )
+                if r.status_code == 200:
+                    rate = float(r.json()["chart"]["result"][0]["meta"]["regularMarketPrice"])
+                    await self.deps.redis.set_cache(CACHE_KEY, rate, ttl=3600)
+                    return rate
+        except Exception as e:
+            self.logger.warning(f"EUR/USD Fetch Fehler: {e}")
+        return 1.08  # Fallback
+
     async def _fetch_etf_flows(self) -> dict:
         CACHE_KEY = "bruno:macro:etf_flows"
         cached = await self.deps.redis.get_cache(CACHE_KEY)
@@ -1048,6 +1068,7 @@ class ContextAgent(StreamingAgent):
                 self.dxy_change = macro.get("DXY_Change", self.dxy_change)
                 self.ndx_status = await self._fetch_nasdaq_status()
                 self.m2_yoy_pct = await self._fetch_m2_supply()
+                await self._fetch_eur_usd()  # NEU: EUR/USD cachen
 
             self.oi_trend = await self._fetch_oi_trend()
             self.etf_flows = await self._fetch_etf_flows()
