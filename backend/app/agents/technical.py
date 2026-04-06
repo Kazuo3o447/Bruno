@@ -38,10 +38,6 @@ class TechnicalAnalysisAgent(PollingAgent):
         self._ob_walls_cache = None
         self._ob_walls_cache_time = 0
         
-        # FIX: Institutioneller VWAP Tages-Reset
-        self._last_vwap_reset_date = datetime.min.date()
-        self._vwap_cumulative_pv = 0.0
-        self._vwap_cumulative_volume = 0.0
         self.volume_profile: Dict[int, float] = {}
 
     def get_interval(self) -> float:
@@ -68,6 +64,18 @@ class TechnicalAnalysisAgent(PollingAgent):
                     await self._backfill_candles()
                 else:
                     self.logger.info(f"TA-Engine: {count} Candles vorhanden, kein Backfill nötig")
+                
+                # Daily Candles für Macro Trend Filter
+                result = await session.execute(text("""
+                    SELECT COUNT(DISTINCT date_trunc('day', time)) as days 
+                    FROM market_candles 
+                    WHERE symbol = 'BTCUSDT' AND time >= NOW() - INTERVAL '250 days'
+                """))
+                day_count = result.scalar() or 0
+                
+                if day_count < 200:
+                    self.logger.info(f"Daily Backfill nötig: Nur {day_count} Tage vorhanden")
+                    await self._backfill_daily_candles()
                     
         except Exception as e:
             self.logger.warning(f"Backfill-Check Fehler: {e}")
@@ -120,6 +128,39 @@ class TechnicalAnalysisAgent(PollingAgent):
         except Exception as e:
             self.logger.error(f"Backfill Fehler: {e}")
 
+    async def _backfill_daily_candles(self) -> None:
+        """Lädt 250 Daily Candles von Binance REST API für Macro Trend Filter."""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                url = "https://fapi.binance.com/fapi/v1/klines"
+                params = {
+                    "symbol": "BTCUSDT",
+                    "interval": "1d",
+                    "limit": 250
+                }
+                response = await client.get(url, params=params)
+                if response.status_code != 200:
+                    raise Exception(f"Binance API Error: {response.status_code}")
+                
+                data = response.json()
+                async with self.deps.db_session_factory() as session:
+                    for candle in data:
+                        ts_ms, o, h, l, c, v = candle[:6]
+                        await session.execute(text("""
+                            INSERT INTO market_candles (time, symbol, open, high, low, close, volume)
+                            VALUES (:time, :symbol, :open, :high, :low, :close, :volume)
+                            ON CONFLICT (time, symbol) DO NOTHING
+                        """), {
+                            "time": datetime.fromtimestamp(ts_ms / 1000, timezone.utc),
+                            "symbol": "BTCUSDT",
+                            "open": float(o), "high": float(h),
+                            "low": float(l), "close": float(c), "volume": float(v)
+                        })
+                    await session.commit()
+                self.logger.info(f"Daily Backfill: {len(data)} Tages-Candles geladen")
+        except Exception as e:
+            self.logger.error(f"Daily Backfill Fehler: {e}")
+
     async def _fetch_candles(self, interval: str, limit: int = 200) -> List[Dict[str, Any]]:
         """
         Lädt Candles mit Multi-Timeframe Aggregation.
@@ -131,7 +172,8 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "5 minutes": "5 hours",
                 "15 minutes": "24 hours", 
                 "1 hour": "8 days",
-                "4 hours": "16 days"
+                "4 hours": "16 days",
+                "1 day": "250 days"
             }
             
             lookback = lookback_map.get(interval, "24 hours")
@@ -374,33 +416,41 @@ class TechnicalAnalysisAgent(PollingAgent):
 
     def _calc_vwap(self, candles: List[Dict]) -> float:
         """
-        Berechnet VWAP mit institutionellem Tages-Reset exakt um 00:00:00 UTC.
-        
-        FIX: Reset exakt um 00:00:00 UTC (Typical Price Basis).
-        Tracke _last_reset_day (YYYY-MM-DD).
-        Wenn datetime.now(timezone.utc).date() > _last_reset_day:
-        Setze Akkumulatoren hart auf 0 zurück.
+        Berechnet VWAP stateless aus allen Tages-Candles.
+        Kein kumulativer State — berechnet bei jedem Aufruf
+        komplett neu aus den übergebenen Candles.
         """
         if not candles:
             return 0.0
-
-        # Prüfe ob UTC Tages-Reset nötig (exakt 00:00:00 UTC)
-        current_utc_date = datetime.now(timezone.utc).date()
-        if current_utc_date > self._last_vwap_reset_date:
-            self._last_vwap_reset_date = current_utc_date
-            self._vwap_cumulative_pv = 0.0
-            self._vwap_cumulative_volume = 0.0
-            self.logger.info(f"VWAP UTC Tages-Reset für {current_utc_date} (00:00:00 UTC)")
-
-        # Akkumuliere Typical Price * Volume (Typical Price Basis)
-        for current_candle in candles:
-            typical_price = (
-                current_candle["high"] + current_candle["low"] + current_candle["close"]
-            ) / 3.0
-            self._vwap_cumulative_pv += typical_price * current_candle["volume"]
-            self._vwap_cumulative_volume += current_candle["volume"]
         
-        return self._vwap_cumulative_pv / self._vwap_cumulative_volume if self._vwap_cumulative_volume > 0 else 0.0
+        # Nur Candles von heute (UTC) verwenden
+        today = datetime.now(timezone.utc).date()
+        today_candles = []
+        for c in candles:
+            candle_time = c.get("time")
+            if candle_time is None:
+                continue
+            if hasattr(candle_time, 'date'):
+                candle_date = candle_time.date()
+            else:
+                try:
+                    candle_date = datetime.fromisoformat(str(candle_time)).date()
+                except:
+                    continue
+            if candle_date == today:
+                today_candles.append(c)
+        
+        if not today_candles:
+            today_candles = candles  # Fallback: alle Candles
+        
+        cum_pv = 0.0
+        cum_vol = 0.0
+        for c in today_candles:
+            tp = (c["high"] + c["low"] + c["close"]) / 3.0
+            cum_pv += tp * c["volume"]
+            cum_vol += c["volume"]
+        
+        return cum_pv / cum_vol if cum_vol > 0 else 0.0
 
     def _calc_atr(self, candles: List[Dict], period: int = 14) -> float:
         """Berechnet ATR(14) mit True Range."""
@@ -732,8 +782,80 @@ class TechnicalAnalysisAgent(PollingAgent):
         return {"bid_walls": [], "ask_walls": [], "nearest_bid_wall": None,
                 "nearest_ask_wall": None, "wall_imbalance": 1.0}
 
+    def _calc_macro_trend(self, candles_1d: List[Dict]) -> dict:
+        """
+        Macro Trend Filter auf Daily-Candles.
+        
+        Regeln (Profitrader):
+        - EMA 50 > EMA 200 auf Daily = Macro Bull (Golden Cross)
+        - EMA 50 < EMA 200 auf Daily = Macro Bear (Death Cross)
+        - Preis unter EMA 200 Daily = KEIN Long erlaubt
+        - Preis über EMA 200 Daily = KEIN Short erlaubt
+        
+        Dieser Filter ist ÜBERGEORDNET zu allen 1h-Signalen.
+        Eine Bear Market Rally auf 1h DARF NICHT zu einem Long führen
+        wenn der Daily-Trend bearish ist.
+        """
+        if len(candles_1d) < 200:
+            return {
+                "macro_trend": "insufficient_data",
+                "daily_ema_50": 0.0,
+                "daily_ema_200": 0.0,
+                "price_vs_ema200": "unknown",
+                "allow_longs": True,  # Bei fehlenden Daten: konservativ
+                "allow_shorts": True,
+                "golden_cross": False,
+                "death_cross": False,
+            }
+        
+        ema_50d = self._calc_ema(candles_1d, 50)
+        ema_200d = self._calc_ema(candles_1d, 200)
+        current_price = candles_1d[-1]["close"]
+        
+        golden_cross = ema_50d > ema_200d
+        death_cross = ema_50d < ema_200d
+        price_above_200 = current_price > ema_200d
+        price_below_200 = current_price < ema_200d
+        
+        # Macro Trend Bestimmung
+        if golden_cross and price_above_200:
+            macro_trend = "macro_bull"
+            allow_longs = True
+            allow_shorts = False  # Shorts nur bei Breakdown
+        elif death_cross and price_below_200:
+            macro_trend = "macro_bear"
+            allow_longs = False   # KEINE Longs in Macro Bear!
+            allow_shorts = True
+        elif golden_cross and price_below_200:
+            macro_trend = "macro_transition_down"  # Golden Cross aber Preis fällt
+            allow_longs = True   # Noch erlaubt, aber mit Vorsicht
+            allow_shorts = True
+        elif death_cross and price_above_200:
+            macro_trend = "macro_transition_up"    # Death Cross aber Preis steigt
+            allow_longs = True
+            allow_shorts = True
+        else:
+            macro_trend = "macro_neutral"
+            allow_longs = True
+            allow_shorts = True
+        
+        # Distanz zum EMA 200 Daily (für Score-Penalty)
+        ema200_distance_pct = ((current_price - ema_200d) / ema_200d) * 100
+        
+        return {
+            "macro_trend": macro_trend,
+            "daily_ema_50": round(ema_50d, 2),
+            "daily_ema_200": round(ema_200d, 2),
+            "price_vs_ema200": "above" if price_above_200 else "below",
+            "ema200_distance_pct": round(ema200_distance_pct, 2),
+            "allow_longs": allow_longs,
+            "allow_shorts": allow_shorts,
+            "golden_cross": golden_cross,
+            "death_cross": death_cross,
+        }
+
     def _calculate_ta_score(self, trend, rsi, sr_levels, breakout, volume,
-                             price, ema_9, ema_21, vwap, mtf, wick, regime, session) -> dict:
+                             price, ema_9, ema_21, vwap, mtf, wick, regime, session, macro_trend=None) -> dict:
         """
         Normalisierter TA-Score (-100 bis +100).
         Positiv = bullisch, negativ = bärisch.
@@ -867,6 +989,32 @@ class TechnicalAnalysisAgent(PollingAgent):
                     score *= 0.6
                     signals.append("⚠ MTF partially aligned — score reduced 40%")
         
+        # ═══ MACRO TREND OVERRIDE (KRITISCH) ═══
+        if macro_trend:
+            mt = macro_trend.get("macro_trend", "unknown")
+            if mt == "macro_bear" and score > 0:
+                # Bear Market Rally Detection:
+                # 1h zeigt bull, aber Daily zeigt bear
+                # → Score wird drastisch reduziert
+                original_score = score
+                score *= 0.2  # 80% Penalty
+                signals.append(
+                    f"⛔ MACRO BEAR OVERRIDE: 1h bull in daily bear market "
+                    f"(score {original_score:.1f} → {score:.1f})"
+                )
+            elif mt == "macro_bear" and score < 0:
+                # Short-Signal im Bärenmarkt = verstärken
+                score *= 1.3  # 30% Bonus
+                signals.append("Macro Bear confirms short signal")
+            elif mt == "macro_bull" and score < 0:
+                # Short-Signal im Bullenmarkt = abschwächen
+                original_score = score
+                score *= 0.3
+                signals.append(
+                    f"⛔ MACRO BULL OVERRIDE: 1h bear in daily bull market "
+                    f"(score {original_score:.1f} → {score:.1f})"
+                )
+        
         score = round(max(-100, min(100, score)), 1)
         
         return {
@@ -903,6 +1051,9 @@ class TechnicalAnalysisAgent(PollingAgent):
             candles_15m = await self._fetch_candles("15 minutes", limit=96)
             candles_1h = await self._fetch_candles("1 hour", limit=200)
             candles_4h = await self._fetch_candles("4 hours", limit=100)
+            
+            # Macro Trend Filter: Daily-Aggregation für EMA 50/200
+            candles_1d = await self._fetch_candles("1 day", limit=250)
             
             price = candles_1h[-1]["close"] if candles_1h else 0.0
             if price <= 0:
@@ -957,9 +1108,13 @@ class TechnicalAnalysisAgent(PollingAgent):
             # 12. NEU: 15m Delta Bars mit Absorption
             delta_analysis = self._calc_15m_delta_bars(candles_15m)
             
-            # 13. TA-Score
+            # 13. Macro Trend Filter (Daily EMA 50/200)
+            macro_trend = self._calc_macro_trend(candles_1d)
+            
+            # 14. TA-Score
             ta_score = self._calculate_ta_score(trend, rsi_14, sr_levels, breakout,
-                                                 volume, price, ema_9, ema_21, vwap, mtf, wick, regime, session)
+                                                 volume, price, ema_9, ema_21, vwap, mtf, wick, regime, session,
+                                                 macro_trend=macro_trend)
             
             # 13. Snapshot → Redis
             snapshot = {
@@ -974,6 +1129,8 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "volume_profile": volume_profile,
                 "delta_analysis": delta_analysis,
                 "regime_used": regime,  # Für Debugging
+                # NEU: Macro Trend Filter
+                "macro_trend": macro_trend,
             }
             
             # Fix datetime serialization

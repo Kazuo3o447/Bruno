@@ -136,6 +136,18 @@ class AuthenticatedExchangeClient(PublicExchangeClient):
 
         return base_config
 
+    async def set_leverage(self, symbol: str, leverage: int):
+        """Setzt den Leverage auf der Exchange."""
+        try:
+            # Binance Futures
+            if not getattr(settings, "PAPER_TRADING_ONLY", True) and not settings.DRY_RUN:
+                await self.binance.set_leverage(leverage, symbol)
+                self.logger.info(f"Leverage gesetzt: {symbol} = {leverage}x")
+            else:
+                self.logger.info(f"Paper Trading: Leverage {leverage}x für {symbol} simuliert")
+        except Exception as e:
+            self.logger.error(f"Leverage setzen fehlgeschlagen: {e}")
+
     async def create_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> Dict:
         """Führt eine Order an der Binance Futures Börse aus."""
         try:

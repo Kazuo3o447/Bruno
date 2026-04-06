@@ -1155,11 +1155,16 @@ class ContextAgent(StreamingAgent):
                 "stablecoin_delta_bn": self.stablecoin_delta_bn,
                 "btc_change_24h": self.btc_change_24h,
                 "btc_change_1h": 0.0,
-                "fear_greed": int((await self.deps.redis.get_cache("macro:fear_and_greed") or {}).get("value", 50)),
+                "fear_greed": int((await self.deps.redis.get_cache("macro:fear_and_greed") or {}).get("value", -1)),  # -1 = nicht verfügbar
                 "deleveraging_complete": self.oi_trend.get("deleveraging_complete", False),
                 "liq_bias": liq_asym.get("bias", "balanced"),
                 "liq_squeeze_potential": liq_asym.get("squeeze_potential", False),
             }
+            
+            # Fear & Greed Robustness: Wenn nicht verfügbar, konservativer Default (35 statt 50)
+            if pattern_data["fear_greed"] < 0:
+                pattern_data["fear_greed"] = 35  # Leicht ängstlich statt neutral
+                self.logger.warning("Fear & Greed Index nicht verfügbar — nutze konservativen Default 35")
             self.pattern_result = self._detect_market_patterns(pattern_data)
 
             grss_input = {

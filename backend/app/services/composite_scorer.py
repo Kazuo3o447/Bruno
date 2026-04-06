@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from app.core.config_cache import ConfigCache
+from app.services.regime_config import REGIME_CONFIGS
 
 # Regime-basierte Gewichtungs-Presets
 WEIGHT_PRESETS = {
@@ -68,14 +69,18 @@ class CompositeSignal:
             "mtf_aligned": self.mtf_aligned,
             "sweep_confirmed": self.sweep_confirmed,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "sizing": getattr(self, 'sizing', {}),  # Ganzes Dict für ExecutionAgent
         }
     
     def to_decision_feed_entry(self) -> dict:
         """Entry für bruno:decisions:feed (Dashboard-Kompatibilität)."""
+        # Use actual OFI availability from diagnostics
+        ofi_available = self.diagnostics.get("ofi_available", True)
+        
         return {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "ofi": 0.0,
-            "ofi_met": True,
+            "ofi": self.diagnostics.get("ofi_buy_pressure", 0.0),
+            "ofi_met": ofi_available,
             "grss": self.macro_score,
             "outcome": f"SIGNAL_{self.direction.upper()}" if self.should_trade else "COMPOSITE_HOLD",
             "reason": "; ".join(self.signals_active[:3]) if self.signals_active else "Score below threshold",
@@ -129,6 +134,9 @@ class CompositeScorer:
         result.price = ta_data.get("price", flow_data.get("price", 0.0))
         if result.price <= 0:
             return result
+        
+        # Extract macro trend from TA data
+        macro_trend = ta_data.get("macro_trend", {})
         
         # 2. Einzelscores
         ta_score = self._score_ta(ta_data)
@@ -195,35 +203,21 @@ class CompositeScorer:
         elif macro_score < -5:
             confluence_signals.append("macro_bear")
 
-        # MTF Alignment als eigenständiges Signal
-        if result.mtf_aligned:
-            if ta_score > 0:
-                confluence_signals.append("mtf_bull")
-            elif ta_score < 0:
-                confluence_signals.append("mtf_bear")
-
-        # VWAP Position als eigenständiges Signal
-        ta_signals = ta_data.get("ta_score", {}).get("signals", [])
-        if any("Above VWAP" in s for s in ta_signals):
-            confluence_signals.append("vwap_bull")
-        elif any("Below VWAP" in s for s in ta_signals):
-            confluence_signals.append("vwap_bear")
-
-        # Zähle Bull vs Bear Signale
+        # Zähle Bull vs Bear Signale (nur 4 unabhängige Signalquellen: ta, liq, flow, macro)
         bull_count = sum(1 for s in confluence_signals if s.endswith("_bull"))
         bear_count = sum(1 for s in confluence_signals if s.endswith("_bear"))
 
         dominant_count = max(bull_count, bear_count)
 
-        # Confluence Bonus: ab 3 aligned Signale
+        # Confluence Bonus: ab 3 von 4 aligned Signalen
         if dominant_count >= 3:
-            bonus = (dominant_count - 2) * 8  # +8 pro Signal ab dem 3.
+            bonus = (dominant_count - 2) * 10  # +10 pro Signal ab dem 3.
             if bull_count > bear_count:
                 composite += bonus
-                result.signals_active.append(f"Confluence Bonus +{bonus} ({bull_count} bull signals)")
+                result.signals_active.append(f"Confluence Bonus +{bonus} ({bull_count}/4 aligned)")
             else:
                 composite -= bonus
-                result.signals_active.append(f"Confluence Bonus -{bonus} ({bear_count} bear signals)")
+                result.signals_active.append(f"Confluence Bonus -{bonus} ({bear_count}/4 aligned)")
 
         result.composite_score = round(max(-100, min(100, composite)), 1)
 
@@ -248,7 +242,18 @@ class CompositeScorer:
         # 5. Richtung
         result.direction = "long" if composite > 0 else "short" if composite < 0 else "neutral"
 
-        # 7. Threshold + Bonus-Logik
+        # 5b. RegimeConfig Integration (NEU)
+        regime_cfg = REGIME_CONFIGS.get(regime, REGIME_CONFIGS["unknown"])
+        
+        # Regime Direction Filter
+        if result.direction == "long" and not regime_cfg.allow_longs:
+            result.should_trade = False
+            result.signals_active.append(f"BLOCKED: {regime} regime disallows longs")
+        elif result.direction == "short" and not regime_cfg.allow_shorts:
+            result.should_trade = False
+            result.signals_active.append(f"BLOCKED: {regime} regime disallows shorts")
+
+        # 7. Threshold + Bonus-Logic
         atr = float(ta_data.get("atr_14", 0.0) or 0.0)
         threshold = self._get_threshold(atr, result.price, macro_data)
         abs_score = abs(composite)
@@ -260,16 +265,74 @@ class CompositeScorer:
             effective_threshold = max(30, threshold - 15)
             result.signals_active.append("Sweep-Bonus: Threshold -15")
         
-        result.should_trade = abs_score >= effective_threshold
+        # OFI Data Gap Penalty: Wenn OFI keine Daten hat, erhöhe Threshold um 8
+        if flow_data.get("OFI_Buy_Pressure") is None:
+            effective_threshold += 8
+            result.signals_active.append("OFI Data Gap: Threshold +8")
+        
+        # OFI Pipeline Down: Halbiere Flow Score wenn OFI nicht verfügbar
+        ofi_available = flow_data.get("OFI_Available", True)
+        if not ofi_available:
+            flow_score = flow_score * 0.5
+            result.signals_active.append("OFI Pipeline Down: Flow data unreliable")
+        
         critical_data_gap = macro_data.get("DVOL") is None or macro_data.get("Long_Short_Ratio") is None
+        
+        # OFI Data Gap Check
+        ofi_available = flow_data.get("OFI_Available", True)
+        if not ofi_available:
+            critical_data_gap = True
+            
         base_conviction = min(1.0, abs_score / 100.0)
         result.conviction = round(base_conviction * (0.5 if critical_data_gap else 1.0), 3)
         if critical_data_gap:
-            result.signals_active.append("Data Gap: DVOL/L-S missing")
+            if not ofi_available:
+                result.signals_active.append("OFI Pipeline Down: Flow data unreliable")
+            else:
+                result.signals_active.append("Data Gap: DVOL/L-S missing")
         
-        # 8. Position Sizing + SL/TP
+        result.should_trade = abs_score >= effective_threshold
+        
+        # Confidence Threshold Check (NEU)
+        if result.conviction < regime_cfg.confidence_threshold:
+            result.should_trade = False
+            result.signals_active.append(
+                f"Low conviction {result.conviction:.2f} < {regime_cfg.confidence_threshold}"
+            )
+        
+        # Macro Trend Hard Block
+        mt_allow_longs = macro_trend.get("allow_longs", True)
+        mt_allow_shorts = macro_trend.get("allow_shorts", True)
+        
+        if result.direction == "long" and not mt_allow_longs:
+            result.should_trade = False
+            result.signals_active.append(
+                f"⛔ MACRO BLOCK: No longs in {macro_trend.get('macro_trend')} "
+                f"(Price {macro_trend.get('ema200_distance_pct', 0):+.1f}% vs Daily EMA200)"
+            )
+        elif result.direction == "short" and not mt_allow_shorts:
+            result.should_trade = False
+            result.signals_active.append(
+                f"⛔ MACRO BLOCK: No shorts in {macro_trend.get('macro_trend')}"
+            )
+        
+        # 8. Position Sizing (NEU: mit Capital)
+        portfolio = await self.redis.get_cache("bruno:portfolio:state") or {}
+        capital_eur = float(portfolio.get("capital_eur", 1000.0))
+        
         session = ta_data.get("session", {})
-        result.position_size_pct = self._calc_position_size(abs_score, atr, result.price, session)
+        sizing = self._calc_position_size(abs_score, atr, result.price, session, capital_eur)
+        
+        # Wenn Sizing invalid → should_trade = False
+        if not sizing.get("sizing_valid", False):
+            result.should_trade = False
+            result.signals_active.append(
+                f"SIZING REJECT: {sizing.get('reject_reason', 'unknown')}"
+            )
+        
+        result.position_size_pct = sizing.get("position_size_btc", 0.0)
+        # Speichere sizing für ExecutionAgent
+        result.sizing = sizing
         (
             result.stop_loss_pct,
             result.take_profit_1_pct,
@@ -277,7 +340,7 @@ class CompositeScorer:
             result.tp1_size_pct,
             result.tp2_size_pct,
             result.breakeven_trigger_pct,
-        ) = self._calc_sl_tp(atr, result.price, abs_score)
+        ) = self._calc_sl_tp(atr, result.price, abs_score, regime)
         result.take_profit_pct = result.take_profit_2_pct
         
         # 9. Signale sammeln
@@ -302,6 +365,21 @@ class CompositeScorer:
             "regime": regime,
             "weights_used": weights,
             "critical_data_gap": critical_data_gap,
+            "ofi_available": flow_data.get("OFI_Available", True),
+            "ofi_buy_pressure": flow_data.get("OFI_Buy_Pressure", 0.0),
+            "regime_allows_direction": (
+                regime_cfg.allow_longs if result.direction == "long"
+                else regime_cfg.allow_shorts if result.direction == "short"
+                else True
+            ),
+            "macro_trend": macro_trend.get("macro_trend", "unknown"),
+            "macro_allows_direction": (
+                mt_allow_longs if result.direction == "long"
+                else mt_allow_shorts if result.direction == "short"
+                else True
+            ),
+            "daily_ema_200": macro_trend.get("daily_ema_200", 0),
+            "price_vs_daily_ema200": macro_trend.get("price_vs_ema200", "unknown"),
             "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
         }
 
@@ -362,29 +440,130 @@ class CompositeScorer:
             "macro": round(ranging["macro"] + (trending["macro"] - ranging["macro"]) * blend, 4),
         }
 
-    def _calc_position_size(self, abs_score, atr, price, session) -> float:
+    def _calc_position_size(self, abs_score: float, atr: float, price: float,
+                        session: dict, capital_eur: float = 0.0) -> dict:
         """
-        ATR + Score + Session-basiertes Position Sizing.
+        Professionelles Risk-Based Position Sizing.
         
-        Basis: 1% Risiko.
-        Score-Mult: 0.5x (Score 45) bis 1.5x (Score 90+).
-        ATR-Mult: 0.3x (extrem) bis 1.2x (ruhig).
-        Session-Mult: 0.6x (Asia) bis 1.4x (EU/US Overlap). (NEU)
+        Prinzip: Der RISIKOBETRAG ist fix (2% des Eigenkapitals).
+        Die POSITIONSGRÖSSE ergibt sich aus Risikobetrag ÷ SL-Distanz.
+        Leverage macht die Position kapitaleffizient, NICHT riskanter.
+        
+        Returns: dict mit allen Sizing-Informationen
         """
-        base_risk = 1.0
-        score_mult = min(1.5, max(0.5, (abs_score - 40) / 50.0 + 0.5))
+        leverage = int(ConfigCache.get("LEVERAGE", 3))
+        risk_pct = float(ConfigCache.get("RISK_PER_TRADE_PCT", 2.0)) / 100.0
+        min_notional = float(ConfigCache.get("MIN_NOTIONAL_USDT", 300))
+        fee_rate = float(ConfigCache.get("FEE_RATE_TAKER", 0.0004))
+        min_rr = float(ConfigCache.get("MIN_RR_AFTER_FEES", 1.5))
         
-        vol_mult = 1.0
-        if price > 0 and atr > 0:
-            atr_pct = atr / price
-            if atr_pct < 0.005: vol_mult = 1.2
-            elif atr_pct < 0.01: vol_mult = 1.0
-            elif atr_pct < 0.02: vol_mult = 0.6
-            else: vol_mult = 0.3
+        if price <= 0 or capital_eur <= 0:
+            return {
+                "position_size_btc": 0.0,
+                "position_size_usdt": 0.0,
+                "margin_required_usdt": 0.0,
+                "risk_amount_eur": 0.0,
+                "leverage_used": leverage,
+                "fee_estimate_usdt": 0.0,
+                "rr_after_fees": 0.0,
+                "sizing_valid": False,
+                "reject_reason": "No price or capital",
+            }
         
-        session_mult = session.get("volatility_bias", 1.0)
+        # EUR → USD Konversion (vereinfacht, später via API)
+        eur_to_usd = 1.08  # TODO: aus Redis laden
+        capital_usd = capital_eur * eur_to_usd
         
-        return round(min(2.0, base_risk * score_mult * vol_mult * session_mult), 2)
+        # 1. Risikobetrag = fixer Prozentsatz des EIGENKAPITALS
+        risk_amount_usd = capital_usd * risk_pct
+        
+        # 2. Score-basierte Risiko-Skalierung
+        if abs_score > 80:
+            score_mult = 1.5
+        elif abs_score > 60:
+            score_mult = 1.2
+        elif abs_score > 45:
+            score_mult = 1.0
+        else:
+            score_mult = 0.7  # Niedriger Score = weniger Risiko
+        
+        risk_amount_usd *= score_mult
+        
+        # 3. Session-Anpassung
+        session_mult = session.get("volatility_bias", 1.0) if isinstance(session, dict) else 1.0
+        risk_amount_usd *= min(1.4, max(0.6, session_mult))
+        
+        # 4. SL-Distanz aus ATR
+        atr_pct = atr / price if atr > 0 else 0.01
+        sl_pct = max(0.008, min(0.025, atr_pct * 1.5))  # 1.5× ATR als SL
+        
+        # 5. Positionsgröße = Risikobetrag ÷ SL-Distanz
+        position_size_usd = risk_amount_usd / sl_pct
+        position_size_btc = position_size_usd / price
+        
+        # 6. Margin-Check
+        margin_required = position_size_usd / leverage
+        max_margin = capital_usd * 0.80  # Max 80% des Kapitals als Margin
+        
+        if margin_required > max_margin:
+            position_size_usd = max_margin * leverage
+            position_size_btc = position_size_usd / price
+            margin_required = max_margin
+        
+        # 7. Minimum Notional Check
+        if position_size_usd < min_notional:
+            return {
+                "position_size_btc": 0.0,
+                "position_size_usdt": round(position_size_usd, 2),
+                "margin_required_usdt": round(margin_required, 2),
+                "risk_amount_eur": round(risk_amount_usd / eur_to_usd, 2),
+                "leverage_used": leverage,
+                "fee_estimate_usdt": 0.0,
+                "rr_after_fees": 0.0,
+                "sizing_valid": False,
+                "reject_reason": f"Below min notional: ${position_size_usd:.0f} < ${min_notional:.0f}",
+            }
+        
+        # 8. Fee-bewusstes R:R
+        tp1_pct = sl_pct * 1.8  # Minimum TP1 = 1.8× SL
+        fees_round_trip = position_size_usd * fee_rate * 2
+        
+        profit_tp1 = position_size_usd * tp1_pct - fees_round_trip
+        loss_sl = position_size_usd * sl_pct + fees_round_trip
+        rr_after_fees = profit_tp1 / loss_sl if loss_sl > 0 else 0
+        
+        if rr_after_fees < min_rr:
+            return {
+                "position_size_btc": round(position_size_btc, 5),
+                "position_size_usdt": round(position_size_usd, 2),
+                "margin_required_usdt": round(margin_required, 2),
+                "risk_amount_eur": round(risk_amount_usd / eur_to_usd, 2),
+                "leverage_used": leverage,
+                "fee_estimate_usdt": round(fees_round_trip, 2),
+                "rr_after_fees": round(rr_after_fees, 2),
+                "sizing_valid": False,
+                "reject_reason": f"R:R after fees too low: {rr_after_fees:.2f} < {min_rr}",
+            }
+        
+        # 9. Binance Minimum
+        position_size_btc = max(0.001, round(position_size_btc, 4))
+        
+        return {
+            "position_size_btc": position_size_btc,
+            "position_size_usdt": round(position_size_btc * price, 2),
+            "margin_required_usdt": round(position_size_btc * price / leverage, 2),
+            "risk_amount_eur": round(risk_amount_usd / eur_to_usd, 2),
+            "risk_amount_usd": round(risk_amount_usd, 2),
+            "leverage_used": leverage,
+            "fee_estimate_usdt": round(fees_round_trip, 2),
+            "rr_after_fees": round(rr_after_fees, 2),
+            "sl_pct": round(sl_pct, 4),
+            "tp1_pct_minimum": round(tp1_pct, 4),
+            "score_mult": score_mult,
+            "session_mult": round(session_mult, 2),
+            "sizing_valid": True,
+            "reject_reason": None,
+        }
 
     async def _score_flow(self, flow_data: dict, macro_data: dict, 
                         analytics_data: dict = None) -> float:
@@ -393,6 +572,12 @@ class CompositeScorer:
         Range: -50 bis +50
         """
         score = 0.0
+        
+        # OFI Data Gap Handling: Wenn OFI nicht verfügbar, reduziere Score um 50%
+        ofi_available = flow_data.get("OFI_Available", True)
+        if not ofi_available:
+            # OFI ist 20 Punkte wert → 50% Reduction = -10 Punkte
+            score -= 10
         
         # OFI (±20)
         ofi_raw = flow_data.get("OFI_Buy_Pressure")
@@ -452,15 +637,29 @@ class CompositeScorer:
         return round(max(-50, min(50, score)), 1)
 
     def _determine_regime(self, ta_data, macro_data) -> str:
-        """Deterministische Regime-Bestimmung."""
+        """Deterministische Regime-Bestimmung mit Macro Trend Override."""
         trend = ta_data.get("trend", {})
         vix = float(macro_data.get("VIX", 20.0))
+        macro_trend = ta_data.get("macro_trend", {})
+        mt = macro_trend.get("macro_trend", "unknown")
         
         if vix > 35: return "high_vola"
         
+        # MACRO OVERRIDE: Daily-Trend schlägt 1h-Trend
+        if mt == "macro_bear":
+            ema_stack = trend.get("ema_stack", "mixed")
+            if ema_stack in ("perfect_bull", "bull"):
+                # 1h bull in daily bear = RANGING (Bear Market Rally!)
+                return "ranging"  # NICHT trending_bull!
+            return "bear"
+        
         ema_stack = trend.get("ema_stack", "mixed")
-        if ema_stack in ("perfect_bull", "bull"): return "trending_bull"
-        elif ema_stack in ("perfect_bear", "bear"): return "bear"
+        if ema_stack in ("perfect_bull", "bull"):
+            if mt == "macro_bull":
+                return "trending_bull"  # Nur wenn AUCH daily bull
+            return "ranging"  # 1h bull ohne daily confirmation = ranging
+        elif ema_stack in ("perfect_bear", "bear"):
+            return "bear"
         return "ranging"
 
     def _score_ta(self, ta_data: dict) -> float:
@@ -482,16 +681,16 @@ class CompositeScorer:
         """Adaptiver Threshold: Basis × Volatilitäts-Multiplikator × Event-Multiplikator."""
         learning_enabled = ConfigCache.get("LEARNING_MODE_ENABLED", False)
         if learning_enabled:
-            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 35))
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 30))
         else:
-            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 55))
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 40))
 
         if atr <= 0 or price <= 0:
             return base
 
         atr_pct = atr / price
         # Hohe Vola -> konservativer, niedrige Vola -> aggressiver
-        vol_mult = 0.5 + min(0.8, (atr_pct / 0.02) * 0.8)
+        vol_mult = 0.65 + min(0.6, (atr_pct / 0.02) * 0.6)
         
         # Event Guard Logic
         event_mult = 1.0
@@ -501,9 +700,10 @@ class CompositeScorer:
                 event_mult = float(active_event.get("threshold_mult", 1.0))
                 self.logger.info(f"Event Guard: {active_event.get('name')} — Threshold ×{event_mult}")
 
-        return round(base * vol_mult * event_mult, 1)
+        # HARD FLOOR: Threshold darf NIEMALS unter 25 fallen
+        return round(max(25.0, base * vol_mult * event_mult), 1)
 
-    def _calc_sl_tp(self, atr: float, price: float, abs_score: float) -> tuple:
+    def _calc_sl_tp(self, atr: float, price: float, abs_score: float, regime="unknown") -> tuple:
         """
         ATR-basierte SL/TP Berechnung mit Scaling-Out.
         
@@ -520,23 +720,32 @@ class CompositeScorer:
         
         atr_pct = atr / price
         
-        # SL Multiplikator basierend auf Score
+        # SL Multiplikator basierend auf Score - ANGEPASST FÜR PROFITABILITÄT
         if abs_score > 80:
-            sl_mult = 1.5
-            tp1_mult = 1.2
-            tp2_mult = 2.5
+            sl_mult = 1.8    # Hohe Conviction → weiterer SL, größeres Target
+            tp1_mult = 2.5
+            tp2_mult = 4.0
         elif abs_score > 60:
-            sl_mult = 1.2
-            tp1_mult = 1.1
-            tp2_mult = 2.2
+            sl_mult = 1.5
+            tp1_mult = 2.2
+            tp2_mult = 3.5
         else:
-            sl_mult = 0.8
-            tp1_mult = 1.0
-            tp2_mult = 1.8
+            sl_mult = 1.2    # Minimum: 1.2× ATR
+            tp1_mult = 1.8
+            tp2_mult = 3.0
         
-        sl_pct = round(max(0.005, min(0.025, atr_pct * sl_mult)), 3)
-        tp1_pct = round(max(0.008, min(0.030, atr_pct * tp1_mult)), 3)
-        tp2_pct = round(max(tp1_pct + 0.004, min(0.060, atr_pct * tp2_mult)), 3)
+        # Floor: SL nie unter 0.8%, nie unter 1.2× ATR
+        sl_pct = round(max(0.008, min(0.030, atr_pct * sl_mult)), 3)
+        
+        # TP muss NACH Fees profitable sein
+        # Minimum TP1 = 1.8× SL (damit R:R nach Fees > 1.5)
+        tp1_pct = round(max(sl_pct * 1.8, min(0.040, atr_pct * tp1_mult)), 3)
+        tp2_pct = round(max(tp1_pct + 0.005, min(0.080, atr_pct * tp2_mult)), 3)
+        
+        # RegimeConfig SL/TP Override
+        cfg = REGIME_CONFIGS.get(regime, REGIME_CONFIGS["unknown"])
+        sl_pct = max(sl_pct, cfg.stop_loss_pct * 0.5)  # Nie weniger als 50% des Regime-SL
+        sl_pct = min(sl_pct, cfg.stop_loss_pct * 2.0)   # Nie mehr als 200% des Regime-SL
         
         tp1_size_pct = 0.50
         tp2_size_pct = 0.50

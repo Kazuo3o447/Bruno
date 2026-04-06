@@ -5,7 +5,7 @@ Einzige Quelle der Wahrheit für den aktuellen Positions-State.
 Trennt sauber: Redis (Live-State, 0ms Check) vs. DB (Audit-Trail, async).
 
 Regeln:
-- Immer genau 0 oder 1 offene Position pro Symbol
+- Immer genau 0 oder 1 offene Position pro Symbol und Slot
 - MAE/MFE werden lückenlos getrackt (Grundlage für Post-Trade Debrief)
 - Phase-C-Felder (llm_reasoning, grss_at_entry etc.) sind forward-kompatibel
   und optional — beim Start ohne LLM-Cascade werden sie leer gelassen
@@ -21,7 +21,7 @@ from app.core.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
-REDIS_KEY = "bruno:position:{symbol}"
+REDIS_KEY = "bruno:position:{symbol}:{slot}"
 
 
 class PositionTracker:
@@ -40,8 +40,15 @@ class PositionTracker:
     # ──────────────────────────────────────────────────────────────────
 
     async def has_open_position(self, symbol: str) -> bool:
-        """RAM-schneller Check — vor jedem neuen Trade aufrufen."""
-        pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol))
+        """Prüft ob IRGENDEIN Slot eine offene Position hat."""
+        for slot in ["trend", "sweep", "funding"]:
+            if await self.has_open_position_for_slot(symbol, slot):
+                return True
+        return False
+
+    async def has_open_position_for_slot(self, symbol: str, slot: str) -> bool:
+        """RAM-schneller Check für einen spezifischen Slot."""
+        pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol, slot=slot))
         return pos is not None and pos.get("status") == "open"
 
     async def get_open_position(self, symbol: str) -> Optional[dict]:
@@ -79,6 +86,7 @@ class PositionTracker:
         tp1_size_pct: float = 0.50,
         tp2_size_pct: float = 0.50,
         breakeven_trigger_pct: float = 0.0,
+        strategy_slot: str = "trend",  # NEU: Slot-Parameter
         # NEU: Scaling-Out Felder
         take_profit_1_pct: float = 0.012,
         take_profit_2_pct: float = 0.025,
@@ -108,9 +116,9 @@ class PositionTracker:
         Wirft ValueError wenn bereits eine offene Position existiert.
         Gibt die Position-ID zurück.
         """
-        if await self.has_open_position(symbol):
+        if await self.has_open_position_for_slot(symbol, strategy_slot):
             raise ValueError(
-                f"Position für {symbol} bereits offen — "
+                f"Position für {symbol} in Slot {strategy_slot} bereits offen — "
                 "kein zweiter Entry erlaubt (PositionTracker Guard)"
             )
 
@@ -120,6 +128,7 @@ class PositionTracker:
         position = {
             "id": position_id,
             "symbol": symbol,
+            "slot": strategy_slot,  # NEU: Slot speichern
             "side": side,
             "entry_price": entry_price,
             "entry_time": now,
@@ -168,7 +177,7 @@ class PositionTracker:
             **kwargs  # Alle zusätzlichen Felder durchreichen
         }
 
-        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), position)
+        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol, slot=strategy_slot), position)
 
         logger.info(
             f"Position ERÖFFNET: {side.upper()} {quantity:.4f} {symbol} "

@@ -183,11 +183,13 @@ class ExecutionAgentV4(StreamingAgent):
                 "Signal lieferte keine direkte Menge — verwende internes Sizing statt Signal-Menge."
             )
 
-        # ── POSITION GUARD (Phase D) ───────────────────────────
-        if await self.position_tracker.has_open_position(symbol):
+        # 1. Slot aus Signal lesen
+        slot_name = signal.get("strategy_slot", "trend")
+        
+        # ── POSITION GUARD pro Slot (Phase D) ───────────────────────
+        if await self.position_tracker.has_open_position_for_slot(symbol, slot_name):
             self.logger.info(
-                f"Signal ignoriert — Position für {symbol} bereits offen. "
-                f"PositionTracker Guard aktiv. Signal: {side}"
+                f"Signal ignoriert — {slot_name} Slot für {symbol} bereits belegt"
             )
             return
 
@@ -216,34 +218,60 @@ class ExecutionAgentV4(StreamingAgent):
             await self.atr_calc.calculate_atr(symbol)
             await self.atr_calc.calculate_atr_baseline(symbol)
 
-        # ── Volatility-adjusted Position Sizing ───────────────
-        vol_multiplier = self.atr_calc.get_volatility_multiplier()
-        base_sl_pct = 0.010
-        dynamic_sl_pct = self.atr_calc.get_dynamic_stop_loss(base_sl_pct, signal_price)
-
+        # ── PROFESSIONELLES POSITION SIZING (v3) ──────────────────
         portfolio = await self.deps.redis.get_cache("bruno:portfolio:state") or {}
-        capital = portfolio.get("capital_eur", self.deps.config.SIMULATED_CAPITAL_EUR)
-
-        base_risk_eur = capital * 0.02
-        adjusted_risk_eur = base_risk_eur * vol_multiplier
-        position_size_btc = max(
-            0.001,
-            min(
-                adjusted_risk_eur / signal_price,
-                (capital * self.deps.config.MAX_LEVERAGE) / signal_price
-            )
+        capital_eur = portfolio.get("capital_eur", self.deps.config.SIMULATED_CAPITAL_EUR)
+        capital_usd = capital_eur * 1.08
+        
+        from app.services.strategy_manager import StrategyManager, STRATEGY_SLOTS
+        strategy_mgr = StrategyManager(self.deps.redis, self.deps.db_session_factory)
+        
+        slot = STRATEGY_SLOTS.get(slot_name)
+        if not slot:
+            self.logger.error(f"Unbekannter Slot: {slot_name}")
+            return
+        
+        # Portfolio-Level Risk Check
+        position_size_usd = sizing.get("position_size_usdt", 0) if 'sizing' in locals() else 0
+        if position_size_usd == 0:
+            # Fallback: Berechne aus amount
+            position_size_usd = amount * signal_price if amount else 0
+        
+        portfolio_check = await strategy_mgr.can_open_position(
+            slot_name, position_size_usd, capital_usd
         )
-        if amount is None:
-            amount = max(0.001, position_size_btc)
-        else:
-            amount = max(0.001, min(amount, position_size_btc))
-
-        if vol_multiplier < 1.0:
-            self.logger.info(
-                f"ATR-Anpassung: Multiplikator={vol_multiplier:.2f} | "
-                f"Position={position_size_btc:.4f} BTC | "
-                f"Dynamic SL={dynamic_sl_pct:.2%}"
-            )
+        if not portfolio_check["allowed"]:
+            self.logger.warning(f"Portfolio Risk Check fehlgeschlagen: {portfolio_check['reason']}")
+            if self.deps.config.DRY_RUN:
+                await self._log_rejected_trade(signal, portfolio_check['reason'])
+            return
+        
+        # Sizing mit Slot-spezifischem Kapital
+        slot_capital = capital_usd * slot.capital_allocation_pct
+        
+        # Sizing-Daten aus Signal (berechnet vom CompositeScorer)
+        sizing = signal.get("sizing", {})
+        
+        if not sizing.get("sizing_valid", False):
+            reject = sizing.get("reject_reason", "Unknown sizing error")
+            self.logger.warning(f"Trade REJECTED by Position Sizing: {reject}")
+            # Log für Phantom/Learning
+            if self.deps.config.DRY_RUN:
+                await self._log_rejected_trade(signal, reject)
+            return
+        
+        amount = sizing["position_size_btc"]
+        leverage = sizing["leverage_used"]
+        
+        self.logger.info(
+            f"Position Sizing v3 [{slot_name}]: {amount:.4f} BTC "
+            f"(${sizing['position_size_usdt']:,.0f}) | "
+            f"Leverage: {leverage}x | "
+            f"Margin: ${sizing['margin_required_usdt']:,.0f} | "
+            f"Risk: {sizing['risk_amount_eur']:.0f} EUR | "
+            f"R:R: {sizing['rr_after_fees']:.2f} | "
+            f"Fees: ${sizing['fee_estimate_usdt']:.2f}"
+        )
 
         # 2. ENHANCED ORDER EXECUTION (v2.1)
         try:
@@ -1098,6 +1126,94 @@ class ExecutionAgentV4(StreamingAgent):
             avg_win = round(sum(profits) / len(profits), 4) if profits else 0
             avg_loss = round(sum(losses) / len(losses), 4) if losses else 0
 
+            alarm = False
+            alarm_reason = None
+            if pf_20 is not None and pf_20 < 1.2:
+                alarm = True
+                alarm_reason = f"PF(20) unter 1.2: {pf_20}"
+            elif pf_total < 1.0:
+                alarm = True
+                alarm_reason = f"PF(gesamt) unter 1.0: {pf_total}"
+
+            payload = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "pf_total": pf_total,
+                "pf_rolling_20": pf_20,
+                "pf_rolling_50": pf_50,
+                "total_trades": len(pnl_history),
+                "win_rate": win_rate,
+                "avg_win_pct": avg_win,
+                "avg_loss_pct": avg_loss,
+                "alarm_active": alarm,
+                "alarm_reason": alarm_reason,
+                "pf_history": [
+                    calc_pf(pnl_history[:n])
+                    for n in range(10, min(len(pnl_history), 51), 5)
+                ] if len(pnl_history) >= 10 else []
+            }
+
+            await self.deps.redis.set_cache("bruno:performance:profit_factor", payload, ttl=86400)
+
+            if alarm:
+                from app.core.telegram_bot import get_telegram_bot
+                telegram = get_telegram_bot()
+                if telegram:
+                    await telegram.send_critical_alert(
+                        f"⚠️ Profit Factor Alarm\n{alarm_reason}\n"
+                        f"Win Rate: {win_rate:.0%} | Trades: {len(pnl_history)}"
+                    )
+
+            self.logger.info(f"PF Update: gesamt={pf_total:.2f} | 20={pf_20 or 'n/a'} | 50={pf_50 or 'n/a'} | WR={win_rate:.0%}")
+
+        except Exception as e:
+            self.logger.error(f"Profit Factor Berechnung Fehler: {e}")
+
+    async def _log_rejected_trade(self, signal: dict, reason: str):
+        """Loggt abgelehnte Trades für Learning/Analyse."""
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "type": "SIZING_REJECT",
+            "reason": reason,
+            "signal_score": signal.get("composite_score", 0),
+            "signal_direction": signal.get("side", "unknown"),
+            "price": signal.get("price", 0),
+        }
+        await self.deps.redis.redis.lpush(
+            "bruno:trades:rejected", json.dumps(entry)
+        )
+        await self.deps.redis.redis.ltrim("bruno:trades:rejected", 0, 199)
+
+    async def _update_profit_factor(self) -> None:
+        """Berechnet Profit Factor live aus der realisierten Trade-P&L-Historie."""
+        try:
+            portfolio = await self.deps.redis.get_cache("bruno:portfolio:state") or {}
+            pnl_history = portfolio.get("trade_pnl_history_eur", []) or []
+            fee_history = portfolio.get("trade_fee_history_eur", []) or []
+
+            if not pnl_history:
+                return
+
+            def calc_pf(pnl_values: list[float]) -> float:
+                gross_profit = sum(v for v in pnl_values if v > 0)
+                gross_loss = abs(sum(v for v in pnl_values if v < 0))
+                if gross_loss == 0:
+                    return 99.9
+                return round(gross_profit / gross_loss, 3)
+
+            pf_total = calc_pf(pnl_history)
+            pf_20 = calc_pf(pnl_history[-20:]) if len(pnl_history) >= 5 else None
+            pf_50 = calc_pf(pnl_history[-50:]) if len(pnl_history) >= 5 else None
+            
+            # Win Rate
+            wins = sum(1 for pnl in pnl_history if pnl > 0)
+            win_rate = wins / len(pnl_history) if pnl_history else 0
+            
+            # Avg Win/Loss
+            wins_list = [pnl for pnl in pnl_history if pnl > 0]
+            losses_list = [pnl for pnl in pnl_history if pnl < 0]
+            avg_win = sum(wins_list) / len(wins_list) if wins_list else 0
+            avg_loss = sum(losses_list) / len(losses_list) if losses_list else 0
+            
             alarm = False
             alarm_reason = None
             if pf_20 is not None and pf_20 < 1.2:

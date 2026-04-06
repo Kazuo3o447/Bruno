@@ -45,9 +45,9 @@ class BybitV5Client:
     async def connect(self):
         """Connect to Bybit V5 WebSocket."""
         try:
-            # For now, simulate successful connection
+            # Real data for paper-trading (testnet=False)
             # TODO: Implement actual Bybit V5 WebSocket connection
-            self.connected = True
+                testnet=False,
             self.logger.info("Bybit V5 WebSocket simulated connection successful")
             
         except Exception as e:

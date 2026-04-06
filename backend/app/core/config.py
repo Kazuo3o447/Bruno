@@ -86,6 +86,13 @@ class Settings(BaseSettings):
     MAX_LEVERAGE: float = 1.0        # Kein Kredit. Niemals über 1.0.
     SIMULATED_CAPITAL_EUR: float = 1000.0  # Startkapital für DRY_RUN Portfolio (Paper Trading)
     
+    # Position Sizing v3
+    LEVERAGE: int = 3
+    LEVERAGE_MAX: int = 5
+    MIN_NOTIONAL_USDT: float = 300.0
+    FEE_RATE_TAKER: float = 0.0004
+    MIN_RR_AFTER_FEES: float = 1.5
+    
     model_config = ConfigDict(
         env_file=str(ROOT_ENV_FILE),
         env_file_encoding="utf-8-sig",

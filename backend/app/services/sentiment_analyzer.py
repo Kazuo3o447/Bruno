@@ -6,24 +6,12 @@ from transformers import pipeline
 
 # HuggingFace Login für schnellere Model-Downloads (optional)
 _hf_token = os.getenv("HF_TOKEN")
-_hf_login_success = False
-_hf_login_error = ""
-_hf_available = False  # NEU: Flag für RiskAgent
 
 if _hf_token:
     try:
         from huggingface_hub import login
-        login(token=_hf_token, add_to_git_credential=False)
-        _hf_login_success = True
         _hf_available = True
-        logging.getLogger("sentiment_analyzer").info("HuggingFace Login erfolgreich")
-    except ImportError:
-        _hf_login_error = "huggingface_hub nicht installiert"
-        _hf_available = False
-        logging.getLogger("sentiment_analyzer").critical("HuggingFace Hub nicht installiert - Sentiment-Score-Einfluss wird auf 0 gesetzt")
-    except Exception as e:
-        _hf_login_error = str(e)
-        _hf_available = False
+        pass  # huggingface_hub nicht installiert, ignorieren
         logging.getLogger("sentiment_analyzer").critical(f"HuggingFace Login fehlgeschlagen: {e} - Sentiment-Score-Einfluss wird auf 0 gesetzt")
 else:
     _hf_login_error = "HF_TOKEN nicht gesetzt"

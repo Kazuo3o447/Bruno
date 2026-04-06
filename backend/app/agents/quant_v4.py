@@ -194,6 +194,7 @@ class QuantAgentV4(PollingAgent):
                     "OFI_Buy_Pressure": ofi_data["buy_pressure_ratio"],
                     "OFI_Mean_Imbalance": ofi_data["mean_imbalance"],
                     "OFI_Tick_Count": ofi_data["tick_count"],
+                    "OFI_Available": ofi_data["ofi_available"],
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
@@ -228,20 +229,58 @@ class QuantAgentV4(PollingAgent):
                         f"Gap={signal.diagnostics.get('gap_to_threshold', 0):.1f}"
                     )
 
-                # 6. Trade-Cooldown (event-driven sweeps dürfen sofort durchlaufen)
+                # 6. Multi-Strategy Signal Dispatch
+                from app.services.strategy_manager import StrategyManager
+                
+                strategy_mgr = StrategyManager(self.deps.redis, self.deps.db_session_factory)
+                
+                # 6a. TREND-Slot: Basiert auf CompositeScore (wie bisher)
                 if signal.should_trade:
                     now = time.time()
-                    cooldown = 0.0 if trigger_reason == "sweep_event" else float(ConfigCache.get("TRADE_COOLDOWN_SECONDS", 300))
-                    if cooldown > 0 and now - self._last_signal_time < cooldown:
-                        self.logger.info(
-                            f"Signal unterdrückt — Cooldown "
-                            f"({cooldown - (now - self._last_signal_time):.0f}s verbleibend)"
-                        )
-                    else:
+                    cooldown = float(ConfigCache.get("TRADE_COOLDOWN_SECONDS", 300))
+                    if now - self._last_signal_time >= cooldown:
                         signal_dict = signal.to_signal_dict(self.symbol)
-                        await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal_dict))
+                        signal_dict["strategy_slot"] = "trend"
+                        await self.deps.redis.publish_message(
+                            "bruno:pubsub:signals", json.dumps(signal_dict)
+                        )
                         self._last_signal_time = now
-                        self.logger.info(f"SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
+                        self.logger.info(f"TREND SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
+                
+                # 6b. SWEEP-Slot: Eigenständig, basierend auf Sweep-Detection
+                sweep_signal = strategy_mgr.evaluate_sweep_signal(
+                    liq_result.get("sweep", {}),
+                    liq_result.get("liq_score", 0),
+                )
+                if sweep_signal:
+                    sweep_dict = {
+                        **signal.to_signal_dict(self.symbol),
+                        "strategy_slot": "sweep",
+                        "side": "buy" if sweep_signal["direction"] == "long" else "sell",
+                        "reason": sweep_signal["reason"],
+                    }
+                    await self.deps.redis.publish_message(
+                        "bruno:pubsub:signals", json.dumps(sweep_dict)
+                    )
+                    self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']}")
+                
+                # 6c. FUNDING-Slot: Eigenständig, basierend auf Funding Rate
+                macro_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
+                funding_rate = float(macro_data.get("Funding_Rate", 0))
+                funding_div = float(macro_data.get("Funding_Divergence", 0))
+                
+                funding_signal = strategy_mgr.evaluate_funding_signal(funding_rate, funding_div)
+                if funding_signal:
+                    funding_dict = {
+                        **signal.to_signal_dict(self.symbol),
+                        "strategy_slot": "funding",
+                        "side": "buy" if funding_signal["direction"] == "long" else "sell",
+                        "reason": funding_signal["reason"],
+                    }
+                    await self.deps.redis.publish_message(
+                        "bruno:pubsub:signals", json.dumps(funding_dict)
+                    )
+                    self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']}")
 
                 # Phantom Trade (Learning Mode)
                 if (not signal.should_trade and self.deps.config.DRY_RUN
@@ -296,8 +335,12 @@ class QuantAgentV4(PollingAgent):
         """
         try:
             raw = await self.deps.redis.redis.lrange("market:ofi:ticks", 0, -1)
-            if not raw or len(raw) < 10:
-                return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
+            tick_count = len(raw) if raw else 0
+            
+            if not raw or tick_count < 10:
+                if tick_count > 0:
+                    self.logger.warning(f"OFI Pipeline: Nur {tick_count} Ticks — OFI nicht verfügbar")
+                return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": tick_count, "ofi_available": False}
 
             import json as _json
             ratios = []
@@ -311,7 +354,8 @@ class QuantAgentV4(PollingAgent):
                     continue
             
             if not ratios or len(ratios) < 10:
-                return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
+                self.logger.warning(f"OFI Pipeline: Nur {len(ratios)} gültige Ticks — OFI nicht verfügbar")
+                return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": tick_count, "ofi_available": False}
             
             mean_imb = sum(ratios) / len(ratios)
             buy_ticks = sum(1 for r in ratios if r > 1.0)
@@ -319,11 +363,12 @@ class QuantAgentV4(PollingAgent):
             return {
                 "buy_pressure_ratio": round(buy_ticks / len(ratios), 3),  # 0.0=nur Verkauf, 1.0=nur Kauf
                 "mean_imbalance": round(mean_imb, 4),                     # 1.0=neutral
-                "tick_count": len(ratios)
+                "tick_count": len(ratios),
+                "ofi_available": True
             }
         except Exception as e:
             self.logger.warning(f"OFI Rolling Fetch Fehler: {e}")
-            return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0}
+            return {"buy_pressure_ratio": None, "mean_imbalance": None, "tick_count": 0, "ofi_available": False}
 
     async def _log_decision(self, signal) -> None:
         """

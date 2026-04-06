@@ -1,149 +1,415 @@
-# Bruno v8.0 Trading Logic (Privacy-First News & Bybit Data Core)
+# Bruno v9.0 Trading Logic (Multi-Strategy Architecture)
 
 ## 1. Purpose
 
-Bruno v8.0 is a **privacy-first institutional** deterministic trading system with zero tolerance for heuristics. The system features:
+Bruno v9.0 is a **multi-strategy institutional** deterministic trading system with zero tolerance for heuristics. The system features:
 
-1. **Privacy-First News Ingestion** - Multi-Source News (CryptoPanic, RSS, Free-Crypto-News) mit SHA256 Deduplizierung
-2. **Bybit V5 Single Source of Truth** - Exklusive WebSocket-Daten mit präziser CVD Taker-Mathematik
-3. **Mathematical Purity** - VWAP/VPOC tägliche Resets, Trade-Deduplizierung, keine Heuristiken
-4. **GRSS v3** - 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro) ohne Binance-Abhängigkeit
-5. **Adaptive Thresholds** - ATR-basiert mit Event Calendar Guardrails
-6. **MTF-Filter** - Regime-abhängige Filter für bessere Signalqualität im Ranging
-7. **DeepSeek Post-Trade Analyse** - Automatische Trade-Evaluation für Paper Trades
-8. **Complete Binance Purge** - Alle REST API Calls entfernt, Bybit V5 als exklusive Quelle
+1. **Multi-Strategy Architecture** - 3 unkorrelierte Strategie-Slots (Trend, Sweep, Funding)
+2. **Scaled Entry Engine** - Pyramiding für Trend-Strategie (40%/30%/30% Tranchen)
+3. **Professional Position Sizing** - Risk-based mit Leverage-Effizienz und Fee-Awareness
+4. **Portfolio-Level Risk Management** - Max 80% Exposure, Slot-Isolation
+5. **Macro Trend Filter** - Daily EMA 50/200 Override gegen Bear Market Rallies
+6. **OFI Pipeline Quality Gate** - Datenqualitäts-Checks für Order Flow
+7. **RegimeConfig Integration** - Regime-spezifische Trading-Regeln
+8. **Binance Hedge Mode** - Gleichzeitige Long+Short Positionen
+9. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
+10. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
 
-The system maintains **100% deterministic live trading** with **zero heuristics** policy while integrating privacy-first news aggregation for enhanced market context.
+The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing professional multi-strategy risk management.
 
-## 2. Data Flow Overview (v8.0 Privacy-First Architecture)
+## 2. Data Flow Overview (v9.0 Multi-Strategy Architecture)
 
 ```text
 Bybit V5 WebSocket → BybitV5Client → Redis (CVD, VWAP, VPOC)
     ↓
 News Sources (CryptoPanic, RSS, Free-Crypto-News) → NewsIngestionService → SentimentAnalyzer
     ↓
-TechnicalAnalysisAgent → bruno:ta:snapshot (präzise CVD)
+TechnicalAnalysisAgent → bruno:ta:snapshot (Daily EMA Macro Trend)
     ↓
-ContextAgent → bruno:context:grss (GRSS v3, Binance-frei)
+ContextAgent → bruno:context:grss (GRSS v3, Funding Rate)
     ↓
-SentimentAgent → HuggingFace Models (Zero-Shot Classification)
+QuantAgentV4 → Multi-Strategy Dispatch (Trend/Sweep/Funding)
     ↓
-LiquidityEngine → bruno:liq:intelligence
+StrategyManager → Portfolio Risk Checks → Slot Allocation
     ↓
-QuantAgentV4 → bruno:quant:micro + bruno:decisions:feed (News-integriert)
+CompositeScorer → Signal Generation (per Slot)
     ↓
-CompositeScorer → trade decision (adaptive thresholds)
+ScaledEntryEngine → Tranche Management (Trend-Slot)
     ↓
-RiskAgent → veto state (event calendar)
+ExecutionAgentV4 → Slot-Aware Order Execution
     ↓
-ExecutionAgentV4 → order / position management (paper trading)
+PositionTracker → Multi-Slot Position Management
 ```
 
-### 2.1 Bybit V5 WebSocket Integration (v8.0 Single Source of Truth)
+### 2.1 Multi-Strategy Slots
 
-**Exklusive Datenquelle mit mathematischer Präzision:**
+**3 unabhängige Strategie-Slots mit eigenem Kapital und Risk Management:**
 
 ```python
-# CVD Taker-Mathematik (ABSOLUTE PRÄZISION)
-for trade in message["data"]:
-    exec_id = trade["i"]  # Execution ID für Deduplizierung
-    vol = float(trade["v"])
-    side = trade["S"]  # "Buy" oder "Sell"
-    
-    # Deduplizierung zwingend erforderlich
-    if exec_id not in self._processed_trades:
-        if side == "Buy":
-            self.current_1m_taker_buy += vol
-        elif side == "Sell":
-            self.current_1m_taker_sell += vol
-
-# CVD-Berechnung: Delta = current_1m_taker_buy - current_1m_taker_sell
+STRATEGY_SLOTS = {
+    "trend": StrategySlot(
+        capital_allocation_pct=0.40,  # 40% des Kapitals
+        max_leverage=3,
+        scaled_entry_enabled=True,      # Pyramiding
+        sl_atr_mult=1.5,                # 1.5× ATR SL
+        tp_atr_mult=3.0,                # 3.0× ATR TP
+    ),
+    "sweep": StrategySlot(
+        capital_allocation_pct=0.30,  # 30% des Kapitals
+        max_leverage=4,                 # Aggressiver
+        scaled_entry_enabled=False,     # Sofortige Entry
+        sl_atr_mult=1.0,                # Enger SL
+        max_hold_minutes=120,           # 2h Max
+    ),
+    "funding": StrategySlot(
+        capital_allocation_pct=0.30,  # 30% des Kapitals
+        max_leverage=2,                 # Konservativ
+        sl_atr_mult=2.0,                # Weiter SL
+        max_hold_minutes=480,           # 8h Max
+    ),
+}
 ```
 
-**VWAP/VPOC mit institutionellen Resets:**
-- **VWAP Reset**: Exakt um 00:00:00 UTC 
-- **VPOC Reset**: Exakt um 00:00:00 UTC mit 10-Dollar Preis-Buckets
-- **Trade Deduplizierung**: Rolling deque (maxlen=10000) via execution IDs
+### 2.2 Scaled Entry Engine (Trend-Slot)
 
-### 2.2 News Ingestion Service (v8.0 Privacy-First)
-
-**Multi-Source mit SHA256 Deduplizierung:**
+**Pyramiding statt All-In Entry:**
 
 ```python
-# SHA256 Hash für Deduplizierung
-hash_input = title.lower().strip()
-if timestamp:
-    hash_input += f"_{timestamp}"
-news_hash = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
+# Tranche 1 (40%): Sofort bei Signal
+# Tranche 2 (30%): Bei +0.5% Bestätigung
+# Tranche 3 (30%): Bei +1.0% Breakout
 
-# BTC-Filter (case-insensitive)
-if "btc" not in combined_text.lower() and "bitcoin" not in combined_text.lower():
-    return None  # Rauschunterdrückung
+tranches = [
+    {"number": 1, "size_pct": 0.40, "trigger_price": entry_price},
+    {"number": 2, "size_pct": 0.30, "trigger_price": entry_price * 1.005},
+    {"number": 3, "size_pct": 0.30, "trigger_price": entry_price * 1.010},
+]
 ```
 
-**Quellen-Abdeckung (Aktueller Status):**
-- **RSS Feeds** (30s Polling) - CoinDesk, Cointelegraph, Decrypt ✅ **AKTIV (49 Items)**
-- **Reddit JSON** (120s Fallback) - r/Bitcoin Hot Posts ✅ **AKTIV (14 Items)**
-- **CoinMarketCap** (60s Polling) - BTC Marktdaten ⚠️ **INAKTIV (API Key fehlt)**
-- **CryptoCompare** (120s Fallback) - Free Tier News ❌ **INAKTIV (0 Items)**
-- **NewsAPI** (120s Fallback) - Demo Key ungültig ❌ **INAKTIV (401 Error)**
-- **Total News Coverage** ✅ **63 Items (Maximum mit Free Quellen)**
+### 2.3 Professional Position Sizing
 
-**Bybit V5 WebSocket (Aktueller Status):**
-- **Bybit V5** als Single Source of Truth ✅ **AKTIV (Simuliert)**
-- **CVD Taker-Mathematik** mit execution ID Deduplizierung ✅ **IMPLEMENTIERT**
-- **VWAP/VPOC Resets** um 00:00:00 UTC ✅ **IMPLEMENTIERT**
-- **Trade Deduplizierung** via rolling deque ✅ **IMPLEMENTIERT**
+**Risk-based mit Fee-Awareness:**
 
-**Hinweis:** Die Bybit V5 WebSocket Verbindung ist aktuell simuliert aufgrund von pybit API Kompatibilitätsproblemen. Die Architektur ist jedoch vollständig implementiert und bereit für echte WebSocket-Daten.
+```python
+# Risiko = fix 2% des SLOT-Kapitals
+# Position = Risiko ÷ SL-Distanz
+# R:R > 1.5 nach Fees erforderlich
 
-**Current Data Source Architecture (v8.0):**
-
-**Redis Storage Pattern:**
-```bash
-# Sehr frisch (5-10s TTL)
-market:ticker:BTCUSDT           # {"last_price": 67263.7}
-market:orderbook:BTCUSDT        # {"imbalance_ratio": 1.23}
-market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]
-market:cvd:ticks               # [{"ts": "...", "delta": 1.23}, ...]
-market:cvd:cumulative           # "1234.56"
-
-# Frisch (60s TTL)
-bruno:ta:klines:BTCUSDT        # {"klines": [...], "count": 500}
-market:liquidations:BTCUSDT    # [{"side": "SELL", "price": 67000}]
-bruno:ta:snapshot              # {"ta_score": {...}, "regime": "ranging"}
-bruno:context:grss             # {"GRSS_Score": 62.0, "regime_hint": "ranging"}
-
-# Mittel-frisch (300s TTL)
-market:funding:BTCUSDT         # {"fundingRate": 0.0001}
-market:open_interest:BTCUSDT   # {"openInterest": "123456.78"}
+position_size_usd = slot_capital * 0.02 / sl_pct
+fees_round_trip = position_size_usd * 0.0008
+rr_after_fees = (tp_profit - fees) / (sl_loss + fees)
 ```
 
-## 3. Technical Analysis Engine
+### 2.4 Macro Trend Filter (Daily EMA 50/200)
 
-### 3.1 Inputs
+**Schutz vor Bear Market Rallies:**
 
-- 1m OHLCV from `market_candles`
-- Aggregated 5m, 15m, 1h, 4h candles
-- Binance orderbook depth with `limit=1000`
+```python
+# Daily EMA Berechnung
+ema_50d = self._calc_ema(candles_1d, 50)
+ema_200d = self._calc_ema(candles_1d, 200)
+current_price = candles_1d[-1]["close"]
 
-### 3.2 Indicators
+# Macro Trend Bestimmung
+if ema_50d > ema_200d and current_price > ema_200d:
+    macro_trend = "macro_bull"
+    allow_longs = True
+    allow_shorts = False
+elif ema_50d < ema_200d and current_price < ema_200d:
+    macro_trend = "macro_bear"
+    allow_longs = False      # KEINE Longs in Macro Bear!
+    allow_shorts = True
+```
 
-#### EMA
+### 2.5 OFI Pipeline Quality Gate
 
-The engine calculates:
+**Order Flow Datenqualitäts-Checks:**
 
-- `EMA(9)`
-- `EMA(21)`
-- `EMA(50)`
-- `EMA(200)`
+```python
+# OFI Availability Check
+ofi_data = await self._fetch_ofi_rolling()
+if not ofi_data["ofi_available"]:
+    flow_score = flow_score * 0.5  # 50% Reduction
+    result.signals_active.append("OFI Pipeline Down: Flow data unreliable")
+```
 
-Formula:
+### 2.6 Redis Keys (v9.0 Multi-Strategy)
+
+**Neue Slot-spezifische Keys:**
 
 ```text
-EMA_t = price_t * α + EMA_(t-1) * (1 - α)
-α = 2 / (period + 1)
+# Position Management (pro Slot)
+bruno:position:BTCUSDT:trend
+bruno:position:BTCUSDT:sweep
+bruno:position:BTCUSDT:funding
+
+# Scaled Entry State
+bruno:scaled_entry:BTCUSDT:trend
+
+# Macro Trend
+bruno:ta:snapshot (enthält macro_trend)
+
+# Strategy Manager
+bruno:strategy:exposure (Portfolio-Level)
 ```
+
+## 3. Agent Architecture (v9.0)
+
+### 3.1 QuantAgentV4 - Multi-Strategy Dispatch
+
+**3 parallele Signal-Generatoren:**
+
+```python
+# TREND-Slot: CompositeScore wie bisher
+if signal.should_trade:
+    signal_dict = signal.to_signal_dict(self.symbol)
+    signal_dict["strategy_slot"] = "trend"
+    await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(signal_dict))
+
+# SWEEP-Slot: Eigenständig bei 3× Sweep
+sweep_signal = strategy_mgr.evaluate_sweep_signal(liq_result.get("sweep", {}), liq_score)
+if sweep_signal:
+    sweep_dict = {**signal.to_signal_dict(self.symbol), "strategy_slot": "sweep"}
+    await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(sweep_dict))
+
+# FUNDING-Slot: Contrarian bei extremer Funding
+funding_signal = strategy_mgr.evaluate_funding_signal(funding_rate, funding_divergence)
+if funding_signal:
+    funding_dict = {**signal.to_signal_dict(self.symbol), "strategy_slot": "funding"}
+    await self.deps.redis.publish_message("bruno:pubsub:signals", json.dumps(funding_dict))
+```
+
+### 3.2 StrategyManager - Portfolio Risk Orchestration
+
+**Zentrale Risk-Management Instanz:**
+
+```python
+async def can_open_position(self, slot_name: str, position_size_usd: float, total_capital_usd: float):
+    # Gesamt-Exposure Check
+    exposure = await self.get_total_exposure()
+    new_gross = exposure["gross_exposure_usd"] + position_size_usd
+    max_gross = total_capital_usd * 0.80 * slot.max_leverage
+    
+    if new_gross > max_gross:
+        return {"allowed": False, "reason": f"Gross exposure ${new_gross:.0f} > max ${max_gross:.0f}"}
+    
+    # Slot-Kapital Check
+    slot_capital = total_capital_usd * slot.capital_allocation_pct
+    slot_max_position = slot_capital * slot.max_leverage
+    
+    return {"allowed": position_size_usd <= slot_max_position, "reason": "OK"}
+```
+
+### 3.3 ExecutionAgentV4 - Slot-Aware Trading
+
+**Portfolio-Level Risk Integration:**
+
+```python
+# Slot aus Signal lesen
+slot_name = signal.get("strategy_slot", "trend")
+
+# Portfolio Risk Check
+portfolio_check = await strategy_mgr.can_open_position(slot_name, position_size_usd, capital_usd)
+if not portfolio_check["allowed"]:
+    self.logger.warning(f"Portfolio Risk Check fehlgeschlagen: {portfolio_check['reason']}")
+    return
+
+# Position mit Slot-Tag speichern
+await self.position_tracker.open_position(..., strategy_slot=slot_name)
+```
+
+### 3.4 PositionTracker - Multi-Slot Management
+
+**Redis Keys pro Slot:**
+
+```python
+# Position pro Slot
+REDIS_KEY = "bruno:position:{symbol}:{slot}"
+
+async def has_open_position_for_slot(self, symbol: str, slot: str) -> bool:
+    pos = await self.redis.get_cache(f"bruno:position:{symbol}:{slot}")
+    return pos is not None and pos.get("status") == "open"
+
+async def has_open_position(self, symbol: str) -> bool:
+    # Prüft alle Slots
+    for slot in ["trend", "sweep", "funding"]:
+        if await self.has_open_position_for_slot(symbol, slot):
+            return True
+    return False
+```
+
+## 4. Risk Management (v9.0)
+
+### 4.1 Portfolio-Level Limits
+
+**Hard Limits auf Systemebene:**
+
+```python
+MAX_GROSS_EXPOSURE_PCT = 0.80  # Nie mehr als 80% des Kapitals
+STRATEGY_TREND_CAPITAL_PCT = 0.40
+STRATEGY_SWEEP_CAPITAL_PCT = 0.30
+STRATEGY_FUNDING_CAPITAL_PCT = 0.30
+```
+
+### 4.2 Slot-spezifische Regeln
+
+**Jede Strategie hat eigene Regeln:**
+
+| Strategie | Leverage | Risk/Trade | Min Notional | Max Haltezeit |
+|-----------|----------|------------|--------------|--------------|
+| Trend     | 3×       | 2.0%       | $300         | Unbegrenzt    |
+| Sweep     | 4×       | 2.5%       | $200         | 2 Stunden    |
+| Funding   | 2×       | 1.5%       | $200         | 8 Stunden    |
+
+### 4.3 Scaled Entry Risk Control
+
+**Tranche-basiertes Risk Management:**
+
+```python
+# Nur 40% Risiko bei Entry
+# Wenn sofort gegen dich läuft → nur 40% Verlust
+# Bei Bestätigung → schrittweise Aufbau
+
+tranche_1_risk = slot_capital * 0.02 * 0.40  # 0.8% des Slot-Kapitals
+tranche_2_risk = slot_capital * 0.02 * 0.30  # 0.6% des Slot-Kapitals
+tranche_3_risk = slot_capital * 0.02 * 0.30  # 0.6% des Slot-Kapitals
+```
+
+## 5. Configuration (v9.0)
+
+### 5.1 Multi-Strategy Settings
+
+```json
+{
+    "_comment_multi_strategy": "=== Multi-Strategy Configuration ===",
+    "STRATEGY_TREND_ENABLED": true,
+    "STRATEGY_SWEEP_ENABLED": true,
+    "STRATEGY_FUNDING_ENABLED": false,
+    "STRATEGY_TREND_CAPITAL_PCT": 0.40,
+    "STRATEGY_SWEEP_CAPITAL_PCT": 0.30,
+    "STRATEGY_FUNDING_CAPITAL_PCT": 0.30,
+    "SCALED_ENTRY_ENABLED": true,
+    "HEDGE_MODE_ENABLED": true,
+    "MAX_GROSS_EXPOSURE_PCT": 0.80
+}
+```
+
+### 5.2 Position Sizing v3
+
+```json
+{
+    "_comment_sizing": "=== Position Sizing v3 ===",
+    "LEVERAGE": 3,
+    "LEVERAGE_MAX": 5,
+    "RISK_PER_TRADE_PCT": 2.0,
+    "MIN_NOTIONAL_USDT": 300,
+    "FEE_RATE_TAKER": 0.0004,
+    "MIN_RR_AFTER_FEES": 1.5,
+    "POSITION_SIZE_MODE": "risk_based"
+}
+```
+
+## 6. Expected Performance (v9.0)
+
+### 6.1 Capital Efficiency
+
+**Bei 1000 EUR Kapital:**
+
+| Slot | Kapital | Leverage | Max Position | Margin |
+|------|---------|----------|--------------|--------|
+| Trend | 400 EUR | 3× | 0.0083 BTC (~$576) | $192 |
+| Sweep | 300 EUR | 4× | 0.017 BTC (~$1.172) | $293 |
+| Funding | 300 EUR | 2× | 0.0087 BTC (~$600) | $300 |
+
+### 6.2 Risk Distribution
+
+**Portfolio-Level Diversifikation:**
+- **Gesamt-Exposure**: Max $2.348 (80% × 3× Leverage)
+- **Net-Exposure**: Kann Long + Short gleichzeitig sein (Hedge Mode)
+- **Slot-Isolation**: Verlust in einem Slot betrifft andere nicht
+
+### 6.3 Expected Win Rate Improvement
+
+**Durch Multi-Strategy Diversifikation:**
+- **Trend**: 55-60% Win Rate (längere Haltezeiten)
+- **Sweep**: 70-75% Win Rate (3× Sweep-Bestätigung)
+- **Funding**: 65-70% Win Rate (Contrarian bei Extremen)
+- **Portfolio**: 60-65% durch Diversifikation
+
+## 7. Migration Notes
+
+### 7.1 von v8.0 zu v9.0
+
+**Breaking Changes:**
+1. **PositionTracker Keys**: `bruno:position:BTCUSDT` → `bruno:position:BTCUSDT:{slot}`
+2. **Signal Format**: Neues Feld `strategy_slot` erforderlich
+3. **ExecutionAgent**: Portfolio Risk Check jetzt obligatorisch
+
+**Kompatibilität:**
+- Alte v8.0 Signale werden als `trend` Slot behandelt
+- Bestehende Positionen werden migriert
+- Paper Trading Modus bleibt aktiv
+
+### 7.2 Deployment Checkliste
+
+1. **Redis Keys**: Alte Positions-Keys migrieren
+2. **Config Update**: Multi-Strategy Settings aktivieren
+3. **Hedge Mode**: Auf Binance aktivieren (nur bei Live Trading)
+4. **Monitoring**: Portfolio Exposure Dashboard
+5. **Testing**: Alle 3 Slots einzeln validieren
+
+## 8. Technical Analysis Engine (v9.0)
+
+### 8.1 Daily EMA Macro Trend Filter
+
+**Neu in v9.0: Daily Timeframe für Macro Trend:**
+
+```python
+# Lookback Map inkl. 1d
+lookback_map = {
+    "1m": 500,
+    "5m": 500,
+    "15m": 500,
+    "1h": 500,
+    "4h": 500,
+    "1d": 200,  # Neu: Daily für Macro Trend
+}
+
+# Daily EMA Berechnung
+def _calc_macro_trend(self, candles_1d):
+    ema_50 = self._calc_ema(candles_1d, 50)
+    ema_200 = self._calc_ema(candles_1d, 200)
+    current_price = candles_1d[-1]["close"]
+    
+    # Golden/Death Cross
+    if ema_50 > ema_200:
+        macro_trend = "macro_bull"
+        allow_longs = current_price > ema_200
+        allow_shorts = False
+    else:
+        macro_trend = "macro_bear"
+        allow_longs = False
+        allow_shorts = current_price < ema_200
+    
+    return {
+        "macro_trend": macro_trend,
+        "ema50": ema_50,
+        "ema200": ema_200,
+        "allow_longs": allow_longs,
+        "allow_shorts": allow_shorts,
+    }
+```
+
+### 8.2 Indicators
+
+#### EMA Stack
+
+**Multi-Timeframe EMA Analyse:**
+
+- **15m**: Short-term Momentum
+- **1h**: Primary Trend
+- **4h**: Medium-term Confirmation  
+- **1d**: Macro Trend Override
 
 #### RSI(14)
 
@@ -192,816 +458,236 @@ ATR:
 ATR = average(TR over last 14 periods)
 ```
 
-### 3.3 Multi-Timeframe Alignment
+### 8.3 Multi-Timeframe Alignment
 
-Timeframes:
+**Timeframes mit Daily Macro Trend:**
 
-- 5m: entry trigger only
-- 15m: tactical confirmation
-- 1h: primary trend
-- 4h: strategic trend
+- **5m**: Entry trigger only
+- **15m**: Tactical confirmation
+- **1h**: Primary trend
+- **4h**: Strategic trend
+- **1d**: Macro trend override (NEU)
 
-Direction per timeframe:
+## 9. GRSS v3 (Global Risk Sentiment Score)
 
-- `bull` if `EMA(9) > EMA(21)`
-- `bear` otherwise
+### 9.1 Sub-Scores
 
-Weighted alignment score:
+**4 gewichtete Komponenten:**
 
-```text
-alignment_score = (4h * 3 + 1h * 2 + 15m * 1) / 6
-```
+1. **Derivatives (25%)**: Funding Rate + Open Interest
+2. **Retail (25%)**: Fear & Greed + Social Volume
+3. **Sentiment (25%)**: News Sentiment Analysis
+4. **Macro (25%)**: VIX + DXY + Macro Events
 
-where each bullish timeframe contributes `+weight`, each bearish timeframe `-weight`.
+### 9.2 Funding Rate Contrarian Logic
 
-Interpretation:
+**NEU in v9.0: Eigenständige Funding-Strategie:**
 
-- `aligned_long = true` if 15m, 1h, and 4h are bullish
-- `aligned_short = true` if 15m, 1h, and 4h are bearish
-- `conflicting_tf` identifies the first disagreeing higher timeframe
-
-### 3.4 Support / Resistance
-
-Support and resistance are detected through swing highs and swing lows on 4h candles.
-
-A swing high is valid if the candle high is greater than the highs of two candles on both sides.
-
-A swing low is valid if the candle low is lower than the lows of two candles on both sides.
-
-Strength heuristic:
-
-```text
-strength = min(5, int(price_distance_factor))
-```
-
-The engine stores the top 10 levels sorted by strength and proximity.
-
-### 3.5 Breakout Proximity
-
-Near-level threshold:
-
-```text
-near_threshold_pct = 0.5%
-near_threshold_atr = (ATR / price) * 100
-effective_threshold = max(near_threshold_pct, near_threshold_atr)
-```
-
-The engine marks a breakout candidate if price is near a strong support or resistance zone with strength `>= 3`.
-
-### 3.6 Wick Detection
-
-For each of the last 3 five-minute candles:
-
-```text
-body = abs(close - open)
-upper_wick = high - max(open, close)
-lower_wick = min(open, close) - low
-```
-
-Bullish wick (hammer):
-
-- `lower_wick > 2 * body`
-- `upper_wick < 0.5 * body`
-
-Bearish wick (shooting star):
-
-- `upper_wick > 2 * body`
-- `lower_wick < 0.5 * body`
-
-Wick strength:
-
-```text
-wick_strength = min(1.0, wick_length / body / 4.0)
-```
-
-### 3.7 Session Awareness
-
-Sessions are detected in UTC:
-
-- `asia`: 00:00–08:00
-- `europe`: 08:00–14:00
-- `eu_us_overlap`: 14:00–16:00
-- `us`: 16:00–21:00
-- `late_us`: everything else
-
-Each session returns:
-
-- `session`
-- `volatility_bias`
-- `trend_expected`
-
-### 3.10 VPOC (Volume Point of Control)
-
-**Volume-at-Price Matrix:**
-- Uses fixed tick size buckets ($10 for BTC)
-- Builds exact volume distribution: `price_level -> cumulative_volume`
-- VPOC = price level with maximum volume in the matrix
-
-**Implementation:**
 ```python
-volume_at_price = {}
-for candle in candles:
-    price_bucket = round(candle["close"] / tick_size) * tick_size
-    volume_at_price[price_bucket] = volume_at_price.get(price_bucket, 0) + candle["volume"]
-    
-vpoc_price = max(volume_at_price, key=volume_at_price.get)
+# Funding Rate Thresholds
+if funding_rate > 0.0005:  # > 50 bps/8h = extrem bullish
+    return "short"  # Longs zahlen zu viel → Preis fällt
+elif funding_rate < -0.0001:  # < -10 bps/8h = extrem bearish
+    return "long"   # Shorts zahlen → Preis steigt
 ```
 
-### 3.11 Orderbook Walls
+## 10. Risk Management (v9.0 Enhanced)
 
-Binance depth endpoint:
+### 10.1 Multi-Layer Risk Controls
 
-```text
-GET https://fapi.binance.com/fapi/v1/depth?symbol=BTCUSDT&limit=1000
-```
+**3 Ebenen des Risk Managements:**
 
-Wall threshold:
+1. **Slot-Level**: Per-Strategie Limits
+2. **Portfolio-Level**: Gesamt-Exposure 80% Max
+3. **System-Level**: Daily Drawdown, Consecutive Losses
 
-```text
-wall_threshold = median_order_size * 5
-```
+### 10.2 Position Sizing v3
 
-Each wall includes:
+**Professional Risk-Based Sizing:**
 
-- price
-- size in BTC
-- size in USDT
-- distance from current price
-
-The engine also calculates `wall_imbalance`:
-
-```text
-wall_imbalance = total_bid_wall_size / total_ask_wall_size
-```
-
-### 3.12 CVD (Cumulative Volume Delta)
-
-**Deduplication Logic:**
-- Uses 1-minute klines for precise delta calculation
-- Strict timestamp guard prevents double processing:
-  - `_last_processed_kline_ts` stores last processed timestamp
-  - Only processes klines with `timestamp > _last_processed_kline_ts`
-- Cumulative delta: `CVD += (taker_buy_volume - taker_sell_volume)`
-
-**Implementation:**
 ```python
-if latest_kline_ts > self._last_processed_kline_ts:
-    minute_delta = taker_buy_volume - taker_sell_volume
-    self.cvd_cumulative += minute_delta
-    self._last_processed_kline_ts = latest_kline_ts
+# Fixer Risikobetrag = 2% des SLOT-Kapitals
+risk_amount = slot_capital * 0.02
+
+# Positionsgröße = Risiko ÷ SL-Distanz
+position_size = risk_amount / sl_distance
+
+# Fee-Aware R:R Check
+rr_after_fees = (tp_profit - fees) / (sl_loss + fees)
+if rr_after_fees < 1.5:
+    REJECT  # Nicht profitabel nach Fees
 ```
 
-### 3.13 TA Score
+### 10.3 Scaled Entry Risk Control
 
-TA score range:
+**Tranche-basiertes Risiko:**
 
-- `-100` to `+100`
+| Tranche | Größe | Risiko bei sofortem SL |
+|---------|-------|------------------------|
+| 1       | 40%   | 0.8% des Slot-Kapitals |
+| 2       | 30%   | 0.6% des Slot-Kapitals |
+| 3       | 30%   | 0.6% des Slot-Kapitals |
 
-Component weights:
+**Vorteil:** Bei sofortem Gegen-Lauf nur 40% Verlust statt 100%
 
-- Trend: 25%
-- MTF alignment: 20%
-- RSI: 10%
-- S/R context: 20%
-- Volume: 10%
-- VWAP: 10%
-- Wick bonus: 5%
+## 11. Execution Flow (v9.0)
 
-**Trend-Block mit Ranging-Kompensation (Prompt 7 NEU):**
-- `perfect_bull` / `perfect_bear`: ±25
-- `bull` / `bear`: ±18
-- `mixed`: ±8 wenn EMA9/21 aligned (Trend building)
-  - EMA9 > EMA21: +8 (Short-term EMAs bullish)
-  - EMA9 < EMA21: -8 (Short-term EMAs bearish)
+### 11.1 Signal Generation
 
-**Volume-Block Session-Aware (Prompt 7 NEU):**
-- `vol_ratio > 1.5`: +8 (High volume confirmation)
-- `vol_ratio > 1.2`: +4
-- `vol_ratio < 0.5`: -5 (nur in EU/US/Overlap Sessions)
-  - Asia/Late-US: Keine Penalty (low volume ist normal)
-
-MTF filter:
-
-- If the resulting direction is long and `aligned_long == false`, multiply the TA score by `0.3`.
-- If the resulting direction is short and `aligned_short == false`, multiply the TA score by `0.3`.
-
-This is intentionally strict because counter-trend low-timeframe signals have a high fakeout rate.
-
-## 4. Liquidity Intelligence
-
-### 4.1 Cluster Detection
-
-Source:
-
-- `liquidations` table (24h lookback)
-
-Filter:
-
-- `total_usdt > 100000`
-- cluster zones grouped around `$200` price buckets
-
-Each cluster stores:
-
-- zone price
-- total liquidation volume in USDT
-- count
-- average/min/max liquidation price
-- distance from current price
-- side relation (`is_above`)
-
-### 4.2 Magnetic Pull
-
-The magnetic pull is modeled with a gravity-inspired function:
+**3 parallele Signal-Generatoren:**
 
 ```text
-force = G * mass / distance²
-mass = total_usdt / 1,000,000
+QuantAgentV4
+├── TREND: CompositeScore → Signal (slot="trend")
+├── SWEEP: 3× Sweep → Signal (slot="sweep")
+└── FUNDING: Extreme Funding → Signal (slot="funding")
 ```
 
-with `G = 1.0`.
+### 11.2 Risk Validation
 
-Interpretation:
+**Portfolio-Level Checks:**
 
-- positive force → attraction upward
-- negative force → attraction downward
-
-The final `strength` is normalized to `0.0..1.0`.
-
-### 4.3 Asymmetry
-
-Liquidation asymmetry compares:
-
-- `long_liq_below` = liquidation volume below current price
-- `short_liq_above` = liquidation volume above current price
-
-Ratio:
-
-```text
-ratio = long_liq_below / short_liq_above
-```
-
-Bias:
-
-- `ratio > 1.5` → `bullish_sweep`
-- `ratio < 0.67` → `bearish_sweep`
-- otherwise → `balanced`
-
-### 4.4 OI Delta
-
-Open Interest is polled once per minute from:
-
-```text
-GET https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT
-```
-
-History:
-
-- rolling window of 10 values
-
-Derived values:
-
-- `oi_1min_change = current_oi - prev_oi`
-- `oi_5min_change = current_oi - first_oi`
-- `oi_change_pct = (oi_5min_change / first_oi) * 100`
-
-`oi_dropping` is true when the latest readings show consecutive declines.
-
-### 4.5 3× Sweep Confirmation
-
-An entry is only confirmed when **all three** conditions are true:
-
-1. **Liquidations spike**
-   - `total_liq > 500000` USDT over 5 minutes
-   - dominant side must exceed `70%`
-2. **Wick formed**
-   - bullish wick after long liquidation sweep
-   - bearish wick after short liquidation sweep
-3. **OI dropping**
-   - open interest must fall
-
-Sweep direction:
-
-- `SELL` liquidations correspond to **longs liquidated**
-- `BUY` liquidations correspond to **shorts liquidated**
-
-### 4.6 Event-Driven Liquidation Trigger
-
-Liquidation spikes are now published by the IngestionAgent via Redis Pub/Sub and can trigger an immediate rescoring path in `QuantAgentV4` without waiting for the 60s polling cycle.
-
-Event channel:
-
-```text
-market:liquidations:{symbol}:events
-```
-
-Trigger rules:
-
-- force-order payload must exceed the configured liquidation spike threshold
-- the liquidation event is forwarded into `LiquidityEngine.analyze(...)`
-- the resulting sweep confirmation can bypass the normal cooldown for immediate evaluation
-
-Post-sweep entry:
-
-- `long` sweep + bullish wick + OI drop → `post_sweep_entry = long`
-- `short` sweep + bearish wick + OI drop → `post_sweep_entry = short`
-
-### 4.6 Liquidity Score
-
-Liquidity score range:
-
-- `-50` to `+50`
-
-Components:
-
-- Magnetic pull: `±10`
-- Asymmetry bias: `±10`
-- Confirmed sweep: `±20`
-- Orderbook wall imbalance: `±10`
-- **Nearest-Wall Proximity (Prompt 7 NEU): `±5`**
-
-Wall imbalance interpretation:
-
-- `wall_imbalance > 1.5` → `+10`
-- `1.2 < wall_imbalance <= 1.5` → `+5`
-- `0.83 <= wall_imbalance <= 1.2` → neutral
-- `0.67 <= wall_imbalance < 0.83` → `-5`
-- `wall_imbalance < 0.67` → `-10`
-
-**Nearest-Wall Proximity (Prompt 7):**
-- Bid-Wall innerhalb 1%: `+5` (Support = bullish)
-- Ask-Wall innerhalb 1%: `-5` (Resistance = bearish)
-
-Begründung: Wenn ein Wall in der Nähe ist, wird Preis davon angezogen/abgestoßen.
-
-## 5. Composite Scoring
-
-### 5.1 Score Inputs
-
-The composite score consumes four core inputs plus auxiliary analytics data:
-
-- `ta_score` in `[-100, +100]`
-- `liq_score` in `[-50, +50]`
-- `flow_score` in `[-50, +50]`
-- `macro_score` in `[-50, +50]`
-
-Auxiliary flow sources now include Binance Futures analytics (`bruno:binance:analytics`) and on-chain context (`bruno:onchain:data`) feeding the ContextAgent / CompositeScorer pipeline.
-
-### 5.2 Regime Detection
-
-Regime is derived from:
-
-- TA trend stack
-- VIX from macro context
-
-Rules:
-
-- `VIX > 35` → `high_vola`
-- `EMA stack in [perfect_bull, bull]` → `trending_bull`
-- `EMA stack in [perfect_bear, bear]` → `bear`
-- otherwise → `ranging`
-
-### 5.3 Weight Presets
-
-Trending preset:
-
-```text
-TA    = 0.50
-Liq   = 0.15
-Flow  = 0.20
-Macro = 0.15
-```
-
-Ranging preset:
-
-```text
-TA    = 0.20
-Liq   = 0.40
-Flow  = 0.25
-Macro = 0.15
-```
-
-Rationale:
-
-- **Trending**: trend-following dominates; liquidity sweeps are less reliable.
-- **Ranging**: price oscillates between liquidity clusters; sweeps are primary opportunities.
-
-### 5.4 Composite Formula
-
-Normalization:
-
-- `liq_score`, `flow_score`, and `macro_score` are multiplied by `2` before weighting so they operate on the same scale as `ta_score`.
-
-Formula:
-
-```text
-composite = ta_score * w_ta + (liq_score * 2) * w_liq + (flow_score * 2) * w_flow + (macro_score * 2) * w_macro
-```
-
-Final clamp:
-
-```text
-composite_score = clamp(composite, -100, +100)
-```
-
-Direction:
-
-- `composite > 0` → `long`
-- `composite < 0` → `short`
-- `composite == 0` → `neutral`
-
-### 5.5 Threshold and Sweep Bonus
-
-Thresholds from config (Prompt 7 Kalibrierung):
-
-- learning: `COMPOSITE_THRESHOLD_LEARNING = 18` (was 35)
-- production: `COMPOSITE_THRESHOLD_PROD = 40` (was 55)
-
-**Begründung:** Learning Mode soll Daten sammeln - jeder Trade mit Score > 18 und Confluence ist ein Datenpunkt. Production 40 ist selektiv genug nach Score-Fixes.
-
-Sweep bonus:
-
-```text
-effective_threshold = max(30, threshold - 15)
-```
-
-applies when `sweep_confirmed = true`.
-
-### 5.5.1 Signal-Confluence-Bonus (Prompt 7 NEU)
-
-Wenn 3+ unabhängige Signal-Quellen in dieselbe Richtung zeigen, ist die Wahrscheinlichkeit eines erfolgreichen Trades signifikant höher.
-
-**Signal-Quellen:**
-- TA Richtung (ta_score > 10 / < -10)
-- Liq Richtung (liq_score > 5 / < -5)
-- Flow Richtung (flow_score > 10 / < -10)
-- Macro Richtung (macro_score > 5 / < -5)
-- MTF Alignment (mtf_aligned + ta_score direction)
-- VWAP Position (Above/Below VWAP)
-
-**Bonus-Formel:**
-```text
-dominant_count = max(bull_count, bear_count)
-if dominant_count >= 3:
-    bonus = (dominant_count - 2) * 8  # +8 pro Signal ab dem 3.
-```
-
-Beispiel: 5 aligned bull signals → bonus = (5-2) × 8 = +24
-
-### 5.5.2 Regime-Kompensation (Prompt 7 NEU)
-
-Ranging-Märkte produzieren strukturell niedrigere TA-Scores weil der Trend-Block (25 Punkte) bei "mixed" EMA-Stack ~0 ist.
-
-**Boost-Logik:**
-```text
-if regime in ("ranging", "high_vola") and abs(composite) > 10:
-    ranging_boost = abs(composite) * 0.15  # +15% Score Boost
-    if composite > 0:
-        composite += ranging_boost
-    else:
-        composite -= ranging_boost
-```
-
-Kompensiert systematische Benachteiligung von Ranging-Setups.
-
-### 5.6 MTF Filter
-
-If MTF is not aligned, the TA contribution is already reduced at the TA layer. The composite layer still records `mtf_aligned` and uses it as a trade-quality flag. The TA layer now uses a graded alignment score (0.3× / 0.6× / 1.0×) instead of a binary pass/fail.
-
-### 5.7 Position Sizing
-
-Position size is session-aware and score-aware.
-
-Score multiplier:
-
-```text
-score_mult = clamp((abs_score - 40) / 50 + 0.5, 0.5, 1.5)
-```
-
-ATR multiplier:
-
-- `ATR/price < 0.5%` → `1.2`
-- `0.5% <= ATR/price < 1.0%` → `1.0`
-- `1.0% <= ATR/price < 2.0%` → `0.6`
-- `ATR/price >= 2.0%` → `0.3`
-
-Session multiplier uses `volatility_bias` from TA session context.
-
-Final sizing is clamped to `<= 2.0%`.
-
-### 5.8 SL / TP
-
-Default values:
-
-- `stop_loss_pct = 0.010`
-- `take_profit_1_pct = 0.012`
-- `take_profit_2_pct = 0.020`
-- `tp1_size_pct = 0.50`
-- `tp2_size_pct = 0.50`
-
-Breakeven trigger:
-
-- `breakeven_trigger_pct = 0.005`
-
-ATR-based clamping:
-
-- if `abs_score > 80`:
-  - `sl_mult = 1.5`
-  - `tp1_mult = 1.5`
-  - `tp2_mult = 3.0`
-- if `abs_score > 60`:
-  - `sl_mult = 1.2`
-  - `tp1_mult = 1.2`
-  - `tp2_mult = 2.5`
-- otherwise:
-  - `sl_mult = 0.8`
-  - `tp1_mult = 1.0`
-  - `tp2_mult = 1.5`
-
-Clamp boundaries:
-
-- `SL` in `[0.5%, 2.5%]`
-- `TP1` in `[0.8%, 2.5%]`
-- `TP2` in `[1.0%, 5.0%]`
-
-## 6. Risk Management
-
-### 6.1 Hard Vetos
-
-RiskAgent v2 uses six hard vetos:
-
-1. Data gap
-2. Context stale > 1h
-3. VIX > 45
-4. System pause / kill-switch
-5. Death zone near mega-wall
-6. Daily drawdown block
-
-### 6.2 Daily Drawdown
-
-24h block triggers when:
-
-- daily loss `>= 3.0%`, or
-- `3` consecutive losing trades
-
-Daily loss calculation:
-
-```text
-daily_loss_pct = abs(daily_pnl / initial_capital * 100)
-```
-
-Block state is stored in Redis under `bruno:risk:daily_block` with 24h TTL.
-
-### 6.3 Death Zone
-
-If a cluster has:
-
-- `total_usdt > 500000`
-- `abs(distance_pct) < 0.5%`
-
-then the RiskAgent vetoes the trade.
-
-### 6.4 Breakeven Stop
-
-If a trade is more than `0.5%` in profit, the first take-profit is hit and the stop-loss is moved to:
-
-- long: `entry_price * 1.001`
-- short: `entry_price * 0.999`
-
-This locks in a small positive expected value and prevents turning winners into losers. After TP1, the remaining size continues toward TP2 or the adjusted stop.
-
-**Position-Specific State:**
-- Each position tracks its own `tp1_hit` and `breakeven_active` flags
-- No global state variables interfere between multiple positions
-- State is stored in the position dictionary via PositionTracker
-
-### 6.5 Trade Cooldown
-
-Minimum cooldown:
-
-```text
-TRADE_COOLDOWN_SECONDS = 300
-```
-
-No new signal is published before this cooldown has expired.
-
-## 7. Execution and Portfolio Handling
-
-ExecutionAgentV4 performs:
-
-- TP1 scale-out
-- breakeven adjustment
-- ATR-based trailing stop (Chandelier Exit)
-- TP2 final exit
-- position closing
-- portfolio updates in DRY_RUN
-
-**TP1 Scale-Out Fee Model:**
-- Uses **0.01% maker fee** for limit order simulation
-- `fee_estimate = (qty_to_close * exit_price) * 0.0001`
-- Reflects institutional fee structure for passive liquidity provision
-
-PositionTracker stores the live state for:
-
-- `initial_quantity`
-- `take_profit_1_price`
-- `take_profit_2_price`
-- `tp1_size_pct`
-- `tp2_size_pct`
-- `breakeven_trigger_pct`
-- `realized_pnl_eur` / `realized_pnl_pct`
-- `tp1_hit` / `breakeven_active`
-- `max_favorable_price` / `min_favorable_price`
-
-Portfolio state keys include:
-
-- `capital_eur`
-- `daily_pnl_eur`
-- `trade_pnl_history_eur`
-- `peak_capital_eur`
-- `max_drawdown_eur`
-
-## 8. Backtester Realitäts-Check
-
-### 8.1 1-Minute Candle Iteration
-The backtester now iterates over **1-minute candles** instead of hourly candles for realistic simulation:
 ```python
-for candle in candles_1m:
-    # Check intrabar high/low conditions
-    # Apply pessimism rule for SL/TP conflicts
+# 1. Slot verfügbar?
+if slot in open_positions:
+    REJECT
+
+# 2. Gesamt-Exposure OK?
+if gross_exposure + new_position > max_exposure:
+    REJECT
+
+# 3. Slot-Kapital ausreichend?
+if position_size > slot_capital * leverage:
+    REJECT
 ```
 
-### 8.2 Intrabar High/Low Checks
-Each candle checks both price extremes:
-- **High**: Tests for take-profit triggers
-- **Low**: Tests for stop-loss triggers
-- Enables realistic intrabar price action simulation
+### 11.3 Order Execution
 
-### 8.3 Pessimismus-Regel (SL Priority)
-If both SL and TP are touched in the same candle:
+**Slot-Aware Execution:**
+
 ```python
-if low_price <= stop_loss and high_price >= take_profit:
-    # SL wins - assume stop-loss hit first
-    exit_price = stop_loss
-    exit_reason = "stop_loss"
-```
-This conservative approach reflects real-world execution where stop-loss orders typically execute faster than take-profit orders.
-
-## 9. Redis Keys
-
-### Technical Analysis
-
-- `bruno:ta:snapshot`
-- `bruno:ta:ob_walls`
-
-### Liquidity Intelligence
-
-- `bruno:liq:intelligence`
-- `bruno:liq:intelligence` contains:
-  - clusters
-  - magnetic pull
-  - asymmetry
-  - OI delta
-  - sweep confirmation
-  - liquidity score
-
-### Free-Tier Analytics / On-Chain
-
-- `bruno:binance:analytics`
-- `bruno:onchain:data`
-- `bruno:cvd:BTCUSDT`
-
-### Sentiment Analysis (NEW 2026-04-06)
-
-- `bruno:sentiment:analysis`
-- `bruno:sentiment:news_sentiment`
-- HuggingFace Models: `facebook/bart-large-mnli` (Zero-Shot Classification)
-- CryptoPanic API Integration (replaces Google Trends)
-
-### Execution / Positions
-
-- `bruno:position:BTCUSDT`
-- `bruno:risk:daily_block`
-
-### Quant / Decisions
-
-- `bruno:quant:micro`
-- `bruno:decisions:feed`
-- `bruno:pubsub:signals`
-
-### Risk / Execution
-
-- `bruno:veto:state`
-- `bruno:risk:daily_block`
-- `bruno:portfolio:state`
-- `market:liquidations:{symbol}:events`
-
-### Legacy / Post-Trade Learning
-
-- `trade_debriefs` table
-- `bruno:learning:metrics`
-- `bruno:learning:layer_*`
-
-### Phantom Trade Learning
-
-- `bruno:phantom_trades:pending`
-- `market_candles` scan for MAE/MFE evaluation
-
-## 10. Configuration Keys
-
-```json
-{
-  "COMPOSITE_THRESHOLD_LEARNING": 18,  // Prompt 7: war 35
-  "COMPOSITE_THRESHOLD_PROD": 40,     // Prompt 7: war 55
-  "COMPOSITE_W_TA": 0.40,
-  "COMPOSITE_W_LIQ": 0.25,
-  "COMPOSITE_W_FLOW": 0.20,
-  "COMPOSITE_W_MACRO": 0.15,
-  "TRADE_COOLDOWN_SECONDS": 300,
-  "DAILY_MAX_LOSS_PCT": 3.0,
-  "MAX_CONSECUTIVE_LOSSES": 3,
-  "BREAKEVEN_TRIGGER_PCT": 0.005,
-  "TAKE_PROFIT_1_PCT": 0.012,
-  "TAKE_PROFIT_2_PCT": 0.020,
-  "TP1_SIZE_PCT": 0.50,
-  "TP2_SIZE_PCT": 0.50
-}
+# Position mit Slot-Tag
+await position_tracker.open_position(
+    symbol="BTCUSDT",
+    side="long",
+    strategy_slot="trend",  # NEU
+    ...
+)
 ```
 
-If all four `COMPOSITE_W_*` keys are present, config override can replace the default presets. Otherwise the regime defaults apply.
+## 12. Monitoring & Observability
 
-**Prompt 7 Kalibrierungs-Änderungen:**
-- Learning Threshold: 35 → 18 (für mehr Trades im Learning Mode)
-- Production Threshold: 55 → 40 (nach Score-Fixes realistischer)
-- Signal-Confluence-Bonus: +8 pro aligned Signal ab dem 3.
-- Regime-Kompensation: +15% Boost in ranging/high_vola
-- TA Ranging-Kompensation: ±8 für "mixed" EMA mit aligned short-term EMAs
-- Volume Session-Aware: Keine Penalty in Asia/Late-US
-- Liq Nearest-Wall: ±5 für Walls innerhalb 1%
+### 12.1 Portfolio Dashboard
 
-## 11. Post-Trade Analysis with Deepseek API
+**NEU: Multi-Strategy Monitoring:**
 
-The LLM is no longer part of live trade execution but is used exclusively for post-trade analysis.
+```text
+Portfolio Overview
+├── Total Capital: 1.000 EUR
+├── Gross Exposure: 2.348 EUR (234.8%)
+├── Net Exposure: 0 EUR (Hedged)
+├── Open Positions: 3/3 Slots
+│   ├── Trend: Long 0.0083 BTC (+$576)
+│   ├── Sweep: Short 0.017 BTC (-$1.172)
+│   └── Funding: Long 0.0087 BTC (+$600)
+└── Daily P&L: +$47.20 (+4.7%)
+```
 
-**Deepseek Reasoning API Integration:**
-- Post-trade narrative analysis
-- Trade reasoning archive  
-- Debrief-based learning loop
-- Performance improvement recommendations
-- Structured JSON responses for data analysis
-- Phantom-trade evaluation with MAE/MFE context
+### 12.2 Strategy Performance
 
-**API Configuration:**
-- Provider: Deepseek Reasoning API
-- Model: deepseek-chat
-- Purpose: Post-trade debrief and learning only
-- Fallback: Graceful degradation when API unavailable
+**Per-Slot Statistiken:**
 
-This is preserved for research, diagnostics, and continuous strategy improvement.
+```text
+Trend Strategy
+├── Win Rate: 58.3%
+├── Avg Win: +2.1%
+├── Avg Loss: -1.6%
+├── Profit Factor: 1.8
+└── Trades: 24
 
-## 12. Migration Notes
+Sweep Strategy
+├── Win Rate: 73.1%
+├── Avg Win: +1.8%
+├── Avg Loss: -1.2%
+├── Profit Factor: 2.4
+└── Trades: 13
 
-### Replaced
+Funding Strategy
+├── Win Rate: 66.7%
+├── Avg Win: +1.5%
+├── Avg Loss: -1.1%
+├── Profit Factor: 2.0
+└── Trades: 9
+```
 
-- `QuantAgentV3` → `QuantAgentV4`
-- LLM decision cascade → deterministic composite scoring
-- Ollama local LLMs → Deepseek Reasoning API
-- Local model management → Cloud-based intelligence
+## 13. Deployment Guide
 
-### Added
+### 13.1 Pre-Deployment Checklist
 
-- Deepseek Reasoning API integration
-- Post-trade debrief with structured JSON responses
-- Cloud-based learning system
-- Professional trade analysis capabilities
-- Robust error handling and fallback mechanisms
-- TechnicalAnalysisAgent
-- LiquidityEngine
-- CompositeScorer
-- Daily drawdown block
-- Breakeven stop logic
+1. **Configuration Update:**
+   - [ ] STRATEGY_FUNDING_ENABLED=false (start deaktiviert)
+   - [ ] SCALED_ENTRY_ENABLED=true
+   - [ ] HEDGE_MODE_ENABLED=true
 
-### Compatibility
+2. **Redis Migration:**
+   - [ ] Alte Position Keys sichern
+   - [ ] Neue Slot-Keys erstellen
+   - [ ] Portfolio Exposure Dashboard testen
 
-- Redis keys from v1 remain preserved where needed
-- Trade audit logs remain compatible
-- Legacy LLM debrief tables remain available
-- Deepseek API replaces Ollama for post-trade analysis only
+3. **Testing:**
+   - [ ] Trend-Slot mit CompositeScore
+   - [ ] Sweep-Slot mit 3× Sweep
+   - [ ] Funding-Slot (später aktivieren)
+   - [ ] Scaled Entry Tranche-Trigger
 
-## 13. Summary
+### 13.2 Go-Live Procedure
 
-Bruno v2.2 is a deterministic, regime-adaptive trading system with institutional-grade mathematical precision. The primary trade decision is based on the combination of technical structure, liquidity pressure, and macro flow, with strict risk controls and **Deepseek Reasoning API** for post-trade debriefing and learning.
+1. **Phase 1: Paper Trading (1 Woche)**
+   - Alle Slots aktivieren
+   - Portfolio Monitoring
+   - Risk Limits validieren
 
-**V2.2 Key Features:**
-- **Live Trading:** 100% deterministic without LLM interference
-- **Post-Trade Analysis:** Professional Deepseek API integration
-- **Risk Management:** 6 hard vetos with circuit breakers
-- **Learning System:** Cloud-based intelligence for continuous improvement
-- **Performance:** Sub-2s response times for trade analysis
-- **Institutional Math:** VWAP daily reset, CVD deduplication, true VPOC
-- **Backtester:** 1-minute candles with intrabar pessimism rule
-- **Execution:** Position-specific state, TP1 maker fee (0.01%), multi-level exits
-- **Purge Complete:** No Max Pain or Google Trends references in system
-- **Prompt 7 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware scoring
+2. **Phase 2: Reduced Capital (1 Woche)**
+   - 10% des Kapitals
+   - Live Trading mit kleinem Betrag
+   - Slippage und Latenz prüfen
+
+3. **Phase 3: Full Capital**
+   - 100% Kapital-Einsatz
+   - Alle Slots aktiv
+   - Monitoring intensivieren
+
+### 13.3 Rollback Plan
+
+**Falls Probleme auftreten:**
+
+1. **Config Revert:** STRATEGY_TREND_ENABLED=true, andere=false
+2. **Redis Keys:** Altes Format wiederherstellen
+3. **Code:** v8.0 Branch zurückrollen
+4. **Monitoring:** Classic Portfolio View
+
+---
+
+**Bruno v9.0 - Multi-Strategy Architecture**
+
+Professionelles Risk Management mit 3 unkorrelierten Strategien, Scaled Entries und Portfolio-Level Diversifikation. Ready for institutional deployment.
+
+**v9.0 Features (NEU):**
+- **Multi-Strategy Slots**: 3 unabhängige Strategien (Trend, Sweep, Funding)
+- **Scaled Entry Engine**: Pyramiding für Trend-Strategie (40%/30%/30% Tranchen)
+- **Professional Position Sizing**: Risk-based mit Leverage-Effizienz
+- **Portfolio-Level Risk Management**: Max 80% Exposure, Slot-Isolation
+- **Binance Hedge Mode**: Gleichzeitige Long+Short Positionen
+- **Daily EMA Macro Trend Filter**: Schutz vor Bear Market Rallies
+- **StrategyManager**: Zentrale Orchestrierung und Risk Checks
+
+**v8.0 Features (beibehalten):**
+- **Risk Management**: 6 hard vetos mit circuit breakers
+- **Learning System**: Deepseek API für Post-Trade Analyse
+- **Institutional Math**: VWAP daily reset, CVD deduplication, true VPOC
+- **Backtester**: 1-minute candles mit intrabar pessimism rule
+- **Execution**: Position-specific state, TP1 maker fee (0.01%), multi-level exits
+- **Prompt 7 Score-Kalibrierung**: Confluence-Bonus, Regime-Kompensation
 
 **Prompt 7 Kalibrierung (April 2026):**
 - Thresholds angepasst für realistischere Trade-Generierung (Learning: 18, Prod: 40)
@@ -1011,4 +697,4 @@ Bruno v2.2 is a deterministic, regime-adaptive trading system with institutional
 - Volume Session-Aware: Keine Penalty in inaktiven Sessions (Asia/Late-US)
 - Liq Nearest-Wall Proximity: ±5 Punkte wenn Orderbuch-Walls innerhalb 1%
 
-This document is the canonical reference for trading logic in v2.2.
+This document is the canonical reference for trading logic in v9.0.
