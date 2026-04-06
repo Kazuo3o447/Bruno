@@ -878,6 +878,23 @@ class TechnicalAnalysisAgent(PollingAgent):
         """
         score = 0.0
         signals = []
+        stage_progression = {}
+        ta_breakdown = {
+            "ema_stack": 0,
+            "mtf_alignment": 0,
+            "rsi_signal": 0,
+            "sr_proximity": 0,
+            "breakout_bonus": 0,
+            "vwap_position": 0,
+            "volume_bonus": 0,
+            "wick_signal": 0,
+            "macro_penalty": 0,
+            "mtf_penalty": 0,
+            "total_before_clamp": 0.0,
+            "total_after_clamp": 0.0,
+            "known_components_sum": 0.0,
+            "residual_penalty": 0.0,
+        }
         
         # Trend (25%) — mit Ranging-Kompensation
         stack = trend.get("ema_stack", "mixed")
@@ -898,6 +915,7 @@ class TechnicalAnalysisAgent(PollingAgent):
             elif ema_9 < ema_21:
                 score -= 8
                 signals.append("Short-term EMAs bearish (trend building)")
+        stage_progression["after_trend"] = round(score, 1)
         
         # MTF-Alignment (20%)
         alignment = mtf.get("alignment_score", 0)
@@ -908,37 +926,48 @@ class TechnicalAnalysisAgent(PollingAgent):
             signals.append("MTF aligned short")
         elif mtf.get("conflicting_tf"): 
             signals.append(f"MTF conflict at {mtf['conflicting_tf']}")
+        stage_progression["after_mtf_alignment"] = round(score, 1)
         
-        # RSI (10%)
+        # RSI (10%) - Ranging-spezifische Behandlung
         if rsi < 30: 
             score += 10; signals.append("RSI oversold")
         elif rsi < 40: 
             score += 5
         elif rsi > 70: 
             score -= 10; signals.append("RSI overbought")
+        elif 40 <= rsi <= 70 and regime == "ranging":
+            # Im Ranging: RSI 40-70 ist neutral (keine Penalty)
+            score += 0
         elif rsi > 60: 
             score -= 5
+        stage_progression["after_rsi"] = round(score, 1)
         
         # S/R Kontext (20%)
         if breakout.get("near_support"):
             ns = breakout["nearest_support"]
             if ns and ns.get("strength", 0) >= 3:
                 score += 15; signals.append(f"Near strong support {ns['price']:.0f}")
+                ta_breakdown["sr_proximity"] = 15
             else:
                 score += 8
+                ta_breakdown["sr_proximity"] = 8
         elif breakout.get("near_resistance"):
             nr = breakout["nearest_resistance"]
             if nr and nr.get("strength", 0) >= 3:
                 score -= 15; signals.append(f"Near strong resistance {nr['price']:.0f}")
+                ta_breakdown["sr_proximity"] = -15
             else:
                 score -= 8
+                ta_breakdown["sr_proximity"] = -8
         
         # Breakout-Kandidat
         if (breakout.get("breakout_candidate") == "up" and 
             volume.get("current_vs_avg", 0) > 1.3):
             score += 5; signals.append("Breakout candidate up with volume")
+            ta_breakdown["breakout_bonus"] = 5
+        stage_progression["after_sr_breakout"] = round(score, 1)
         
-        # Volume (10%) — session-aware
+        # Volume (10%) — session-aware mit Ranging-Kompensation
         vol_ratio = volume.get("current_vs_avg", 1.0)
         session_name = session.get("session", "us") if isinstance(session, dict) else "us"
 
@@ -949,61 +978,85 @@ class TechnicalAnalysisAgent(PollingAgent):
         elif vol_ratio < 0.5:
             # Nur in aktiven Sessions ist Low Volume ein Warnsignal
             if session_name in ("europe", "eu_us_overlap", "us"):
-                score -= 5; signals.append("Low volume warning")
+                if regime == "ranging":
+                    # Im Ranging: weniger harte Volume Penalty
+                    score -= 2; signals.append("Low volume (ranging)")
+                else:
+                    score -= 5; signals.append("Low volume warning")
             else:
                 # Asia/Late-US: low volume ist normal, keine Penalty
                 pass
+        stage_progression["after_volume"] = round(score, 1)
         
-        # VWAP (10%)
+        # VWAP (10%) - Ranging-Kompensation
         if price > vwap * 1.001: 
             score += 8; signals.append("Above VWAP")
-        elif price < vwap * 0.999: 
-            score -= 8; signals.append("Below VWAP")
+        elif price < vwap * 0.999:
+            if regime == "ranging":
+                # Im Ranging: VWAP ist weniger relevant
+                score -= 3; signals.append("Below VWAP (ranging)")
+            else:
+                score -= 8; signals.append("Below VWAP")
+        stage_progression["after_vwap"] = round(score, 1)
         
-        # Wick-Signal (5% Bonus)
+        # Wick-Signal (5% Bonus) - Ranging-Kompensation
         if wick.get("bullish_wick"): 
             score += 5 * wick["wick_strength"]; signals.append("Bullish wick detected")
-        elif wick.get("bearish_wick"): 
-            score -= 5 * wick["wick_strength"]; signals.append("Bearish wick detected")
+        elif wick.get("bearish_wick"):
+            penalty = 5 * wick["wick_strength"]
+            if regime == "ranging":
+                # Im Ranging: weniger harte Wick Penalty
+                penalty *= 0.5  # Halbiere die Penalty
+                signals.append("Bearish wick (ranging)")
+            else:
+                signals.append("Bearish wick detected")
+            score -= penalty
+        stage_progression["after_wick"] = round(score, 1)
         
         # ═══ MTF-FILTER (KRITISCH) ═══
         direction = "long" if score > 0 else "short" if score < 0 else "neutral"
         alignment = mtf.get("alignment_score", 0)  # -1.0 bis +1.0
+        mtf_aligned = mtf.get("aligned_long") or mtf.get("aligned_short")
         
-        # Regime-abhängiger MTF-Filter
-        if regime in ["ranging", "high_vola"]:
-            # Entspannte Filter für Ranging/Hoch-Vola Märkte
-            if direction == "long":
-                if alignment < 0:  # Gegensignal
-                    score *= 0.5
-                    signals.append("⚠ MTF contra-signal — score reduced 50% (ranging regime)")
-                elif alignment < 0.5:  # Teilweise aligned
-                    score *= 0.8
-                    signals.append("⚠ MTF partially aligned — score reduced 20% (ranging regime)")
-            elif direction == "short":
-                if alignment > 0:
-                    score *= 0.5
-                    signals.append("⚠ MTF contra-signal — score reduced 50% (ranging regime)")
-                elif alignment > -0.5:
-                    score *= 0.8
-                    signals.append("⚠ MTF partially aligned — score reduced 20% (ranging regime)")
-            signals.append("MTF relaxed (ranging regime)")
+        # FIX: Wenn MTF aligned, keine Filter-Reduktion!
+        if mtf_aligned:
+            signals.append("MTF aligned - no filter reduction")
         else:
-            # Aggressive Filter für Trending-Märkte (bisherige Logik)
-            if direction == "long":
-                if alignment < 0:  # Gegensignal
-                    score *= 0.3
-                    signals.append("⚠ MTF contra-signal — score reduced 70%")
-                elif alignment < 0.5:  # Teilweise aligned
-                    score *= 0.6
-                    signals.append("⚠ MTF partially aligned — score reduced 40%")
-            elif direction == "short":
-                if alignment > 0:
-                    score *= 0.3
-                    signals.append("⚠ MTF contra-signal — score reduced 70%")
-                elif alignment > -0.5:
-                    score *= 0.6
-                    signals.append("⚠ MTF partially aligned — score reduced 40%")
+            # Regime-abhängiger MTF-Filter (nur bei NICHT-Alignment)
+            if regime in ["ranging", "high_vola"]:
+                # Entspannte Filter für Ranging/Hoch-Vola Märkte
+                if direction == "long":
+                    if alignment < 0:  # Gegensignal
+                        score *= 0.5
+                        signals.append("⚠ MTF contra-signal — score reduced 50% (ranging regime)")
+                    elif alignment < 0.5:  # Teilweise aligned
+                        score *= 0.8
+                        signals.append("⚠ MTF partially aligned — score reduced 20% (ranging regime)")
+                elif direction == "short":
+                    if alignment > 0:
+                        score *= 0.5
+                        signals.append("⚠ MTF contra-signal — score reduced 50% (ranging regime)")
+                    elif alignment > -0.5:
+                        score *= 0.8
+                        signals.append("⚠ MTF partially aligned — score reduced 20% (ranging regime)")
+                signals.append("MTF relaxed (ranging regime)")
+            else:
+                # Aggressive Filter für Trending-Märkte (nur bei NICHT-Alignment)
+                if direction == "long":
+                    if alignment < 0:  # Gegensignal
+                        score *= 0.3
+                        signals.append("⚠ MTF contra-signal — score reduced 70%")
+                    elif alignment < 0.5:  # Teilweise aligned
+                        score *= 0.6
+                        signals.append("⚠ MTF partially aligned — score reduced 40%")
+                elif direction == "short":
+                    if alignment > 0:
+                        score *= 0.3
+                        signals.append("⚠ MTF contra-signal — score reduced 70%")
+                    elif alignment > -0.5:
+                        score *= 0.6
+                        signals.append("⚠ MTF partially aligned — score reduced 40%")
+        stage_progression["after_mtf_filter"] = round(score, 1)
         
         # ═══ MACRO TREND OVERRIDE (KRITISCH) ═══
         if macro_trend:
@@ -1030,7 +1083,9 @@ class TechnicalAnalysisAgent(PollingAgent):
                     f"⚠ Macro Bull headwind: 1h bear in daily bull market "
                     f"(score {original_score:.1f} → {score:.1f})"
                 )
+        stage_progression["after_macro"] = round(score, 1)
         
+        pre_clamp_score = round(score, 1)
         score = round(max(-100, min(100, score)), 1)
         
         # Detaillierter Score-Breakdown für Debugging
@@ -1038,15 +1093,26 @@ class TechnicalAnalysisAgent(PollingAgent):
             "ema_stack": 0,
             "mtf_alignment": 0,
             "rsi_signal": 0,
+            "sr_proximity": 0,
+            "breakout_bonus": 0,
             "vwap_position": 0,
             "volume_bonus": 0,
-            "sr_proximity": 0,
             "wick_signal": 0,
             "macro_penalty": 0,
             "mtf_penalty": 0,
-            "total_before_clamp": score,
+            "total_before_clamp": pre_clamp_score,
             "total_after_clamp": score
         }
+
+        # Stage-by-stage Diagnostik: macht sicht- und nachvollziehbar,
+        # welche tatsächlichen Stufen den Score verändert haben.
+        ta_breakdown["stage_progression"] = dict(stage_progression)
+
+        # Residual-Diagnostik: zeigt, welche nicht explizit zugeordnete
+        # Anpassung noch zwischen den sichtbaren Komponenten und dem Endscore liegt.
+        # Das verändert keine Trading-Logik, sondern macht versteckte Deltas sichtbar.
+        ta_breakdown["known_components_sum"] = 0.0
+        ta_breakdown["residual_penalty"] = 0.0
         
         # Berechne Breakdown-Komponenten
         stack = trend.get("ema_stack", "mixed")
@@ -1074,6 +1140,9 @@ class TechnicalAnalysisAgent(PollingAgent):
             ta_breakdown["rsi_signal"] = 5
         elif rsi > 70:
             ta_breakdown["rsi_signal"] = -10
+        elif 40 <= rsi <= 70 and regime == "ranging":
+            # Im Ranging: RSI 40-70 ist neutral
+            ta_breakdown["rsi_signal"] = 0
         elif rsi > 60:
             ta_breakdown["rsi_signal"] = -5
             
@@ -1081,7 +1150,10 @@ class TechnicalAnalysisAgent(PollingAgent):
         if price > vwap * 1.001:
             ta_breakdown["vwap_position"] = 8
         elif price < vwap * 0.999:
-            ta_breakdown["vwap_position"] = -8
+            if regime == "ranging":
+                ta_breakdown["vwap_position"] = -3  # Weniger hart im Ranging
+            else:
+                ta_breakdown["vwap_position"] = -8
             
         # Volume
         vol_ratio = volume.get("current_vs_avg", 1.0)
@@ -1091,18 +1163,63 @@ class TechnicalAnalysisAgent(PollingAgent):
         elif vol_ratio > 1.2:
             ta_breakdown["volume_bonus"] = 4
         elif vol_ratio < 0.5 and session_name in ("europe", "eu_us_overlap", "us"):
-            ta_breakdown["volume_bonus"] = -5
+            if regime == "ranging":
+                ta_breakdown["volume_bonus"] = -2  # Weniger hart im Ranging
+            else:
+                ta_breakdown["volume_bonus"] = -5
             
         # Wick Signal
         if wick.get("bullish_wick"):
             ta_breakdown["wick_signal"] = round(5 * wick["wick_strength"], 1)
         elif wick.get("bearish_wick"):
-            ta_breakdown["wick_signal"] = round(-5 * wick["wick_strength"], 1)
+            penalty = 5 * wick["wick_strength"]
+            if regime == "ranging":
+                penalty *= 0.5  # Halbiere im Ranging
+            ta_breakdown["wick_signal"] = round(-penalty, 1)
         
         # Macro Penalty (wenn vorhanden)
         if macro_trend and macro_trend.get("macro_trend") == "macro_bear" and score > 0:
             ta_breakdown["macro_penalty"] = round(score * -0.5, 1)  # 50% Penalty
-        
+
+        # Diagnostisch die wirklich wirksamen Stufen-Änderungen festhalten.
+        # Das ist keine zusätzliche Logik, sondern eine exakte Erklärung der bereits
+        # durch die Pipeline erzeugten Score-Deltas.
+        stage_progression["pre_clamp"] = pre_clamp_score
+        stage_progression["final"] = score
+        ta_breakdown["stage_progression"] = dict(stage_progression)
+        ta_breakdown["mtf_penalty"] = round(
+            stage_progression.get("after_mtf_filter", score) - stage_progression.get("after_wick", score),
+            1,
+        )
+        ta_breakdown["macro_penalty"] = round(
+            stage_progression.get("after_macro", score) - stage_progression.get("after_mtf_filter", score),
+            1,
+        )
+        ta_breakdown["sr_proximity"] = round(
+            stage_progression.get("after_sr_breakout", score)
+            - stage_progression.get("after_rsi", score)
+            - ta_breakdown["breakout_bonus"],
+            1,
+        )
+
+        ta_breakdown["known_components_sum"] = round(
+            ta_breakdown["ema_stack"]
+            + ta_breakdown["mtf_alignment"]
+            + ta_breakdown["rsi_signal"]
+            + ta_breakdown["sr_proximity"]
+            + ta_breakdown["breakout_bonus"]
+            + ta_breakdown["vwap_position"]
+            + ta_breakdown["volume_bonus"]
+            + ta_breakdown["wick_signal"]
+            + ta_breakdown["macro_penalty"]
+            + ta_breakdown["mtf_penalty"],
+            1,
+        )
+        ta_breakdown["residual_penalty"] = round(
+            score - ta_breakdown["known_components_sum"],
+            1,
+        )
+
         return {
             "score": score,
             "direction": "long" if score > 10 else "short" if score < -10 else "neutral",
@@ -1218,6 +1335,8 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "regime_used": regime,  # Für Debugging
                 # NEU: Macro Trend Filter
                 "macro_trend": macro_trend,
+                # HOTFIX: TA-Breakdown für Debugging
+                "ta_breakdown": ta_score.get("ta_breakdown", {}),
             }
             
             # Fix datetime serialization

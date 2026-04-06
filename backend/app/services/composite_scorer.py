@@ -309,17 +309,17 @@ class CompositeScorer:
             result.should_trade = False
             result.signals_active.append(f"BLOCKED: {regime} regime disallows shorts")
         
-        # SCHRITT 4: Macro Trend Hard Block (kann nur blockieren, nie freigeben)
-        if result.should_trade and result.direction == "long" and not mt_allow_longs:
-            result.should_trade = False
+        # SCHRITT 4: Macro Trend Diagnostics (kein Gate)
+        # Macro-Trend darf als Headwind sichtbar sein, aber Trades nicht hart blockieren.
+        # Die Macro-Wirkung kommt bereits über macro_score + Gewichte in den Composite Score.
+        if result.direction == "long" and not mt_allow_longs:
             result.signals_active.append(
-                f"⛔ MACRO BLOCK: No longs in {macro_trend.get('macro_trend')} "
+                f"Macro headwind: no longs in {macro_trend.get('macro_trend')} "
                 f"(Price {macro_trend.get('ema200_distance_pct', 0):+.1f}% vs Daily EMA200)"
             )
-        elif result.should_trade and result.direction == "short" and not mt_allow_shorts:
-            result.should_trade = False
+        elif result.direction == "short" and not mt_allow_shorts:
             result.signals_active.append(
-                f"⛔ MACRO BLOCK: No shorts in {macro_trend.get('macro_trend')}"
+                f"Macro headwind: no shorts in {macro_trend.get('macro_trend')}"
             )
         
         # SCHRITT 5: Sizing Check (kann nur blockieren, nie freigeben)

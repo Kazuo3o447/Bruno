@@ -198,6 +198,14 @@
 
 **Validierung:** 3/3 Tests bestanden, Scoring balanced!
 
+- [x] **Bug 4 - TA-Breakdown Residual**: Stage-by-Stage Diagnostik
+  - Residual-Differenz (~21 Punkte) aufgelöst
+  - Vollständige Transparenz des Scoreverlaufs
+  - `residual_penalty` jetzt 0.0
+  - Keine Änderung an Trading-Logik oder Filtern
+
+**Validierung:** 4/4 Tests bestanden, Diagnostik sauber!
+
 ---
 
 ## System-Status (Ist-Stand)

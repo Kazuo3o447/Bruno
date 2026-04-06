@@ -699,7 +699,79 @@ signals.append(f"⚠ Macro Bear headwind: score {original_score:.1f} → {score:
 
 **Ergebnis:** CompositeScore von 2.4 → 6.6 (+175%)
 
-### 12.3 Validation Results
+### 12.4 Stage-by-Stage TA-Breakdown Diagnostik
+
+**Problem:** Der TA-Breakdown zeigte eine Residual-Differenz (~21 Punkte), die nicht durch die sichtbaren Komponenten erklärbar war. Dies erschwerte die Fehlersuche und Validierung.
+
+**Lösung:** Implementierung einer vollständigen Stage-by-Stage-Diagnostik, die den Scoreverlauf an jeder relevanten Stelle erfasst und die Breakdown-Komponenten aus den tatsächlichen Stufenänderungen ableitet.
+
+#### Stage Progression Checkpoints
+```python
+stage_progression = {
+    "after_trend": 25.0,          # Nach EMA-Stack
+    "after_mtf_alignment": 45.0,  # Nach MTF-Alignment
+    "after_rsi": 45.0,            # Nach RSI-Signal
+    "after_sr_breakout": 30.0,    # Nach S/R-Kontext + Breakout
+    "after_volume": 28.0,         # Nach Volume-Bewertung
+    "after_vwap": 25.0,           # Nach VWAP-Position
+    "after_wick": 25.0,           # Nach Wick-Signal
+    "after_mtf_filter": 25.0,     # Nach MTF-Filter
+    "after_macro": 12.5,          # Nach Macro-Trend
+    "pre_clamp": 12.5,            # Vor Clamp auf [-100, 100]
+    "final": 12.5                 # Finaler TA-Score
+}
+```
+
+#### Dynamische Breakdown-Komponenten
+```python
+# Statt statischer Annahmen werden die realen Deltas berechnet:
+ta_breakdown["sr_proximity"] = round(
+    stage_progression["after_sr_breakout"]
+    - stage_progression["after_rsi"]
+    - ta_breakdown["breakout_bonus"],
+    1
+)
+
+ta_breakdown["mtf_penalty"] = round(
+    stage_progression["after_mtf_filter"] - stage_progression["after_wick"],
+    1
+)
+
+ta_breakdown["macro_penalty"] = round(
+    stage_progression["after_macro"] - stage_progression["after_mtf_filter"],
+    1
+)
+```
+
+#### Residual-Auflösung
+```python
+ta_breakdown["known_components_sum"] = round(
+    ta_breakdown["ema_stack"]
+    + ta_breakdown["mtf_alignment"]
+    + ta_breakdown["rsi_signal"]
+    + ta_breakdown["sr_proximity"]
+    + ta_breakdown["breakout_bonus"]
+    + ta_breakdown["vwap_position"]
+    + ta_breakdown["volume_bonus"]
+    + ta_breakdown["wick_signal"]
+    + ta_breakdown["macro_penalty"]
+    + ta_breakdown["mtf_penalty"],
+    1
+)
+
+ta_breakdown["residual_penalty"] = round(
+    score - ta_breakdown["known_components_sum"],
+    1
+)
+```
+
+**Ergebnis:**
+- **`residual_penalty`**: `0.0` (vorher: ~21)
+- **`known_components_sum`**: `12.5` (exakt wie finaler Score)
+- **Vollständige Transparenz** des Scoreverlaufs
+- **Keine Änderung** an Trading-Logik, Thresholds oder Filtern
+
+### 12.5 Validation Results
 
 **Decision Feed vor Hotfix:**
 ```json

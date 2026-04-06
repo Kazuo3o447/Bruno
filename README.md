@@ -2,7 +2,7 @@
 
 > **Privacy-First Institutional Bitcoin Trading Bot — v2.1.1 Scoring Hotfix**
 
-> ✅ **V2.1.1 Scoring Hotfix:** Balanced Scoring Logic, Conviction-Gate Removal, TA-Breakdown Transparenz, Moderate Macro Penalties (50% statt 80%), Fair Chancen für bullische Setups im Ranging
+> ✅ **V2.1.1 Scoring Hotfix:** Balanced Scoring Logic, Conviction-Gate Removal, TA-Breakdown Transparenz, Moderate Macro Penalties (50% statt 80%), Fair Chancen für bullische Setups im Ranging, Stage-by-Stage Diagnostik (Residual aufgelöst)
 > ✅ **V2.1 Logic-Bugs Fixed:** Sequentielle should_trade Logik, Single OFI Penalty, Conservative insufficient_data, F&G Retry, Dynamic EUR/USD, Rock-Solid Decision Engine
 > ✅ **V2.1 Integration Fixes:** Multi-Strategy Slots (trend, sweep, funding), Scaled Entry Engine, Position Tracker Slot-Aware, Cooldowns (Sweep 60s, Funding 1800s)
 > ✅ **V8.0 Privacy-First News & Bybit Core:** Multi-Source News Ingestion (CryptoPanic, RSS, Tier-3 FreeCryptoNews) mit SHA256 Deduplizierung, Zero-Trust Defensive Architecture, Bybit V5 WebSocket als exklusive "Single Source of Truth", Complete Binance REST Purge
