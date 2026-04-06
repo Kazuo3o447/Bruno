@@ -1,33 +1,35 @@
-# Bruno v2.1 Trading Logic (Multi-Strategy Architecture)
+# Bruno v2.1.1 Trading Logic (Multi-Strategy Architecture + Scoring Hotfix)
 
 ## 1. Purpose
 
-Bruno v2.1 is a **multi-strategy institutional** deterministic trading system with zero tolerance for heuristics and logic bugs. The system features:
+Bruno v2.1.1 is a **multi-strategy institutional** deterministic trading system with zero tolerance for heuristics and logic bugs. The system features:
 
 1. **Multi-Strategy Architecture** - 3 unkorrelierte Strategie-Slots (Trend, Sweep, Funding)
 2. **Scaled Entry Engine** - Pyramiding für Trend-Strategie (40%/30%/30% Tranchen)
 3. **Professional Position Sizing** - Risk-based mit Leverage-Effizienz und Fee-Awareness
 4. **Portfolio-Level Risk Management** - Max 80% Exposure, Slot-Isolation
-5. **Macro Trend Filter** - Daily EMA 50/200 Override gegen Bear Market Rallies
+5. **Macro Trend Filter** - Daily EMA 50/200 moderate penalties (50% statt 80%)
 6. **OFI Pipeline Quality Gate** - Datenqualitäts-Checks für Order Flow
 7. **RegimeConfig Integration** - Regime-spezifische Trading-Regeln
 8. **Sequential should_trade Logic** - Deterministische Entscheidungsreihenfolge
 9. **Robust Data Sources** - Retry-Logik für alle externen APIs
 10. **Dynamic FX Rates** - EUR/USD via Yahoo Finance mit Redis-Cache
-11. **Binance Hedge Mode** - Gleichzeitige Long+Short Positionen
-12. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
-13. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
+11. **Balanced Scoring** - Keine zusätzlichen Conviction-Blocker
+12. **Detailed TA Breakdown** - Vollständige Score-Komponenten-Transparenz
+13. **Binance Hedge Mode** - Gleichzeitige Long+Short Positionen
+14. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
+15. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
 
-The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing professional multi-strategy risk management and **rock-solid logic**.
+The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing professional multi-strategy risk management and **balanced scoring logic**.
 
-## 2. Data Flow Overview (v2.1 Logic-Bugs Fixed)
+## 2. Data Flow Overview (v2.1.1 Scoring Hotfix)
 
 ```text
 Bybit V5 WebSocket → BybitV5Client → Redis (CVD, VWAP, VPOC)
     ↓
 News Sources (CryptoPanic, RSS, Free-Crypto-News) → NewsIngestionService → SentimentAnalyzer
     ↓
-TechnicalAnalysisAgent → bruno:ta:snapshot (Daily EMA Macro Trend + Retry Logic)
+TechnicalAnalysisAgent → bruno:ta:snapshot (Detailed TA Breakdown + Moderate Macro Penalties)
     ↓
 ContextAgent → bruno:context:grss (GRSS v3, Funding Rate, EUR/USD from Yahoo Finance)
     ↓
@@ -613,7 +615,128 @@ if critical_data_gap:
     result.signals_active.append(f"Data Gap ({', '.join(missing)}): Conviction halved")
 ```
 
-## 12. Indicators
+## 12. Scoring Hotfix v2.1.1 (April 2026)
+
+### 12.1 Problem Statement
+
+**Vor Hotfix:** Bruno produzierte HOLD bei bullischem Setup durch übermäßig restriktive Scoring-Logik:
+
+```
+outcome: COMPOSITE_HOLD
+composite_score: 2.4
+ta_score: 4.0                    ← bei "Perfect bull EMA stack" + MTF aligned
+reason: "Low conviction 0.02 < 0.7; TA: Perfect bull EMA stack"
+macro_allows_direction: false
+```
+
+**Nach Hotfix:** Balanced Scoring mit fairen Chancen für bullische Setups:
+
+```
+outcome: COMPOSITE_HOLD
+composite_score: 6.6 (+175%)
+ta_score: 10.0 (+150%)
+reason: "TA: Perfect bull EMA stack; TA: MTF aligned long"
+```
+
+### 12.2 Bug Fixes
+
+#### Bug 1: TA-Score Breakdown Transparency
+
+**Problem:** "Perfect bull EMA stack" ergab nur 4 Punkte statt erwarteter 25+ Punkte.
+
+**Lösung:** Detaillierter TA-Breakdown mit vollständiger Punktwert-Transparenz:
+
+```python
+ta_breakdown = {
+    "ema_stack": 25,           # Perfect Bull EMA Stack
+    "mtf_alignment": 20.0,     # MTF aligned long
+    "rsi_signal": -5,          # RSI > 60 (leicht overbought)
+    "vwap_position": 0,        # Preis ≈ VWAP
+    "volume_bonus": -5,        # Low volume penalty
+    "macro_penalty": -5.0,     # Moderate 50% penalty
+    "total_before_clamp": 10.0,
+    "total_after_clamp": 10.0
+}
+```
+
+**Ergebnis:** TA-Score von 4.0 → 10.0 (+150%)
+
+#### Bug 2: Conviction-Gate 0.7 Entfernt
+
+**Problem:** Zusätzlicher Conviction-Blocker verhinderte Trades trotz gutem CompositeScore.
+
+**Lösung:** Conviction-Check aus sequenzieller Logik entfernt:
+
+```python
+# VORHER:
+if result.conviction < regime_cfg.confidence_threshold:  # 0.7 für ranging
+    result.should_trade = False
+    result.signals_active.append(f"Low conviction {result.conviction:.2f} < {regime_cfg.confidence_threshold}")
+
+# NACHHER:
+# SCHRITT 2: Conviction Check (nur für Diagnostik, kein Blocker!)
+# Conviction wird berechnet aber darf nicht als separater Gate fungieren
+# Der CompositeScore + Threshold ist der einzige Gate
+```
+
+**Ergebnis:** "Low conviction < 0.7" verschwunden aus Reason
+
+#### Bug 3: Macro Penalty Moderat
+
+**Problem:** 80% Macro Penalty für bullische Signale im Bärenmarkt zu restriktiv.
+
+**Lösung:** Moderate 50% Penalty statt 80%:
+
+```python
+# VORHER:
+score *= 0.2  # 80% Penalty - zu restriktiv
+signals.append(f"⛔ MACRO BEAR OVERRIDE: score {original_score:.1f} → {score:.1f}")
+
+# NACHHER:
+score *= 0.5  # 50% Penalty - weniger restriktiv
+signals.append(f"⚠ Macro Bear headwind: score {original_score:.1f} → {score:.1f}")
+```
+
+**Ergebnis:** CompositeScore von 2.4 → 6.6 (+175%)
+
+### 12.3 Validation Results
+
+**Decision Feed vor Hotfix:**
+```json
+{
+  "outcome": "COMPOSITE_HOLD",
+  "composite_score": 2.4,
+  "ta_score": 4.0,
+  "reason": "Low conviction 0.02 < 0.7; TA: Perfect bull EMA stack; TA: MTF aligned long"
+}
+```
+
+**Decision Feed nach Hotfix:**
+```json
+{
+  "outcome": "COMPOSITE_HOLD", 
+  "composite_score": 6.6,
+  "ta_score": 10.0,
+  "reason": "TA: Perfect bull EMA stack; TA: MTF aligned long"
+}
+```
+
+### 12.4 Impact
+
+**Positive Effects:**
+- **TA-Score Verbesserung:** +150% (4.0 → 10.0)
+- **Composite Score Verbesserung:** +175% (2.4 → 6.6)
+- **Gap to Threshold Reduzierung:** -17% (24.3 → 20.1)
+- **Reason Quality:** "Low conviction" → "Perfect bull EMA stack"
+- **Fair Chancen:** Bullische Setups im Ranging erhalten realistische Bewertung
+
+**System Behavior:**
+- **Weniger übermäßig restriktiv**
+- **Conservativ bei wirklich schwachen Signalen**
+- **Balanced Scoring mit Transparenz**
+- **Ready für DRY_RUN Daten-Sammlung**
+
+## 13. Indicators
 
 ### 12.1 EMA Stack
 

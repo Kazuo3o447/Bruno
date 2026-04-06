@@ -297,12 +297,9 @@ class CompositeScorer:
         # SCHRITT 1: Threshold Check (setzt should_trade initial)
         result.should_trade = abs_score >= effective_threshold
         
-        # SCHRITT 2: Conviction Check
-        if result.conviction < regime_cfg.confidence_threshold:
-            result.should_trade = False
-            result.signals_active.append(
-                f"Low conviction {result.conviction:.2f} < {regime_cfg.confidence_threshold}"
-            )
+        # SCHRITT 2: Conviction Check (nur für Diagnostik, kein Blocker!)
+        # Conviction wird berechnet aber darf nicht als separater Gate fungieren
+        # Der CompositeScore + Threshold ist der einzige Gate
         
         # SCHRITT 3: Regime Direction Filter (kann nur blockieren, nie freigeben)
         if result.should_trade and result.direction == "long" and not regime_cfg.allow_longs:

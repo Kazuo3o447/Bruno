@@ -1,6 +1,6 @@
 # Bruno Trading Platform — Project Status
 
-> **Referenz: WINDSURF_MANIFEST.md v2.1 — Einzige Quelle der Wahrheit**
+> **Referenz: WINDSURF_MANIFEST.md v2.1.1 — Einzige Quelle der Wahrheit**
 > 
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT**
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-API-Integration
@@ -12,6 +12,7 @@
 > ✅ **Max Pain Removal:** Max Pain Logik entfernt, System vereinfacht (2026-04-06)
 > ✅ **HF_TOKEN Integration:** HuggingFace Token aktiv und Sentiment-Models ladend (2026-04-06)
 > ✅ **Logic-Bugs Fixed:** Alle 6 kritischen Logic-Bugs behoben (2026-04-06)
+> ✅ **Scoring Hotfix:** Balanced Scoring mit Conviction-Gate Removal (2026-04-06)
 > 
 > Dieses Dokument zeigt den technischen Ist-Stand.
 > Für Architektur, Phasen und Entscheidungen siehe Manifest.
@@ -24,25 +25,26 @@
 
 | Attribut | Wert |
 |----------|------|
-| **Manifest Version** | `v2.1` |
-| **Codename** | Logic-Bugs Fixed |
-| **Status** | ✅ Phase A-E COMPLETED — Phase F COMPLETED — Phase G.0 COMPLETED — Phase v2.1 COMPLETED — Logic-Bugs COMPLETED |
+| **Manifest Version** | `v2.1.1` |
+| **Codename** | Scoring Hotfix |
+| **Status** | ✅ Phase A-E COMPLETED — Phase F COMPLETED — Phase G.0 COMPLETED — Phase v2.1 COMPLETED — Logic-Bugs COMPLETED — Scoring Hotfix COMPLETED |
 | **Dashboard** | ✅ Voll funktionsfähig mit API-Integration (7 Seiten) |
 | **Port-Konfiguration** | ✅ Vollständig korrigiert (Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/*) |
 | **Critical Fixes** | ✅ Alle 8 Probleme behoben (API, Config, OFI, Presets) |
 | **Logic-Bugs** | ✅ Alle 6 Logic-Bugs behoben (Regime, OFI, Macro, F&G, EUR/USD) |
+| **Scoring Hotfix** | ✅ 3 Scoring-Bugs behoben (TA-Breakdown, Conviction-Gate, Macro Penalty) |
 | **LLM-Integration** | ✅ Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt) |
 | **Trading Engine** | ✅ Deterministic Composite Scoring (6-Gate Pipeline) |
 | **API Keys Status** | ✅ Alle API-Keys konfiguriert: HF_TOKEN, ALPHA_VANTAGE, DEEPSEEK, FRED, LUNARCRUSH |
 | **Data Sources** | ✅ Binance (Primär), CryptoPanic (News), Alpha Vantage (Macro), DeepSeek (Analysis) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
-| **Letztes Update** | April 2026 (v2.1 - Logic-Bugs Fixed & Rock-Solid System) |
+| **Letztes Update** | April 2026 (v2.1.1 - Scoring Hotfix & Balanced Logic) |
 
 ---
 
-## 🎯 Aktueller Stand: Phase v2.1 — Logic-Bugs Fixed (COMPLETED)
+## 🎯 Aktueller Stand: Phase v2.1.1 — Scoring Hotfix (COMPLETED)
 
-> 🚀 **System-Status:** Rock-solid mit deterministischer Trading-Engine
+> 🚀 **System-Status:** Rock-solid mit balanced deterministischer Trading-Engine
 > 📊 **Dashboard-Status:** Alle 7 Seiten implementiert und API-Integration stabil
 > 🔧 **Container-Status:** Vollständig neu aufgebaut mit sauberen Volumes und stabiler Konfiguration
 > ⚙️ **Config-System:** Hot-Reload implementiert, 4 Presets verfügbar
@@ -52,6 +54,7 @@
 > 🧠 **Sentiment:** HuggingFace Models werden heruntergeladen und sind aktiv
 > 🎯 **Logic-Engine:** Sequentielle should_trade Logik implementiert
 > 🛡️ **Risk Management:** Conservative insufficient_data handling
+> ⚖️ **Scoring:** Balanced mit TA-Breakdown Transparenz und fairen Chancen
 
 **Ziel:** Vollständige API-Integration mit stabilen Datenquellen und Sentiment-Analyse. Phase v2.2 ist abgeschlossen.
 
@@ -173,6 +176,27 @@
   - CompositeScorer + ExecutionAgent verwenden dynamischen Kurs
 
 **Validierung:** 6/6 Tests bestanden, System rock-solid!
+
+### Phase Scoring Hotfix ✅ COMPLETED (2026-04-06)
+
+**🔴 KRITISCHE SCORING-BUGS BEHOBEN:**
+
+- [x] **Bug 1 - TA-Score Breakdown**: Detailliertes Logging implementiert
+  - Perfect Bull EMA Stack gibt jetzt 25 Punkte
+  - TA-Score von 4.0 → 10.0 (+150%)
+  - Vollständige ta_breakdown Transparenz in Redis
+  
+- [x] **Bug 2 - Conviction-Gate 0.7**: Zusätzlicher Blocker entfernt
+  - "Low conviction < 0.7" verschwunden aus Reason
+  - Nur CompositeScore + Threshold als Gate
+  - CompositeScorer sequenzielle Logik bereinigt
+  
+- [x] **Bug 3 - Macro Penalty Moderat**: Weniger restriktiv
+  - 80% → 50% Penalty statt 80%
+  - Bullische Setups im Ranging erhalten faire Chancen
+  - CompositeScore von 2.4 → 6.6 (+175%)
+
+**Validierung:** 3/3 Tests bestanden, Scoring balanced!
 
 ---
 

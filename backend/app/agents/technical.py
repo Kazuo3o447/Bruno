@@ -1011,27 +1011,97 @@ class TechnicalAnalysisAgent(PollingAgent):
             if mt == "macro_bear" and score > 0:
                 # Bear Market Rally Detection:
                 # 1h zeigt bull, aber Daily zeigt bear
-                # → Score wird drastisch reduziert
+                # → Score wird moderat reduziert (nicht 80% Penalty)
                 original_score = score
-                score *= 0.2  # 80% Penalty
+                score *= 0.5  # 50% Penalty statt 80% - weniger restriktiv
                 signals.append(
-                    f"⛔ MACRO BEAR OVERRIDE: 1h bull in daily bear market "
+                    f"⚠ Macro Bear headwind: 1h bull in daily bear market "
                     f"(score {original_score:.1f} → {score:.1f})"
                 )
             elif mt == "macro_bear" and score < 0:
                 # Short-Signal im Bärenmarkt = verstärken
-                score *= 1.3  # 30% Bonus
+                score *= 1.2  # 20% Bonus statt 30% - moderater
                 signals.append("Macro Bear confirms short signal")
             elif mt == "macro_bull" and score < 0:
                 # Short-Signal im Bullenmarkt = abschwächen
                 original_score = score
-                score *= 0.3
+                score *= 0.5  # 50% Penalty statt 70% - weniger restriktiv
                 signals.append(
-                    f"⛔ MACRO BULL OVERRIDE: 1h bear in daily bull market "
+                    f"⚠ Macro Bull headwind: 1h bear in daily bull market "
                     f"(score {original_score:.1f} → {score:.1f})"
                 )
         
         score = round(max(-100, min(100, score)), 1)
+        
+        # Detaillierter Score-Breakdown für Debugging
+        ta_breakdown = {
+            "ema_stack": 0,
+            "mtf_alignment": 0,
+            "rsi_signal": 0,
+            "vwap_position": 0,
+            "volume_bonus": 0,
+            "sr_proximity": 0,
+            "wick_signal": 0,
+            "macro_penalty": 0,
+            "mtf_penalty": 0,
+            "total_before_clamp": score,
+            "total_after_clamp": score
+        }
+        
+        # Berechne Breakdown-Komponenten
+        stack = trend.get("ema_stack", "mixed")
+        if stack == "perfect_bull":
+            ta_breakdown["ema_stack"] = 25
+        elif stack == "bull":
+            ta_breakdown["ema_stack"] = 18
+        elif stack == "perfect_bear":
+            ta_breakdown["ema_stack"] = -25
+        elif stack == "bear":
+            ta_breakdown["ema_stack"] = -18
+        elif stack == "mixed" and ema_9 > ema_21:
+            ta_breakdown["ema_stack"] = 8
+        elif stack == "mixed" and ema_9 < ema_21:
+            ta_breakdown["ema_stack"] = -8
+            
+        # MTF Alignment
+        alignment = mtf.get("alignment_score", 0)
+        ta_breakdown["mtf_alignment"] = round(alignment * 20, 1)
+        
+        # RSI
+        if rsi < 30:
+            ta_breakdown["rsi_signal"] = 10
+        elif rsi < 40:
+            ta_breakdown["rsi_signal"] = 5
+        elif rsi > 70:
+            ta_breakdown["rsi_signal"] = -10
+        elif rsi > 60:
+            ta_breakdown["rsi_signal"] = -5
+            
+        # VWAP
+        if price > vwap * 1.001:
+            ta_breakdown["vwap_position"] = 8
+        elif price < vwap * 0.999:
+            ta_breakdown["vwap_position"] = -8
+            
+        # Volume
+        vol_ratio = volume.get("current_vs_avg", 1.0)
+        session_name = session.get("session", "us") if isinstance(session, dict) else "us"
+        if vol_ratio > 1.5:
+            ta_breakdown["volume_bonus"] = 8
+        elif vol_ratio > 1.2:
+            ta_breakdown["volume_bonus"] = 4
+        elif vol_ratio < 0.5 and session_name in ("europe", "eu_us_overlap", "us"):
+            ta_breakdown["volume_bonus"] = -5
+            
+        # Wick Signal
+        if wick.get("bullish_wick"):
+            ta_breakdown["wick_signal"] = round(5 * wick["wick_strength"], 1)
+        elif wick.get("bearish_wick"):
+            ta_breakdown["wick_signal"] = round(-5 * wick["wick_strength"], 1)
+        
+        # Macro Penalty (wenn vorhanden)
+        if macro_trend and macro_trend.get("macro_trend") == "macro_bear" and score > 0:
+            ta_breakdown["macro_penalty"] = round(score * -0.5, 1)  # 50% Penalty
         
         return {
             "score": score,
@@ -1039,6 +1109,7 @@ class TechnicalAnalysisAgent(PollingAgent):
             "conviction": round(min(1.0, abs(score) / 100.0), 2),
             "signals": signals,
             "mtf_aligned": mtf.get("aligned_long") or mtf.get("aligned_short"),
+            "ta_breakdown": ta_breakdown,  # NEU: Detaillierter Breakdown
         }
 
     async def _report_health(self, source: str, status: str, latency: float):
