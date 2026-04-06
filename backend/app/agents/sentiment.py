@@ -161,7 +161,32 @@ class SentimentAgent(PollingAgent):
                 await self._report_health("CoinMarketCap_Global", "offline", 0.0)
                 self.logger.warning("CRYPTOCOMPARE_API_KEY und COINMARKETCAP_API_KEY nicht gesetzt — nur RSS Fallback")
 
-            # ── 2. RSS Feeds (Fallback + Ergänzung) ──────────────
+            # ── 2. News Ingestion Integration (Tier-1 Source) ──────────────
+            self.state.sub_state = "fetching news (ingestion service)"
+            try:
+                processed_news = await self.deps.redis.get_cache("bruno:news:processed_items") or []
+                if processed_news:
+                    await self._report_health("News_Ingestion", "online", 0.0)
+                    self.logger.info(f"News Ingestion: {len(processed_news)} verarbeitete Items geladen")
+                    
+                    # Füge verarbeitete News zu Headlines hinzu (mit Sentiment vor-analysiert)
+                    for item in processed_news[-20:]:  # Letzte 20 Items
+                        headlines.append({
+                            "source": f"ingestion_{item.get('source', 'unknown')}",
+                            "title": item.get("title", ""),
+                            "categories": ["NewsIngestion"],
+                            "language": "EN",
+                            "pre_analyzed_sentiment": item.get("sentiment_score", 0.0),
+                            "pre_analyzed_label": item.get("sentiment", "neutral")
+                        })
+                else:
+                    await self._report_health("News_Ingestion", "degraded", 0.0)
+                    self.logger.debug("News Ingestion: Keine verarbeiteten Items gefunden")
+            except Exception as e:
+                await self._report_health("News_Ingestion", "offline", 0.0)
+                self.logger.error(f"News Ingestion Integration Fehler: {e}")
+
+            # ── 3. RSS Feeds (Fallback + Ergänzung) ──────────────
             self.state.sub_state = "fetching news (rss)"
             rss_feeds = [
                 ("coindesk",      "https://www.coindesk.com/arc/outboundfeeds/rss/"),
@@ -183,7 +208,7 @@ class SentimentAgent(PollingAgent):
                 except Exception as e:
                     self.logger.debug(f"RSS {source} Fehler: {e}")
 
-            # ── 3. Keine Headlines verfügbar ─────────────────────
+            # ── 4. Keine Headlines verfügbar ─────────────────────
             if not headlines:
                 self.logger.warning(
                     "Keine Headlines — Sentiment auf 0.0 (neutral) gesetzt"
@@ -205,7 +230,7 @@ class SentimentAgent(PollingAgent):
                 )
                 return
 
-            # ── 4. NLP-Analyse ────────────────────────────────────
+            # ── 5. NLP-Analyse ────────────────────────────────────
             sentiment_scores = []
             total_headlines = len(headlines[:20])
             for i, item in enumerate(headlines[:20]):   # Max 20 analysieren
@@ -213,17 +238,29 @@ class SentimentAgent(PollingAgent):
                 headline = item["title"]
                 categories = [c.lower() for c in (item.get("categories") or [])]
                 self.state.sub_state = f"analyzing news ({i+1}/{total_headlines})"
-                # Makro-/Regulierungsquellen → FinBERT
-                # Krypto-spezifische Quellen → CryptoBERT
-                mode = "macro" if source == "coindesk" or any(cat in {"regulation", "exchange"} for cat in categories) else "crypto"
-                try:
-                    result = await self.analyzer.analyze_with_filter(
-                        headline, mode=mode
-                    )
-                    if result:
-                        sentiment_scores.append(result)
-                except Exception as e:
-                    self.logger.debug(f"NLP Fehler: {e}")
+                
+                # Prüfe ob vor-analysierte Daten vorliegen (News Ingestion)
+                if "pre_analyzed_sentiment" in item:
+                    # Nutze vor-analysierte Sentiment-Daten
+                    sentiment_scores.append({
+                        "score": item["pre_analyzed_sentiment"],
+                        "confidence": 0.8,  # Hohe Konfidenz bei vor-analysierten Daten
+                        "classification": item.get("pre_analyzed_label", "neutral"),
+                        "source": source
+                    })
+                    self.logger.debug(f"Vor-analysiert: {headline[:30]}... -> {item['pre_analyzed_sentiment']:.3f}")
+                else:
+                    # Makro-/Regulierungsquellen → FinBERT
+                    # Krypto-spezifische Quellen → CryptoBERT
+                    mode = "macro" if source == "coindesk" or any(cat in {"regulation", "exchange"} for cat in categories) else "crypto"
+                    try:
+                        result = await self.analyzer.analyze_with_filter(
+                            headline, mode=mode
+                        )
+                        if result:
+                            sentiment_scores.append(result)
+                    except Exception as e:
+                        self.logger.debug(f"NLP Fehler: {e}")
 
             if not sentiment_scores:
                 self.state.sub_state = "error (no sentiment scores)"

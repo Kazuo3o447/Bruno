@@ -1116,9 +1116,14 @@ class ContextAgent(StreamingAgent):
 
             # NEU: HuggingFace Verfügbarkeit prüfen - Sentiment-Einfluss auf 0 wenn nicht verfügbar
             sentiment_avg_score = float(sentiment_data.get("average_score", 0))
-            if not nlp_analyzer.hf_available:
+            try:
+                from app.services.sentiment_analyzer import analyzer as nlp_analyzer
+                if not nlp_analyzer.hf_available:
+                    sentiment_avg_score = 0.0
+                    self.logger.warning("HuggingFace nicht verfügbar - Sentiment-Score-Einfluss auf 0 gesetzt")
+            except ImportError:
                 sentiment_avg_score = 0.0
-                self.logger.warning("HuggingFace nicht verfügbar - Sentiment-Score-Einfluss auf 0 gesetzt")
+                self.logger.warning("Sentiment Analyzer nicht verfügbar - Sentiment-Score-Einfluss auf 0 gesetzt")
 
             funding_rate = float(funding_data.get("rate", self.perp_basis_pct / 100.0))
             retail_score = float(retail_data.get("retail_score", self._retail_score))
@@ -1172,7 +1177,7 @@ class ContextAgent(StreamingAgent):
                 "yields_10y": self.yields_10y,
                 "m2_yoy_pct": self.m2_yoy_pct,
                 "onchain": self.onchain_data,
-                "taker_buy_sell_ratio": analytics.get("taker_buy_sell_ratio", 1.0),
+                "taker_buy_sell_ratio": 1.0,  # BinanceAnalyticsService entfernt - Default Wert
                 "current_price": price,
                 "max_pain": max_pain,
                 "max_pain_distance_pct": max_pain_distance_pct,

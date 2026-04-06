@@ -1,32 +1,36 @@
-# Bruno v2.2 Trading Logic
+# Bruno v8.0 Trading Logic (Privacy-First News & Bybit Data Core)
 
 ## 1. Purpose
 
-Bruno v2.2 is a **retail-ready** deterministic trading system with institutional-grade mathematical precision. The system features:
+Bruno v8.0 is a **privacy-first institutional** deterministic trading system with zero tolerance for heuristics. The system features:
 
-1. **Echtes CVD** - aggTrade Delta mit 1-Sekunden-Buckets für echte Volume-Delta-Analyse
-2. **GRSS v3** - 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro)
-3. **Adaptive Thresholds** - ATR-basiert mit Event Calendar Guardrails
-4. **MTF-Filter** - Regime-abhängige Filter für bessere Signalqualität im Ranging
-5. **DeepSeek Post-Trade Analyse** - Automatische Trade-Evaluation für Phantom Trades
-6. **Complete API Integration** - HuggingFace Sentiment, CryptoPanic News, Alpha Vantage Macro (2026-04-06)
+1. **Privacy-First News Ingestion** - Multi-Source News (CryptoPanic, RSS, Free-Crypto-News) mit SHA256 Deduplizierung
+2. **Bybit V5 Single Source of Truth** - Exklusive WebSocket-Daten mit präziser CVD Taker-Mathematik
+3. **Mathematical Purity** - VWAP/VPOC tägliche Resets, Trade-Deduplizierung, keine Heuristiken
+4. **GRSS v3** - 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro) ohne Binance-Abhängigkeit
+5. **Adaptive Thresholds** - ATR-basiert mit Event Calendar Guardrails
+6. **MTF-Filter** - Regime-abhängige Filter für bessere Signalqualität im Ranging
+7. **DeepSeek Post-Trade Analyse** - Automatische Trade-Evaluation für Paper Trades
+8. **Complete Binance Purge** - Alle REST API Calls entfernt, Bybit V5 als exklusive Quelle
 
-The LLM is **legacy-only** and has been removed from live trading. Only the **Deepseek Reasoning API** is used exclusively for post-trade debriefing and learning analysis.
+The system maintains **100% deterministic live trading** with **zero heuristics** policy while integrating privacy-first news aggregation for enhanced market context.
 
-## 2. Data Flow Overview
+## 2. Data Flow Overview (v8.0 Privacy-First Architecture)
 
 ```text
-Binance API (REST + WebSocket) → MarketDataCollector → Redis
+Bybit V5 WebSocket → BybitV5Client → Redis (CVD, VWAP, VPOC)
     ↓
-TechnicalAnalysisAgent → bruno:ta:snapshot (echtes CVD)
+News Sources (CryptoPanic, RSS, Free-Crypto-News) → NewsIngestionService → SentimentAnalyzer
     ↓
-ContextAgent → bruno:context:grss (GRSS v3)
+TechnicalAnalysisAgent → bruno:ta:snapshot (präzise CVD)
+    ↓
+ContextAgent → bruno:context:grss (GRSS v3, Binance-frei)
     ↓
 SentimentAgent → HuggingFace Models (Zero-Shot Classification)
     ↓
 LiquidityEngine → bruno:liq:intelligence
     ↓
-QuantAgentV4 → bruno:quant:micro + bruno:decisions:feed
+QuantAgentV4 → bruno:quant:micro + bruno:decisions:feed (News-integriert)
     ↓
 CompositeScorer → trade decision (adaptive thresholds)
     ↓
@@ -35,18 +39,65 @@ RiskAgent → veto state (event calendar)
 ExecutionAgentV4 → order / position management (paper trading)
 ```
 
-### 2.1 Binance API Integration (v2.1)
+### 2.1 Bybit V5 WebSocket Integration (v8.0 Single Source of Truth)
 
-**MarketDataCollector** holt automatisch alle 30 Sekunden:
-- **Ticker**: Aktueller Preis und 24h Statistiken
-- **Klines**: 1-Minuten Candlesticks für Technical Analysis
-- **Orderbook**: Bids/Asks mit Imbalance Ratio für OFI
-- **Funding Rate**: Futures Funding für Sentiment
-- **Open Interest**: Markttiefe und Liquidität
-- **Liquidations**: Liquidation Orders für Risk Management
-- **aggTrades**: Echte Trade-Daten für CVD-Berechnung
+**Exklusive Datenquelle mit mathematischer Präzision:**
 
-**Primary Data Source:** Binance REST API (stabile Primärquelle, Bybit deaktiviert 2026-04-06)
+```python
+# CVD Taker-Mathematik (ABSOLUTE PRÄZISION)
+for trade in message["data"]:
+    exec_id = trade["i"]  # Execution ID für Deduplizierung
+    vol = float(trade["v"])
+    side = trade["S"]  # "Buy" oder "Sell"
+    
+    # Deduplizierung zwingend erforderlich
+    if exec_id not in self._processed_trades:
+        if side == "Buy":
+            self.current_1m_taker_buy += vol
+        elif side == "Sell":
+            self.current_1m_taker_sell += vol
+
+# CVD-Berechnung: Delta = current_1m_taker_buy - current_1m_taker_sell
+```
+
+**VWAP/VPOC mit institutionellen Resets:**
+- **VWAP Reset**: Exakt um 00:00:00 UTC 
+- **VPOC Reset**: Exakt um 00:00:00 UTC mit 10-Dollar Preis-Buckets
+- **Trade Deduplizierung**: Rolling deque (maxlen=10000) via execution IDs
+
+### 2.2 News Ingestion Service (v8.0 Privacy-First)
+
+**Multi-Source mit SHA256 Deduplizierung:**
+
+```python
+# SHA256 Hash für Deduplizierung
+hash_input = title.lower().strip()
+if timestamp:
+    hash_input += f"_{timestamp}"
+news_hash = hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
+
+# BTC-Filter (case-insensitive)
+if "btc" not in combined_text.lower() and "bitcoin" not in combined_text.lower():
+    return None  # Rauschunterdrückung
+```
+
+**Quellen-Abdeckung (Aktueller Status):**
+- **RSS Feeds** (30s Polling) - CoinDesk, Cointelegraph, Decrypt ✅ **AKTIV (49 Items)**
+- **Reddit JSON** (120s Fallback) - r/Bitcoin Hot Posts ✅ **AKTIV (14 Items)**
+- **CoinMarketCap** (60s Polling) - BTC Marktdaten ⚠️ **INAKTIV (API Key fehlt)**
+- **CryptoCompare** (120s Fallback) - Free Tier News ❌ **INAKTIV (0 Items)**
+- **NewsAPI** (120s Fallback) - Demo Key ungültig ❌ **INAKTIV (401 Error)**
+- **Total News Coverage** ✅ **63 Items (Maximum mit Free Quellen)**
+
+**Bybit V5 WebSocket (Aktueller Status):**
+- **Bybit V5** als Single Source of Truth ✅ **AKTIV (Simuliert)**
+- **CVD Taker-Mathematik** mit execution ID Deduplizierung ✅ **IMPLEMENTIERT**
+- **VWAP/VPOC Resets** um 00:00:00 UTC ✅ **IMPLEMENTIERT**
+- **Trade Deduplizierung** via rolling deque ✅ **IMPLEMENTIERT**
+
+**Hinweis:** Die Bybit V5 WebSocket Verbindung ist aktuell simuliert aufgrund von pybit API Kompatibilitätsproblemen. Die Architektur ist jedoch vollständig implementiert und bereit für echte WebSocket-Daten.
+
+**Current Data Source Architecture (v8.0):**
 
 **Redis Storage Pattern:**
 ```bash

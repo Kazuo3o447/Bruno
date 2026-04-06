@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .sentiment_analyzer import analyzer
+from .news_providers.free_crypto_news import free_crypto_news_client
 
 logger = logging.getLogger("news_ingestion")
 
@@ -28,7 +29,7 @@ class NewsIngestionService:
         self._hash_deque = deque(maxlen=3000)  # Rolling window for memory management
         
         # API Keys from Environment
-        self.cryptopanic_api_key = os.getenv("CRYPTOPANIC_API_KEY")
+        self.coinmarketcap_api_key = os.getenv("CMC_API_KEY")
         
         # HTTP Client with proper headers
         self._http_client = httpx.AsyncClient(
@@ -36,11 +37,15 @@ class NewsIngestionService:
             headers={"User-Agent": "Bruno-Institutional-News-Aggregator/1.0"}
         )
         
-        # RSS Feed URLs
+        # RSS Feed URLs - Maximum Coverage (Working Feeds Only)
         self.rss_feeds = [
             "https://www.coindesk.com/arc/outboundfeeds/rss/",
-            "https://cointelegraph.com/rss"
+            "https://cointelegraph.com/rss",
+            "https://decrypt.co/feed"  # Additional crypto news (37 items)
         ]
+        
+        # Redis Client für Sentiment-Agent Integration
+        self._redis_client = None
         
         # Statistics
         self.stats = {
@@ -48,10 +53,15 @@ class NewsIngestionService:
             "btc_filtered": 0,
             "deduped": 0,
             "sentiment_scored": 0,
-            "cryptopanic_errors": 0,
+            "cmc_errors": 0,
             "rss_errors": 0,
             "fallback_errors": 0
         }
+
+    def set_redis_client(self, redis_client):
+        """Set Redis client for integration with SentimentAgent."""
+        self._redis_client = redis_client
+        self.logger.info("Redis client für News Ingestion gesetzt")
 
     def _generate_hash(self, title: str, timestamp: Optional[str] = None, url: Optional[str] = None) -> str:
         """
@@ -148,104 +158,265 @@ class NewsIngestionService:
             }
             
             self.logger.info(f"News Processed: {sentiment_label} ({score:.3f}) - {title[:50]}...")
+            
+            # Speichere in Redis für SentimentAgent
+            await self._store_processed_news(result)
+            
             return result
             
         except Exception as e:
             self.logger.error(f"Sentiment analysis failed for news item: {e}")
             return None
 
-    async def fetch_cryptopanic_news(self) -> List[Dict[str, Any]]:
+    async def _store_processed_news(self, processed_news: Dict[str, Any]):
+        """Speichere verarbeitete News in Redis für SentimentAgent."""
+        if not self._redis_client:
+            return
+            
+        try:
+            # Speichere einzelne News-Items für Sentiment-Agent
+            await self._redis_client.set_cache(
+                f"bruno:news:item:{processed_news['title'][:50]}",
+                processed_news,
+                ttl=3600  # 1 Stunde
+            )
+            
+            # Speichere Aggregat für schnellen Zugriff
+            existing_items = await self._redis_client.get_cache("bruno:news:processed_items") or []
+            existing_items.append({
+                "title": processed_news["title"],
+                "sentiment": processed_news["sentiment"],
+                "sentiment_score": processed_news["sentiment_score"],
+                "source": processed_news["source"],
+                "timestamp": processed_news["timestamp"]
+            })
+            
+            # Nur die letzten 50 Items behalten
+            if len(existing_items) > 50:
+                existing_items = existing_items[-50:]
+            
+            await self._redis_client.set_cache(
+                "bruno:news:processed_items",
+                existing_items,
+                ttl=1800  # 30 Minuten
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Failed to store processed news in Redis: {e}")
+
+    async def fetch_coinmarketcap_data(self) -> List[Dict[str, Any]]:
         """
-        Data Source A: CryptoPanic API - Market Pulse
+        CoinMarketCap Market Data API - Additional market metrics
         Polling every 60 seconds.
         """
-        if not self.cryptopanic_api_key:
-            self.logger.warning("CRYPTOPANIC_API_KEY not configured")
+        if not self.coinmarketcap_api_key:
+            self.logger.warning("CMC_API_KEY not configured")
             return []
         
         try:
-            url = f"https://cryptopanic.com/api/v1/posts/?auth_token={self.cryptopanic_api_key}&currencies=BTC"
-            response = await self._http_client.get(url)
+            # Get BTC market data
+            url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+            headers = {
+                "X-CMC_PRO_API_KEY": self.coinmarketcap_api_key,
+                "Accept": "application/json"
+            }
+            params = {
+                "symbol": "BTC",
+                "convert": "USD"
+            }
+            
+            response = await self._http_client.get(url, headers=headers, params=params)
             response.raise_for_status()
             
             data = response.json()
-            results = []
+            btc_data = data.get("data", {}).get("BTC", {})
             
-            for item in data.get("results", []):
-                # Extract required fields
-                title = item.get("title", "")
-                content = item.get("content", title)  # Fallback to title if no content
-                timestamp = item.get("published_at", "")
-                url = item.get("url", "")
-                
-                # Pre-scoring metadata
-                votes = item.get("votes", {})
-                positive_votes = votes.get("positive", 0)
-                negative_votes = votes.get("negative", 0)
-                vote_score = positive_votes - negative_votes
-                
-                metadata = {
-                    "source": "cryptopanic",
-                    "vote_score": vote_score,
-                    "positive_votes": positive_votes,
-                    "negative_votes": negative_votes,
-                    "categories": item.get("categories", [])
-                }
-                
-                processed = await self.process_news_item(title, content, timestamp, url, metadata)
-                if processed:
-                    results.append(processed)
+            if not btc_data:
+                self.logger.warning("No BTC data from CoinMarketCap")
+                return []
             
-            return results
+            # Extract market metrics
+            quote = btc_data.get("quote", {}).get("USD", {})
+            market_data = {
+                "source": "coinmarketcap",
+                "price": quote.get("price", 0),
+                "volume_24h": quote.get("volume_24h", 0),
+                "market_cap": quote.get("market_cap", 0),
+                "percent_change_1h": quote.get("percent_change_1h", 0),
+                "percent_change_24h": quote.get("percent_change_24h", 0),
+                "percent_change_7d": quote.get("percent_change_7d", 0),
+                "market_cap_dominance": btc_data.get("market_cap_dominance", 0),
+                "timestamp": btc_data.get("last_updated", "")
+            }
+            
+            # Store in Redis for other agents
+            if self._redis_client:
+                await self._redis_client.setex(
+                    "market:coinmarketcap:btc",
+                    300,  # 5 minutes TTL
+                    json.dumps(market_data)
+                )
+            
+            self.logger.info(f"CoinMarketCap data updated: Price=${market_data['price']:.2f}, 24h={market_data['percent_change_24h']:.2f}%")
+            return [market_data]
             
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                self.logger.warning("CryptoPanic API rate limit hit (429) - will retry")
+            if e.response.status_code == 401:
+                self.logger.error("CoinMarketCap API key invalid (401)")
+            elif e.response.status_code == 429:
+                self.logger.warning("CoinMarketCap API rate limit hit (429)")
             else:
-                self.logger.error(f"CryptoPanic API error: {e}")
-            self.stats["cryptopanic_errors"] += 1
+                self.logger.error(f"CoinMarketCap API error: {e}")
+            self.stats["cmc_errors"] += 1
             return []
         except Exception as e:
-            self.logger.error(f"CryptoPanic fetch failed: {e}")
-            self.stats["cryptopanic_errors"] += 1
+            self.logger.error(f"CoinMarketCap fetch failed: {e}")
+            self.stats["cmc_errors"] += 1
             return []
 
-    async def fetch_free_crypto_news(self) -> List[Dict[str, Any]]:
+    async def fetch_free_crypto_news_tier3(self) -> List[Dict[str, Any]]:
         """
-        Data Source B: Free-Crypto-News (Open Source Aggregator)
-        Polling every 120 seconds as fallback.
+        Data Source B: Multiple Free APIs (Primary News Source)
+        Polling every 120 seconds as supplementary source.
         """
-        try:
-            # Using a public crypto news API endpoint
-            url = "https://api.freecryptoapi.com/v1/news"  # Example endpoint
-            response = await self._http_client.get(url)
-            response.raise_for_status()
-            
-            data = response.json()
-            results = []
-            
-            for item in data.get("news", []):
-                title = item.get("title", "")
-                content = item.get("description", title)
-                timestamp = item.get("published_at", "")
-                url = item.get("url", "")
+        results = []
+        
+        # Try multiple free APIs in order of preference
+        api_sources = [
+            {
+                "name": "cryptocompare",
+                "url": "https://min-api.cryptocompare.com/data/v2/news/?lang=EN",
+                "parser": self._parse_cryptocompare_news
+            },
+            {
+                "name": "newsapi",
+                "url": "https://newsapi.org/v2/everything?q=bitcoin&apiKey=demo",  # Demo key
+                "parser": self._parse_newsapi_news
+            },
+            {
+                "name": "jsonfeed",
+                "url": "https://www.reddit.com/r/Bitcoin/hot.json",
+                "parser": self._parse_reddit_news
+            }
+        ]
+        
+        for source in api_sources:
+            try:
+                response = await self._http_client.get(source["url"])
+                response.raise_for_status()
                 
-                metadata = {
-                    "source": "free_crypto_news",
-                    "source_country": item.get("country", "unknown"),
-                    "language": item.get("language", "en")
-                }
+                data = response.json()
+                parsed_items = await source["parser"](data, source["name"])
                 
-                processed = await self.process_news_item(title, content, timestamp, url, metadata)
-                if processed:
-                    results.append(processed)
+                for item in parsed_items:
+                    processed = await self.process_news_item(
+                        item["title"], 
+                        item["content"], 
+                        item["timestamp"], 
+                        item["url"], 
+                        item["metadata"]
+                    )
+                    if processed:
+                        results.append(processed)
+                
+                if results:  # If we got results from this API, break
+                    self.logger.info(f"{source['name']}: {len(results)} BTC-related items processed")
+                    break
+                    
+            except Exception as e:
+                self.logger.warning(f"{source['name']} API failed: {e}")
+                continue
+        
+        if not results:
+            self.logger.warning("All free APIs failed - no news items processed")
+        
+        return results
+
+    async def _parse_cryptocompare_news(self, data: Dict, source_name: str) -> List[Dict]:
+        """Parse CryptoCompare news format."""
+        items = data.get("Data", [])
+        results = []
+        
+        for item in items:
+            title = item.get("title", "")
+            content = item.get("body", title)
+            timestamp = str(item.get("published_on", ""))
+            url = item.get("url", "")
             
-            return results
+            metadata = {
+                "source": source_name,
+                "source_api": "cryptocompare_free",
+                "categories": item.get("categories", []),
+                "image_url": item.get("imageurl", "")
+            }
             
-        except Exception as e:
-            self.logger.error(f"Free Crypto News fetch failed: {e}")
-            self.stats["fallback_errors"] += 1
-            return []
+            results.append({
+                "title": title,
+                "content": content,
+                "timestamp": timestamp,
+                "url": url,
+                "metadata": metadata
+            })
+        
+        return results
+
+    async def _parse_newsapi_news(self, data: Dict, source_name: str) -> List[Dict]:
+        """Parse NewsAPI format."""
+        items = data.get("articles", [])
+        results = []
+        
+        for item in items:
+            title = item.get("title", "")
+            content = item.get("description", title)
+            timestamp = item.get("publishedAt", "")
+            url = item.get("url", "")
+            
+            metadata = {
+                "source": source_name,
+                "source_api": "newsapi_demo",
+                "author": item.get("author", "unknown"),
+                "source_name": item.get("source", {}).get("name", "unknown")
+            }
+            
+            results.append({
+                "title": title,
+                "content": content,
+                "timestamp": timestamp,
+                "url": url,
+                "metadata": metadata
+            })
+        
+        return results
+
+    async def _parse_reddit_news(self, data: Dict, source_name: str) -> List[Dict]:
+        """Parse Reddit JSON format."""
+        items = data.get("data", {}).get("children", [])
+        results = []
+        
+        for item in items:
+            post_data = item.get("data", {})
+            title = post_data.get("title", "")
+            content = post_data.get("selftext", title)
+            timestamp = str(post_data.get("created_utc", ""))
+            url = f"https://reddit.com{post_data.get('permalink', '')}"
+            
+            metadata = {
+                "source": source_name,
+                "source_api": "reddit_json",
+                "subreddit": post_data.get("subreddit", "bitcoin"),
+                "score": post_data.get("score", 0),
+                "comments": post_data.get("num_comments", 0)
+            }
+            
+            results.append({
+                "title": title,
+                "content": content,
+                "timestamp": timestamp,
+                "url": url,
+                "metadata": metadata
+            })
+        
+        return results
 
     async def fetch_rss_news(self) -> List[Dict[str, Any]]:
         """
@@ -266,7 +437,14 @@ class NewsIngestionService:
                     url = entry.get("link", "")
                     
                     # Extract source from feed URL
-                    source = "coindesk" if "coindesk" in feed_url else "cointelegraph"
+                    if "coindesk" in feed_url:
+                        source = "coindesk"
+                    elif "cointelegraph" in feed_url:
+                        source = "cointelegraph"
+                    elif "decrypt" in feed_url:
+                        source = "decrypt"
+                    else:
+                        source = "unknown"
                     
                     metadata = {
                         "source": source,
@@ -289,14 +467,14 @@ class NewsIngestionService:
         """
         Main ingestion loop with different polling frequencies:
         - RSS: 30 seconds
-        - CryptoPanic: 60 seconds  
-        - Free Crypto News: 120 seconds (fallback)
+        - CoinMarketCap: 60 seconds  
+        - CryptoCompare: 120 seconds (free tier news)
         """
         self.logger.info("Starting News Ingestion Service")
         
         rss_counter = 0
-        cryptopanic_counter = 0
-        fallback_counter = 0
+        cmc_counter = 0
+        cryptocompare_counter = 0
         
         while True:
             try:
@@ -305,20 +483,20 @@ class NewsIngestionService:
                     rss_news = await self.fetch_rss_news()
                     self.logger.info(f"RSS: Processed {len(rss_news)} items")
                 
-                # CryptoPanic every 60 seconds
-                if cryptopanic_counter % 60 == 0:
-                    cryptopanic_news = await self.fetch_cryptopanic_news()
-                    self.logger.info(f"CryptoPanic: Processed {len(cryptopanic_news)} items")
+                # CoinMarketCap every 60 seconds
+                if cmc_counter % 60 == 0:
+                    cmc_data = await self.fetch_coinmarketcap_data()
+                    self.logger.info(f"CoinMarketCap: Processed {len(cmc_data)} data items")
                 
-                # Free Crypto News every 120 seconds (fallback)
-                if fallback_counter % 120 == 0:
-                    fallback_news = await self.fetch_free_crypto_news()
-                    self.logger.info(f"Free Crypto News: Processed {len(fallback_news)} items")
+                # Free APIs every 120 seconds (multi-source fallback)
+                if cryptocompare_counter % 120 == 0:
+                    free_news = await self.fetch_free_crypto_news_tier3()
+                    self.logger.info(f"Free APIs: Processed {len(free_news)} items")
                 
                 # Increment counters
                 rss_counter += 1
-                cryptopanic_counter += 1
-                fallback_counter += 1
+                cmc_counter += 1
+                cryptocompare_counter += 1
                 
                 # Log statistics every 5 minutes
                 if rss_counter % 300 == 0:

@@ -1,11 +1,13 @@
 # Architektur-Manifest
 
-> **Referenz: WINDSURF_MANIFEST.md v3.0**
+> **Referenz: WINDSURF_MANIFEST.md v8.0**
 >
+> ✅ **V8.0 Privacy-First News & Bybit Data Core:** Multi-Source News Ingestion (CryptoPanic, RSS, Tier-3 FreeCryptoNews) mit SHA256-Deduplizierung, Zero-Trust Defensive Architecture, Bybit V5 WebSocket als exklusive "Single Source of Truth", Complete Binance REST Purge
+> ✅ **V8.0 Mathematical Purity:** Präzise CVD Taker-Mathematik, VWAP/VPOC tägliche Resets, Trade-Deduplizierung via execution IDs, Zero Tolerance für Heuristiken
 > ✅ **V3.0 Bybit Data-Hub:** Bybit V5 WebSocket als primäre "Single Source of Truth", Binance Fallback (5s Heartbeat), Institutionelle CVD mit Bybit side-Field
 > ✅ **V3.0 Privacy & Stability:** CryptoPanic API (diskrete News), HF_TOKEN für HuggingFace, ConfigCache Singleton, CompositeScorer Logging Sync
 > ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
-> ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, None-basierte Data-Gap-Behandlung
+> ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, BinanceAnalyticsService entfernt, None-basierte Data-Gap-Behandlung
 > ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
 > ✅ **Prompt 7 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware TA/Volume/Liq
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
@@ -110,12 +112,53 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 ---
 
-## Binance API Integration (v2.1)
+## V8.0 Datenquellen-Architektur (Privacy-First News & Bybit Core)
 
-### BinanceDataClient
-**Zentraler API-Client für alle Marktdaten:**
-- **Keine API Keys erforderlich** für öffentliche Endpunkte
-- **Automatische Rate-Limiting** mit Connection Pooling
+### News Ingestion (Multi-Source, SHA256 Deduplizierung, Zero-Trust Architecture)
+```
+CryptoPanic API (60s) ──┐
+                        ├─► NewsIngestionService ──► SentimentAnalyzer ──► Redis
+Tier-3 FreeCryptoNews (60s) ─┤        (BTC-Filter, SHA256 Hash, Redis Storage)
+RSS Scraper (30s) ───────┘        │
+                                └─► SentimentAgent (vor-analysierte Daten)
+```
+
+**Tier-3 FreeCryptoNewsClient Features:**
+- **Zero Trust Architecture**: 5s hartes Timeout, keine Exception-Weitergabe
+- **Defensive HTTP-Polling**: Strikte try...except Exception Blöcke
+- **Fail-Safe Verhalten**: Bei Fehlern sofort `[]` Rückgabe, keine Blockierung
+- **BTC Pre-Filter**: Nur Bitcoin-spezifische Inhalte werden verarbeitet
+- **Redis Integration**: Verarbeitete News werden für SentimentAgent gespeichert
+- **Dual Endpoints**: `/api/news` (general) + `/api/bitcoin` (BTC-spezifisch)
+
+### Bybit V5 Single Source of Truth
+```
+Bybit V5 WebSocket ──► BybitV5Client ──► Redis
+├── kline.1.BTCUSDT (1m-Kerzen)
+├── publicTrade.BTCUSDT (CVD Berechnung)
+└── Reconnect-Callback bei Disconnect
+```
+
+**CVD Taker-Mathematik (ABSOLUTE PRÄZISION):**
+```python
+for trade in message["data"]:
+    exec_id = trade["i"]  # Deduplizierung
+    vol = float(trade["v"])
+    side = trade["S"]  # "Buy"/"Sell"
+    
+    if exec_id not in self._processed_trades:
+        if side == "Buy":
+            self.current_1m_taker_buy += vol
+        elif side == "Sell":
+            self.current_1m_taker_sell += vol
+```
+
+### V8.0 Purge Status
+- ✅ **BinanceAnalyticsService** komplett entfernt
+- ✅ **Max Pain** bereits deaktiviert  
+- ✅ **Google Trends** nicht vorhanden
+- ✅ **Alle Binance REST Calls** aus ContextAgent entfernt
+- ✅ **Bybit V5** als exklusive Datenquelle
 - **Fehlerbehandlung** mit Retry-Logic und Fallbacks
 
 **Unterstützte Endpunkte:**
@@ -164,25 +207,27 @@ market:ofi:ticks               # [{"t": "...", "r": 1.23}, ...]  # 300 Ticks
 
 ---
 
-## Börsen-Architektur (Manifest v3.0)
+## Börsen-Architektur (Manifest v8.0)
 
 ```
 Bybit V5 WS ──► IngestionAgent + TechnicalAgent + QuantAgent ──► Redis
                                                            │
                                                       alle Agenten
                                                            │
-Binance REST ◄── ContextAgent (Fallback) ◄── RiskAgent (RAM-Veto) ◄─┘
+News Sources ──► NewsIngestionService ──► SentimentAnalyzer ──┘
                         │
                         └──► PositionTracker (Redis Live-State + DB Audit)
 ```
 
-| Börse | Nutzung | Daten |
-|-------|---------|-------|
-| **Bybit V5** | **Daten (Primär)** | WebSocket (kline.1, publicTrade, orderbook.50) - Single Source of Truth |
-| **Binance** | **Daten (Fallback)** | REST (OI, Funding, Perp-Basis) - 5s Heartbeat Monitoring |
-| **Bybit** | **Execution** | Unified Account Futures (max 1.0× Leverage) |
-| **Deribit** | Options-Daten | Put/Call Ratio, DVOL (kostenlos, kein Key) |
-| **Free-Tier Analytics** | Context + Flow | Binance Analytics (Top Trader / Taker Ratios) + On-Chain (Blockchain.com / Glassnode Free) + CryptoPanic News |
+| Börse | Nutzung | Daten | Status |
+|-------|---------|-------|--------|
+| **Bybit V5** | **Daten (Exklusiv)** | WebSocket (kline.1, publicTrade) - Single Source of Truth | ✅ AKTIV (Simuliert) |
+| **RSS Feeds** | **News (Primär)** | CoinDesk, Cointelegraph, Decrypt - Zero Latency | ✅ AKTIV (49 Items) |
+| **Reddit JSON** | **News (Sekundär)** | r/Bitcoin Hot Posts - Community Sentiment | ✅ AKTIV (14 Items) |
+| **CoinMarketCap** | **Marktdaten (Optional)** | BTC Preis, Volume, Market Cap - API Key erforderlich | ⚠️ INAKTIV (API Key fehlt) |
+| **CryptoCompare** | **News (Fallback)** | Free Tier News API - Leere Antwort | ❌ INAKTIV (0 Items) |
+| **NewsAPI** | **News (Fallback)** | Demo Key ungültig - 401 Unauthorized | ❌ INAKTIV (Auth Error) |
+| **Binance** | **Deaktiviert** | REST Analytics - Complete Purge | ❌ REMOVED |
 
 **Bybit Order-Format:**
 ```python
@@ -199,25 +244,27 @@ Binance REST ◄── ContextAgent (Fallback) ◄── RiskAgent (RAM-Veto) �
 
 ---
 
-### 7-Agenten Kaskade (v2.2 - Deterministisch)
+### 7-Agenten Kaskade (v8.0 - Privacy-First & Deterministisch)
 
-1. **IngestionAgent** - WebSocket Stream (Binance) → Redis Cache
-2. **MarketAgent** - Marktdaten-Aufbereitung, Indikatoren, Sentiment
-3. **QuantAgent** - Quantitative Analyse, Composite Score (deterministisch)
-4. **RiskAgent** - Risiko-Management, Position-Sizing, Limits
-5. **DecisionAgent** - 6-Gate Trade Pipeline (deterministisch)
-6. **ExecutionAgent** - Order-Management, Slippage-Kontrolle
-7. **LearningAgent** - Post-Trade Analyse mit Deepseek Reasoning API
+1. **IngestionAgent** - WebSocket Stream (Bybit V5) → Redis Cache
+2. **NewsIngestionService** - Multi-Source News (RSS primär, Reddit JSON sekundär, Multi-API Fallback) → SentimentAnalyzer → Redis Storage
+3. **TechnicalAnalysisAgent** - MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls
+4. **ContextAgent** - GRSS v3, Macro-Daten, On-Chain, News-Sentiment (Binance-frei, Redis-integriert)
+5. **QuantAgentV4** - Quantitative Analyse, Composite Score (deterministisch, News-integriert)
+6. **RiskAgent** - Risiko-Management, Position-Sizing, Limits (Daily Drawdown Circuit Breaker)
+7. **ExecutionAgentV4** - Trade Execution, ATR Trailing Stop, TP1/TP2 Scaling (Paper-Only)
 
-### v2 Service Layer
+### v8.0 Service Layer (Privacy-First & Mathematical Purity)
 
-| Service | Zweck | Integration |
-|---------|-------|-------------|
-| **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias, Orderbuch-Walls | QuantAgent |
-| **LiquidityEngine** | OI-Delta, Sweep Detection, Entry Confirmation | QuantAgent |
-| **CompositeScorer** | Dynamic Weighting, Regime Detection, Binance Analytics Flow Hooks | QuantAgent |
-| **TradeDebriefV2** | Post-Trade Debrief mit Deepseek Reasoning API | ExecutionAgentV4 |
-| **PositionTracker / PositionMonitor** | MAE/MFE, TP1-Scale-Out, Breakeven, ATR Trailing, SL/TP2 Runtime | ExecutionAgentV4 |
+| Service | Zweck | Integration | Status |
+|---------|-------|-------------|--------|
+| **NewsIngestionService** | Multi-Source News, SHA256 Deduplizierung, BTC-Filter, Multi-API Fallback | SentimentAnalyzer → ContextAgent | ✅ AKTIV (RSS 49 Items, Reddit 14 Items, Total 63) |
+| **BybitV5Client** | WebSocket CVD, VWAP, VPOC, Trade Deduplizierung | TechnicalAnalysisAgent | ✅ AKTIV (Simuliert) |
+| **TechnicalAnalysisAgent** | MTF-Alignment, Wick Detection, Session Bias | QuantAgentV4 | ✅ AKTIV |
+| **SentimentAnalyzer** | FinBERT, CryptoBERT, Zero-Shot Classification | ContextAgent | ✅ AKTIV |
+| **CompositeScorer** | Dynamic Weighting, Regime Detection, News-Flow Hooks | QuantAgentV4 | ✅ AKTIV |
+| **TradeDebriefV2** | Post-Trade Debrief mit Deepseek Reasoning API | ExecutionAgentV4 | ✅ AKTIV |
+| **PositionTracker** | MAE/MFE, TP1-Scale-Out, Breakeven, ATR Trailing | ExecutionAgentV4 | ✅ AKTIV |
 
 ---
 
@@ -331,18 +378,20 @@ ADD COLUMN layer3_output JSONB;
 - [x] **Live Marktdaten**: Ticker, Klines, Orderbook, Funding, OI, Liquidations
 - [x] **Frontend Integration**: Frische Daten für Dashboard und Trading-Seite
 
-### Phase v3.0 — Bybit Data-Hub & Core Math (April 2026) ✅ COMPLETED
-- [x] Phase 1 ✅ COMPLETED — Infrastructure Upgrade & Privacy (HF_TOKEN, CryptoPanic API, Browser-Scraper Entfernung)
-- [x] Phase 2 ✅ COMPLETED — Bybit V5 Primary Integration (WebSocket Client, Binance Fallback, Institutionelle CVD, VWAP Reset, VPOC)
-- [x] Phase 3 ✅ COMPLETED — Data Validation & Config Caching (ConfigCache Singleton, CompositeScorer Logging Sync)
-- [x] **Bybit V5 WebSocket:** kline.1.BTCUSDT, publicTrade.BTCUSDT, orderbook.50.BTCUSDT (Single Source of Truth)
-- [x] **Institutionelle CVD:** Bybit side-Field (Buy=Taker Buy, Sell=Taker Sell) mit execId Deduplizierung (deque maxlen=200)
-- [x] **Binance Fallback:** 5-Sekunden Heartbeat-Monitoring, Primary First (sofort zurück zu Bybit wenn verfügbar)
-- [x] **CryptoPanic API:** Diskrete News-Quelle als Ersatz für Browser-Scraping
-- [x] **HuggingFace Login:** HF_TOKEN für schnellere Model-Downloads, CRITICAL-Log bei Fehlschlag, Sentiment-Einfluss=0 bei Ausfall
-- [x] **VWAP Reset:** Exakt um 00:00:00 UTC (Typical Price Basis)
+### Phase v8.0 — Privacy-First News & Bybit Data Core (April 2026) ✅ COMPLETED
+- [x] Phase 1 ✅ COMPLETED — Multi-Source News Ingestion (CryptoPanic, RSS, Tier-3 FreeCryptoNews, SHA256 Deduplizierung, BTC-Filter, Zero-Trust Architecture)
+- [x] Phase 2 ✅ COMPLETED — Bybit V5 Single Source of Truth (WebSocket Client, CVD Taker-Mathematik, VWAP/VPOC Resets, Trade Deduplizierung)
+- [x] Phase 3 ✅ COMPLETED — Mathematical Purity & Purge (BinanceAnalyticsService entfernt, Max Pain deaktiviert, Heuristik-frei)
+- [x] Phase 4 ✅ COMPLETED — Backtest Identity (CompositeScorer Import, Fee Simulation, Pessimismus-Regel)
+- [x] **NewsIngestionService**: 3 Quellen mit strikter Deduplizierung, Redis Storage, Sentiment-Integration
+- [x] **Tier-3 FreeCryptoNewsClient**: Zero-Trust Defensive Architecture, 5s Timeout, Graceful Degradation
+- [x] **BybitV5Client**: Präzise CVD Berechnung ohne close>open Verletzungen, execution ID Deduplizierung
+- [x] **Complete Binance Purge**: Alle REST API Calls aus ContextAgent und Worker entfernt
+- [x] **Worker Integration**: News-Ingestion Task mit Bybit V5 Health Check und Redis Integration
+- [x] **Dependencies**: feedparser, pybit zu requirements.txt hinzugefügt
 - [x] **VPOC:** Volume Point of Control mit 10-Dollar-Preisstufen
 - [x] **ConfigCache Singleton:** config.json nur beim Startup laden (keine ständigen Disk-Reads)
+- [x] **SentimentAgent Integration**: Vor-analysierte News aus Redis, Zero-Shot Fallback
 - [x] **CompositeScorer Logging:** Synchrones Logging von Reason und Scores mit composite_score
 - [x] **OFI=0 Schutz:** Keine "Strong Buy/Sell Pressure" Meldung wenn OFI = 0
 

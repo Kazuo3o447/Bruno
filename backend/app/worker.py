@@ -112,6 +112,7 @@ async def main():
     
     # News Ingestion Service
     from app.services.news_ingestion import news_ingestion_service
+    news_ingestion_service.set_redis_client(redis)
     logger.info("News Ingestion Service initialisiert")
 
     # 2. Dependency Injection

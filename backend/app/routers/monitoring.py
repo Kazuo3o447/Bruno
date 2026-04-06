@@ -796,3 +796,129 @@ async def get_performance_metrics():
             "status": "error",
             "error": str(e)
         }
+
+
+@router.get("/api/health/dashboard")
+async def get_api_health_dashboard():
+    """
+    API Health Dashboard - Umfassende Übersicht aller Datenquellen und Systemkomponenten.
+    
+    Zeigt den Status aller externen APIs, Datenquellen und internen Services an.
+    Enthält Latenz-Metriken, Fehlerraten und Verfügbarkeits-Statistiken.
+    
+    Aufruf: GET /api/v1/api/health/dashboard
+    """
+    try:
+        from app.core.redis_client import redis_client
+        
+        # Hole alle Health-Daten aus Redis
+        health_data = await redis_client.get_cache("bruno:health:sources") or {}
+        veto_data = await redis_client.get_cache("bruno:veto:state") or {}
+        grss_data = await redis_client.get_cache("bruno:context:grss") or {}
+        
+        # Definiere alle API-Quellen mit Kategorien
+        api_sources = {
+            "market_data": [
+                "Bybit_V5_WebSocket",
+                "Binance_REST", 
+                "Binance_Analytics",
+                "Deribit_Public"
+            ],
+            "macro_data": [
+                "Alpha_Vantage",
+                "FRED_API",
+                "yFinance_Macro"
+            ],
+            "crypto_data": [
+                "CryptoCompare_News",
+                "CryptoCompare_Market",
+                "CoinMarketCap_BTC",
+                "CoinMarketCap_Global"
+            ],
+            "onchain_data": [
+                "Blockchain_OnChain",
+                "Glassnode_OnChain"
+            ],
+            "sentiment_data": [
+                "HuggingFace_Models",
+                "CryptoPanic_News",
+                "Reddit_Sentiment",
+                "StockTwits_Sentiment"
+            ],
+            "internal_services": [
+                "TA_Engine",
+                "Liquidation_Cluster_SQL",
+                "QuantAgent_Micro",
+                "ContextAgent_GRSS",
+                "RiskAgent_Veto"
+            ]
+        }
+        
+        # Berechne Gesamt-Statistiken
+        total_apis = sum(len(sources) for sources in api_sources.values())
+        online_apis = 0
+        total_latency = 0.0
+        
+        health_status = {}
+        
+        # Erstelle detaillierten Status für jede API
+        for category, sources in api_sources.items():
+            health_status[category] = {}
+            
+            for source in sources:
+                source_data = health_data.get(source, {
+                    "status": "offline",
+                    "latency_ms": 0.0,
+                    "last_update": "",
+                    "error_rate": 0.0
+                })
+                
+                # Statistik-Zählung
+                if source_data.get("status") == "online":
+                    online_apis += 1
+                    total_latency += source_data.get("latency_ms", 0.0)
+                
+                health_status[category][source] = {
+                    "status": source_data.get("status", "offline"),
+                    "latency_ms": round(source_data.get("latency_ms", 0.0), 2),
+                    "last_update": source_data.get("last_update", ""),
+                    "error_rate": round(source_data.get("error_rate", 0.0), 2),
+                    "uptime": source_data.get("uptime", 0.0)
+                }
+        
+        # Berechne Gesamt-Metriken
+        availability_pct = (online_apis / total_apis * 100) if total_apis > 0 else 0
+        avg_latency = (total_latency / online_apis) if online_apis > 0 else 0
+        
+        # System-weite Health-Metriken
+        system_health = {
+            "veto_active": veto_data.get("Veto_Active", False),
+            "veto_reason": veto_data.get("Reason", ""),
+            "grss_score": grss_data.get("GRSS_Score"),
+            "data_freshness": grss_data.get("Data_Freshness_Active", False),
+            "news_silence_seconds": grss_data.get("News_Silence_Seconds", 0)
+        }
+        
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "overall_availability": round(availability_pct, 1),
+            "online_apis": online_apis,
+            "total_apis": total_apis,
+            "avg_latency_ms": round(avg_latency, 2),
+            "categories": health_status,
+            "system_health": system_health,
+            "status": "healthy" if availability_pct >= 80 else "degraded" if availability_pct >= 50 else "critical"
+        }
+        
+    except Exception as e:
+        return {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "overall_availability": 0.0,
+            "online_apis": 0,
+            "total_apis": 0,
+            "avg_latency_ms": 0.0,
+            "categories": {},
+            "system_health": {"veto_active": True, "veto_reason": "Health Dashboard Error"},
+            "status": "error",
+            "error": str(e)
+        }
