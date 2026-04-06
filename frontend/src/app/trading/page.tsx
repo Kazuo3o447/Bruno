@@ -230,6 +230,12 @@ function GateCascade({ pipeline }: { pipeline: TradePipelineStatus | null }) {
                 {gateData?.note && isBlocked && (
                   <span className="text-[9px] text-red-300/80 text-center leading-tight max-w-[88px]">{gateData.note}</span>
                 )}
+                {/* Spezifischer Veto-Reason für Risk Gate */}
+                {gate.key === "gate_3_risk_veto" && gateData?.reason && isBlocked && (
+                  <span className="text-[9px] text-red-400 font-bold text-center leading-tight max-w-[88px] mt-1 bg-red-950/50 px-1 py-0.5 rounded">
+                    {gateData.reason}
+                  </span>
+                )}
               </div>
               {i < GATES.length - 1 && (
                 <div className={`mt-4 flex-shrink-0 ${isGreyed || isBlocked ? "text-slate-700" : "text-emerald-800"}`}>

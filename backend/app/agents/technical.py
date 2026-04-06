@@ -817,11 +817,11 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "daily_ema_50": 0.0,
                 "daily_ema_200": 0.0,
                 "price_vs_ema200": "unknown",
-                "allow_longs": False,   # GEÄNDERT: Bei fehlenden Daten → KEINE Longs
-                "allow_shorts": False,  # GEÄNDERT: Bei fehlenden Daten → KEINE Shorts
+                "allow_longs": True,   # ALWAYS TRUE - trade based on available data
+                "allow_shorts": True,  # ALWAYS TRUE - trade based on available data
                 "golden_cross": False,
                 "death_cross": False,
-                "insufficient_data": True,  # NEU: Flag für Logging
+                "insufficient_data": True,  # Flag for Logging only
             }
         
         ema_50d = self._calc_ema(candles_1d, 50)
@@ -836,24 +836,18 @@ class TechnicalAnalysisAgent(PollingAgent):
         # Macro Trend Bestimmung
         if golden_cross and price_above_200:
             macro_trend = "macro_bull"
-            allow_longs = True
-            allow_shorts = False  # Shorts nur bei Breakdown
         elif death_cross and price_below_200:
             macro_trend = "macro_bear"
-            allow_longs = False   # KEINE Longs in Macro Bear!
-            allow_shorts = True
         elif golden_cross and price_below_200:
             macro_trend = "macro_transition_down"  # Golden Cross aber Preis fällt
-            allow_longs = True   # Noch erlaubt, aber mit Vorsicht
-            allow_shorts = True
         elif death_cross and price_above_200:
             macro_trend = "macro_transition_up"    # Death Cross aber Preis steigt
-            allow_longs = True
-            allow_shorts = True
         else:
             macro_trend = "macro_neutral"
-            allow_longs = True
-            allow_shorts = True
+        
+        # REMOVED: Hard allow_longs/allow_shorts blocks
+        # Macro risk is now ONLY priced into the TA-Score via penalty (50% reduction for macro_bear + long signals)
+        # This ensures deterministic trading where composite_score + threshold is the ONLY gate
         
         # Distanz zum EMA 200 Daily (für Score-Penalty)
         ema200_distance_pct = ((current_price - ema_200d) / ema_200d) * 100
@@ -864,8 +858,8 @@ class TechnicalAnalysisAgent(PollingAgent):
             "daily_ema_200": round(ema_200d, 2),
             "price_vs_ema200": "above" if price_above_200 else "below",
             "ema200_distance_pct": round(ema200_distance_pct, 2),
-            "allow_longs": allow_longs,
-            "allow_shorts": allow_shorts,
+            "allow_longs": True,   # ALWAYS TRUE - macro risk priced into score only
+            "allow_shorts": True,  # ALWAYS TRUE - macro risk priced into score only
             "golden_cross": golden_cross,
             "death_cross": death_cross,
         }

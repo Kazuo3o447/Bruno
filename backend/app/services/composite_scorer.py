@@ -301,26 +301,19 @@ class CompositeScorer:
         # Conviction wird berechnet aber darf nicht als separater Gate fungieren
         # Der CompositeScore + Threshold ist der einzige Gate
         
-        # SCHRITT 3: Regime Direction Filter (kann nur blockieren, nie freigeben)
-        if result.should_trade and result.direction == "long" and not regime_cfg.allow_longs:
-            result.should_trade = False
-            result.signals_active.append(f"BLOCKED: {regime} regime disallows longs")
-        elif result.should_trade and result.direction == "short" and not regime_cfg.allow_shorts:
-            result.should_trade = False
-            result.signals_active.append(f"BLOCKED: {regime} regime disallows shorts")
+        # SCHRITT 3: Regime Direction Filter (DEACTIVATED - Macro risk already priced in)
+        # Regime direction restrictions are redundant since macro risk is already reflected in macro_score
+        # The composite_score + threshold should be the only gate
+        # if result.should_trade and result.direction == "long" and not regime_cfg.allow_longs:
+        #     result.should_trade = False
+        #     result.signals_active.append(f"BLOCKED: {regime} regime disallows longs")
+        # elif result.should_trade and result.direction == "short" and not regime_cfg.allow_shorts:
+        #     result.should_trade = False
+        #     result.signals_active.append(f"BLOCKED: {regime} regime disallows shorts")
         
-        # SCHRITT 4: Macro Trend Diagnostics (kein Gate)
-        # Macro-Trend darf als Headwind sichtbar sein, aber Trades nicht hart blockieren.
-        # Die Macro-Wirkung kommt bereits über macro_score + Gewichte in den Composite Score.
-        if result.direction == "long" and not mt_allow_longs:
-            result.signals_active.append(
-                f"Macro headwind: no longs in {macro_trend.get('macro_trend')} "
-                f"(Price {macro_trend.get('ema200_distance_pct', 0):+.1f}% vs Daily EMA200)"
-            )
-        elif result.direction == "short" and not mt_allow_shorts:
-            result.signals_active.append(
-                f"Macro headwind: no shorts in {macro_trend.get('macro_trend')}"
-            )
+        # SCHRITT 4: Macro Trend Diagnostics (pure diagnostic, NO GATE)
+        # Macro risk is ONLY priced into the score via TA-Score penalty (50% reduction for macro_bear + long)
+        # No additional signal reasons needed - the score already reflects macro conditions
         
         # SCHRITT 5: Sizing Check (kann nur blockieren, nie freigeben)
         if result.should_trade and not sizing.get("sizing_valid", False):

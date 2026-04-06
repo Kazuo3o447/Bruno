@@ -27,6 +27,10 @@ class QuantAgentV4(PollingAgent):
         self._last_price: float = 0.0
         self._last_signal_time: float = 0.0  # NEU: Cooldown-Tracking
         
+        # Cooldown-Tracker für Sweep & Funding (BUG 6)
+        self._last_sweep_signal_time: float = 0.0
+        self._last_funding_signal_time: float = 0.0
+        
         # FIX: Strikter Timestamp-Guard für CVD Deduplizierung / Restart-Sicherheit
         self._last_processed_ts: int = 0
         self._score_lock = asyncio.Lock()
@@ -159,6 +163,11 @@ class QuantAgentV4(PollingAgent):
 
                 # 0. Health Check für Liquidation_Cluster_SQL
                 await self._check_liquidation_cluster_sql()
+                
+                # 0b. Portfolio für Sizing laden
+                portfolio = await self.deps.redis.get_cache("bruno:portfolio:state") or {}
+                capital_eur = portfolio.get("capital_eur", self.deps.config.SIMULATED_CAPITAL_EUR)
+                capital_usd = capital_eur * 1.08
 
                 # 1. Orderbook + VAMP + CVD (1m-Kline, restart-sicher)
                 ob = await self.exm.fetch_order_book_redundant(self.symbol, limit=20)
@@ -253,16 +262,43 @@ class QuantAgentV4(PollingAgent):
                     liq_result.get("liq_score", 0),
                 )
                 if sweep_signal:
-                    sweep_dict = {
-                        **signal.to_signal_dict(self.symbol),
-                        "strategy_slot": "sweep",
-                        "side": "buy" if sweep_signal["direction"] == "long" else "sell",
-                        "reason": sweep_signal["reason"],
-                    }
-                    await self.deps.redis.publish_message(
-                        "bruno:pubsub:signals", json.dumps(sweep_dict)
-                    )
-                    self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']}")
+                    # Sweep Cooldown (60s — Sweeps sind zeitkritisch)
+                    now = time.time()
+                    if now - self._last_sweep_signal_time >= 60:
+                        # Eigenes Sizing für Sweep-Slot
+                        from app.services.strategy_manager import STRATEGY_SLOTS
+                        sweep_slot = STRATEGY_SLOTS["sweep"]
+                        sweep_capital = capital_usd * sweep_slot.capital_allocation_pct
+                        # Vereinfachtes Sizing für Sweep (kein CompositeScorer nötig)
+                        sweep_sizing = {
+                            "position_size_btc": max(0.001, round(
+                                (sweep_capital * 1.08 * sweep_slot.risk_per_trade_pct) / 
+                                (best_bid_p * 0.01) / best_bid_p, 4
+                            )),
+                            "leverage_used": sweep_slot.max_leverage,
+                            "sizing_valid": True,
+                            "reject_reason": None,
+                            "position_size_usdt": 0,  # Wird nachberechnet
+                            "margin_required_usdt": 0,
+                            "risk_amount_eur": round(sweep_capital * sweep_slot.risk_per_trade_pct, 2),
+                            "fee_estimate_usdt": 0,
+                            "rr_after_fees": 2.0,  # Sweeps haben inherent gutes R:R
+                        }
+                        sweep_sizing["position_size_usdt"] = round(sweep_sizing["position_size_btc"] * best_bid_p, 2)
+                        sweep_sizing["margin_required_usdt"] = round(sweep_sizing["position_size_usdt"] / sweep_slot.max_leverage, 2)
+                        
+                        sweep_dict = {
+                            **signal.to_signal_dict(self.symbol),
+                            "strategy_slot": "sweep",
+                            "side": "buy" if sweep_signal["direction"] == "long" else "sell",
+                            "reason": sweep_signal["reason"],
+                            "sizing": sweep_sizing,  # ← EIGENES SIZING
+                        }
+                        await self.deps.redis.publish_message(
+                            "bruno:pubsub:signals", json.dumps(sweep_dict)
+                        )
+                        self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']}")
+                        self._last_sweep_signal_time = now
                 
                 # 6c. FUNDING-Slot: Eigenständig, basierend auf Funding Rate
                 macro_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
@@ -271,16 +307,43 @@ class QuantAgentV4(PollingAgent):
                 
                 funding_signal = strategy_mgr.evaluate_funding_signal(funding_rate, funding_div)
                 if funding_signal:
-                    funding_dict = {
-                        **signal.to_signal_dict(self.symbol),
-                        "strategy_slot": "funding",
-                        "side": "buy" if funding_signal["direction"] == "long" else "sell",
-                        "reason": funding_signal["reason"],
-                    }
-                    await self.deps.redis.publish_message(
-                        "bruno:pubsub:signals", json.dumps(funding_dict)
-                    )
-                    self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']}")
+                    # Funding Cooldown (1800s = 30min — Funding ändert sich langsam)
+                    now = time.time()
+                    if now - self._last_funding_signal_time >= 1800:
+                        # Eigenes Sizing für Funding-Slot
+                        from app.services.strategy_manager import STRATEGY_SLOTS
+                        funding_slot = STRATEGY_SLOTS["funding"]
+                        funding_capital = capital_usd * funding_slot.capital_allocation_pct
+                        # Vereinfachtes Sizing für Funding (kein CompositeScorer nötig)
+                        funding_sizing = {
+                            "position_size_btc": max(0.001, round(
+                                (funding_capital * 1.08 * funding_slot.risk_per_trade_pct) / 
+                                (best_bid_p * 0.01) / best_bid_p, 4
+                            )),
+                            "leverage_used": funding_slot.max_leverage,
+                            "sizing_valid": True,
+                            "reject_reason": None,
+                            "position_size_usdt": 0,  # Wird nachberechnet
+                            "margin_required_usdt": 0,
+                            "risk_amount_eur": round(funding_capital * funding_slot.risk_per_trade_pct, 2),
+                            "fee_estimate_usdt": 0,
+                            "rr_after_fees": 1.5,  # Funding Trades haben moderates R:R
+                        }
+                        funding_sizing["position_size_usdt"] = round(funding_sizing["position_size_btc"] * best_bid_p, 2)
+                        funding_sizing["margin_required_usdt"] = round(funding_sizing["position_size_usdt"] / funding_slot.max_leverage, 2)
+                        
+                        funding_dict = {
+                            **signal.to_signal_dict(self.symbol),
+                            "strategy_slot": "funding",
+                            "side": "buy" if funding_signal["direction"] == "long" else "sell",
+                            "reason": funding_signal["reason"],
+                            "sizing": funding_sizing,  # ← EIGENES SIZING
+                        }
+                        await self.deps.redis.publish_message(
+                            "bruno:pubsub:signals", json.dumps(funding_dict)
+                        )
+                        self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']}")
+                        self._last_funding_signal_time = now
 
                 # Phantom Trade (Learning Mode)
                 if (not signal.should_trade and self.deps.config.DRY_RUN

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getBrowserWebSocketUrl } from "../utils/runtimeUrls";
+import { ShieldAlert, Ban } from "lucide-react";
 
 interface Agent {
   agent_id: string;
@@ -14,6 +15,14 @@ interface Agent {
   uptime_seconds: number;
   last_error?: string;
   health: "healthy" | "degraded" | "error" | "offline";
+}
+
+interface VetoState {
+  Veto_Active: boolean;
+  Reason: string;
+  Long_Veto_Active: boolean;
+  Short_Veto_Active: boolean;
+  timestamp: string;
 }
 
 interface AgentStatusMonitorProps {
@@ -67,12 +76,38 @@ export default function AgentStatusMonitor({ agents: initialAgents, isLoading = 
 
   const [wsConnected, setWsConnected] = useState(false);
   const [cascadePulse, setCascadePulse] = useState<any>(null);
+  const [vetoState, setVetoState] = useState<VetoState | null>(null);
 
   useEffect(() => {
     if (initialAgents) {
       setAgents(initialAgents);
     }
   }, [initialAgents]);
+
+  // Poll veto state from API
+  useEffect(() => {
+    const fetchVeto = async () => {
+      try {
+        const res = await fetch("/api/v1/telemetry/live");
+        if (res.ok) {
+          const data = await res.json();
+          setVetoState({
+            Veto_Active: data.veto_active,
+            Reason: data.veto_reason,
+            Long_Veto_Active: data.veto_active,
+            Short_Veto_Active: data.veto_active,
+            timestamp: data.timestamp,
+          });
+        }
+      } catch (e) {
+        console.error("Failed to fetch veto state:", e);
+      }
+    };
+
+    fetchVeto();
+    const interval = setInterval(fetchVeto, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   // WebSocket für Live-Updates
   useEffect(() => {
@@ -169,22 +204,46 @@ export default function AgentStatusMonitor({ agents: initialAgents, isLoading = 
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Veto Banner - Shown when Risk Agent has active veto */}
+          {vetoState?.Veto_Active && (
+            <div className="bg-rose-950/30 border border-rose-700 rounded-lg p-3 mb-4">
+              <div className="flex items-center gap-2 text-rose-400">
+                <Ban className="w-5 h-5" />
+                <span className="font-bold text-sm">VETO AKTIV</span>
+              </div>
+              <p className="text-xs text-rose-300 mt-1">{vetoState.Reason}</p>
+            </div>
+          )}
+
           {agents.map((agent) => (
             <div
               key={agent.agent_id}
-              className="flex items-center justify-between bg-[#2d2d44] rounded-lg p-3"
+              className={`flex items-center justify-between rounded-lg p-3 ${
+                agent.agent_id === 'risk' && vetoState?.Veto_Active 
+                  ? 'bg-rose-900/20 border border-rose-700/50' 
+                  : 'bg-[#2d2d44]'
+              }`}
             >
               <div className="flex items-center gap-3">
                 <div
                   className={`w-3 h-3 rounded-full ${getStatusColor(agent.status, agent.health || 'healthy')}`}
                 />
                 <div>
-                  <p className="text-sm font-bold text-white tracking-wider uppercase">
-                    {agent.agent_id}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-white tracking-wider uppercase">
+                      {agent.agent_id}
+                    </p>
+                    {/* Veto Indicator for Risk Agent */}
+                    {agent.agent_id === 'risk' && vetoState?.Veto_Active && (
+                      <ShieldAlert className="w-4 h-4 text-rose-400" />
+                    )}
+                  </div>
                   <div className="flex flex-col">
                     <p className={`text-[10px] font-mono uppercase ${agent.status === 'running' ? 'text-emerald-400' : 'text-gray-400'}`}>
-                      {agent.sub_state || getStatusText(agent.status)}
+                      {agent.agent_id === 'risk' && vetoState?.Veto_Active 
+                        ? `VETO: ${vetoState.Reason.slice(0, 30)}...` 
+                        : (agent.sub_state || getStatusText(agent.status))
+                      }
                     </p>
                     <p className="text-[10px] text-gray-500">
                       Uptime: {formatUptime(agent.uptime_seconds)}

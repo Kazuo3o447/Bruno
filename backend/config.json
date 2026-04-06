@@ -1,6 +1,6 @@
 {
     "Liq_Distance": 0.005,
-    "Max_Leverage": 1,
+    "Max_Leverage": 3,
     "Stop_Loss_Pct": 0.01,
     "LEARNING_MODE_ENABLED": true,
     "LEARNING_GRSS_Threshold": 25,

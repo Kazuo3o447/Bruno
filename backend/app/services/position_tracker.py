@@ -51,11 +51,19 @@ class PositionTracker:
         pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol, slot=slot))
         return pos is not None and pos.get("status") == "open"
 
-    async def get_open_position(self, symbol: str) -> Optional[dict]:
-        """Gibt die offene Position zurück oder None."""
-        pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol))
-        if pos and pos.get("status") == "open":
-            return pos
+    async def get_open_position(self, symbol: str, slot: str = None) -> Optional[dict]:
+        """Gibt offene Position zurück. Wenn slot=None, suche alle Slots."""
+        if slot:
+            pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol, slot=slot))
+            if pos and pos.get("status") == "open":
+                return pos
+            return None
+        
+        # Kein Slot angegeben → suche alle Slots
+        for s in ["trend", "sweep", "funding"]:
+            pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol, slot=s))
+            if pos and pos.get("status") == "open":
+                return pos
         return None
 
     async def list_open_positions(self) -> list[dict]:
@@ -192,12 +200,25 @@ class PositionTracker:
 
     async def update_position(self, symbol: str, updates: dict) -> Optional[dict]:
         """Aktualisiert die offene Position in Redis und spiegelt Kernfelder in der DB wider."""
-        pos = await self.get_open_position(symbol)
+        slot = updates.get("slot")
+        if not slot:
+            # Versuche Position zu finden um Slot zu extrahieren
+            for s in ["trend", "sweep", "funding"]:
+                pos = await self.redis.get_cache(REDIS_KEY.format(symbol=symbol, slot=s))
+                if pos and pos.get("status") == "open":
+                    slot = s
+                    break
+        
+        if not slot:
+            logger.warning(f"update_position: Kein Slot gefunden für {symbol}")
+            return None
+            
+        pos = await self.get_open_position(symbol, slot=slot)
         if not pos:
             return None
 
         pos.update(updates)
-        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
+        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol, slot=slot), pos)
 
         try:
             from sqlalchemy import text
@@ -231,11 +252,16 @@ class PositionTracker:
         fraction: float = 0.50,
         move_stop_to_breakeven: bool = True,
         exit_trade_id: Optional[str] = None,
+        slot: str = None,
     ) -> Optional[dict]:
         """Schließt einen Teil der Position und zieht optional den Stop auf Breakeven."""
-        pos = await self.get_open_position(symbol)
+        pos = await self.get_open_position(symbol, slot=slot)
         if not pos:
             return None
+
+        # Slot aus Position extrahieren falls nicht übergeben
+        if not slot:
+            slot = pos.get("slot", "trend")
 
         if pos.get("tp1_hit"):
             return pos
@@ -272,7 +298,7 @@ class PositionTracker:
             else:
                 pos["stop_loss_price"] = round(entry_price * 0.999, 2)
 
-        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
+        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol, slot=slot), pos)
 
         try:
             from sqlalchemy import text
@@ -309,16 +335,21 @@ class PositionTracker:
         exit_price: float,
         reason: str,   # "stop_loss" | "take_profit" | "breakeven_stop" | "trailing_stop" | "tp1_scaling" | "manual_close" | "daily_drawdown" | "regime_change"
         exit_trade_id: Optional[str] = None,
+        slot: str = None,
     ) -> Optional[dict]:
         """
         Schließt die offene Position.
         Berechnet P&L, Haltezeit, MAE/MFE final.
         Gibt das geschlossene Position-Dict zurück (für Post-Trade Debrief).
         """
-        pos = await self.get_open_position(symbol)
+        pos = await self.get_open_position(symbol, slot=slot)
         if not pos:
             logger.warning(f"close_position: Keine offene Position für {symbol}")
             return None
+
+        # Slot aus Position extrahieren falls nicht übergeben
+        if not slot:
+            slot = pos.get("slot", "trend")
 
         now = datetime.now(timezone.utc)
         entry_time = datetime.fromisoformat(pos["entry_time"])
@@ -354,11 +385,11 @@ class PositionTracker:
         })
 
         # Redis aktualisieren (Status auf closed — Watcher beendet sich)
-        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
+        await self.redis.set_cache(REDIS_KEY.format(symbol=symbol, slot=slot), pos)
 
         # Kurz danach Key löschen (neue Position kann kommen)
         # Wir lassen den Key 60s stehen damit das Dashboard ihn noch lesen kann
-        await self.redis.redis.expire(REDIS_KEY.format(symbol=symbol), 60)
+        await self.redis.redis.expire(REDIS_KEY.format(symbol=symbol, slot=slot), 60)
 
         log_emoji = "✅" if total_pnl_pct > 0 else "❌"
         logger.info(
@@ -373,14 +404,18 @@ class PositionTracker:
 
         return pos
 
-    async def update_excursions(self, symbol: str, current_price: float) -> None:
+    async def update_excursions(self, symbol: str, current_price: float, slot: str = None) -> None:
         """
         Aktualisiert MAE und MFE laufend.
         Wird vom Monitor-Loop aufgerufen (alle 30s).
         """
-        pos = await self.get_open_position(symbol)
+        pos = await self.get_open_position(symbol, slot=slot)
         if not pos:
             return
+
+        # Slot aus Position extrahieren falls nicht übergeben
+        if not slot:
+            slot = pos.get("slot", "trend")
 
         side = pos["side"]
         entry_price = pos["entry_price"]
@@ -405,7 +440,7 @@ class PositionTracker:
         pos["current_pnl_pct"] = round(excursion_pct, 6)
 
         if changed:
-            await self.redis.set_cache(REDIS_KEY.format(symbol=symbol), pos)
+            await self.redis.set_cache(REDIS_KEY.format(symbol=symbol, slot=slot), pos)
 
     # ──────────────────────────────────────────────────────────────────
     # DB Persistence (async, nicht-blockierend für den Trading-Pfad)

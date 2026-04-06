@@ -127,7 +127,11 @@ function SentimentBars({ market }: { market: Telemetry["market"] }) {
 }
 
 // Agent Status Grid
-function AgentGrid({ agents }: { agents: Record<string, { status: string; age_seconds: number | null; healthy: boolean }> }) {
+function AgentGrid({ agents, vetoActive, vetoReason }: { 
+  agents: Record<string, { status: string; age_seconds: number | null; healthy: boolean }>;
+  vetoActive?: boolean;
+  vetoReason?: string;
+}) {
   const agentList = [
     { id: "ingestion", name: "Ingestion", icon: Activity },
     { id: "quant", name: "Quant", icon: TrendingUp },
@@ -142,18 +146,23 @@ function AgentGrid({ agents }: { agents: Record<string, { status: string; age_se
         const a = agents[agent.id];
         const Icon = agent.icon;
         const isHealthy = a?.healthy;
+        const isRiskWithVeto = agent.id === 'risk' && vetoActive;
         
         return (
           <div
             key={agent.id}
             className={`p-2 rounded-lg border flex flex-col items-center gap-1 transition-all ${
-              isHealthy ? "border-emerald-800 bg-emerald-950/20" : "border-red-800 bg-red-950/20"
+              isRiskWithVeto 
+                ? "border-rose-800 bg-rose-950/30" 
+                : isHealthy 
+                  ? "border-emerald-800 bg-emerald-950/20" 
+                  : "border-red-800 bg-red-950/20"
             }`}
           >
-            <Icon className={`w-4 h-4 ${isHealthy ? "text-emerald-400" : "text-red-400"}`} />
+            <Icon className={`w-4 h-4 ${isRiskWithVeto ? "text-rose-400" : isHealthy ? "text-emerald-400" : "text-red-400"}`} />
             <span className="text-[10px] text-slate-400">{agent.name}</span>
-            <span className={`text-[9px] ${isHealthy ? "text-emerald-400" : "text-red-400"}`}>
-              {a?.age_seconds !== null ? `${Math.round(a.age_seconds)}s` : "—"}
+            <span className={`text-[9px] ${isRiskWithVeto ? "text-rose-400 font-bold" : isHealthy ? "text-emerald-400" : "text-red-400"}`}>
+              {isRiskWithVeto ? "VETO" : a?.age_seconds !== null ? `${Math.round(a.age_seconds)}s` : "—"}
             </span>
           </div>
         );
@@ -387,7 +396,16 @@ export default function Dashboard() {
           {/* Agent Health */}
           <div className="bg-[#0c0c18] border border-[#1a1a2e] rounded-xl p-4">
             <h3 className="text-sm font-semibold text-slate-300 mb-3">Agenten-Gesundheit</h3>
-            <AgentGrid agents={telemetry.agents} />
+            <AgentGrid 
+              agents={telemetry.agents} 
+              vetoActive={telemetry.veto_active}
+              vetoReason={telemetry.veto_reason}
+            />
+            {telemetry.veto_active && (
+              <div className="mt-3 p-2 rounded bg-rose-950/20 border border-rose-800/50">
+                <p className="text-[10px] text-rose-400 font-medium">Risk Veto: {telemetry.veto_reason}</p>
+              </div>
+            )}
           </div>
 
           {/* Data Sources */}
