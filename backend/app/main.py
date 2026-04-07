@@ -5,6 +5,7 @@ from app.core.redis_client import redis_client
 from app.core.database import init_db, close_db
 from app.core.log_manager import log_manager
 from app.core.scheduler import scheduler
+from app.core.coinalyze_scheduler import coinalyze_scheduler
 from app.core.config_cache import ConfigCache
 import logging
 import asyncio
@@ -66,6 +67,9 @@ async def startup_event():
         await scheduler.initialize()
         logger.info("Scheduler initialisiert")
         
+        await coinalyze_scheduler.initialize()
+        logger.info("Coinalyze Scheduler initialisiert")
+        
         logger.info("Bruno API Services gestartet")
         
     except Exception as e:
@@ -76,6 +80,9 @@ async def startup_event():
 async def shutdown_event():
     """Räumt alle Resources beim Herunterfahren."""
     try:
+        await coinalyze_scheduler.stop()
+        logger.info("Coinalyze Scheduler gestoppt")
+        
         await redis_client.disconnect()
         logger.info("Redis Verbindung geschlossen")
         

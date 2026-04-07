@@ -45,6 +45,42 @@
 - **Dependencies Updated:** feedparser, pybit zu requirements.txt hinzugefügt
 - **SYSTEM STATUS:** ✅ FULLY OPERATIONAL - Alle kritischen Systeme online
 
+### ✅ COINALYZE REFERENCE DATA INTEGRATION (April 2026)
+**Unabhängige externe Datenquelle für Backtests — isoliert von Live-Trading.**
+
+- **API Integration:** Coinalyze.net kostenlose API (keine Kreditkarte nötig)
+- **Symbol:** BTCUSD_PERP.A (aggregiert über alle Exchanges)
+- **Datentypen:** OHLCV, Liquidations, Open Interest, Funding Rate, Long/Short Ratio
+- **Zeitrahmen:** 15min, 1hour, 4hour, daily
+- **Scheduler:** Täglich 20:00 UTC automatischer Import (inkrementell)
+- **CLI-Script:** `python backend/scripts/coinalyze_import.py --initial|--update|--stats`
+- **Schema:** `reference.*` Tabellen — klar getrennt von `public.*` Live-Daten
+- **Storage:** TimescaleDB Hypertables, permanente Aufbewahrung (keine Retention)
+- **UPSERT:** `ON CONFLICT DO UPDATE` — keine Duplikate bei wiederholtem Import
+
+**Tabellen (5 Hypertables):**
+| Tabelle | Daten | Intervall |
+|---------|-------|-----------|
+| reference.coinalyze_candles | OHLCV, Volume, Buy Volume | 15min, 1h, 4h, daily |
+| reference.coinalyze_liquidations | Long/Short Liquidations USD | 15min, 1h, 4h, daily |
+| reference.coinalyze_open_interest | OI OHLC (Open/High/Low/Close) | 15min, 1h, 4h, daily |
+| reference.coinalyze_funding | Funding Rate OHLC | 15min, 1h, 4h, daily |
+| reference.coinalyze_long_short_ratio | L/S Ratio, Longs%, Shorts% | 15min, 1h, 4h, daily |
+
+**Verwendung:**
+```bash
+# Initialer Import (alle verfügbaren Historie)
+docker-compose exec api-backend python backend/scripts/coinalyze_import.py --initial
+
+# Tägliches Update (nur neue Daten seit letztem Import)
+docker-compose exec api-backend python backend/scripts/coinalyze_import.py --update
+
+# Statistiken anzeigen
+docker-compose exec api-backend python backend/scripts/coinalyze_import.py --stats
+```
+
+**Wichtig:** Diese Daten dienen ausschließlich der Backtest-Validierung und berühren die Live-Trading-Pipeline NICHT.
+
 ### ✅ BRUNO v2.2.1 — Critical Fixes & Dead Code Cleanup
 - **ExecutionAgentV4 aktiviert** – worker.py importiert und registriert jetzt V4 statt V3 (1157 Zeilen Dead Code eliminiert)
 - **PAPER_TRADING_ONLY Hardlock entfernt** – Validator wirft jetzt Warnungen statt Exceptions, sauberer Übergang Paper→Live möglich

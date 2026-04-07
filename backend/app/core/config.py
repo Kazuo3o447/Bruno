@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # CoinGlass (Phase B — nach 4 Wochen DRY_RUN)
     COINGLASS_API_KEY: Optional[str] = None
 
+    # Coinalyze — Kostenlose Referenzdaten für Backtests
+    # API Key: https://coinalyze.net/account/api-access/ (kostenlos)
+    COINALYZE_API_KEY: Optional[str] = None
+
     # Telegram Notifications (Phase B)
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_CHAT_ID: Optional[str] = None
