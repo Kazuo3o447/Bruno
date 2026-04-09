@@ -4,6 +4,70 @@ Alle wichtigen Änderungen und Fixes pro Version.
 
 ---
 
+## [v4.0] – 2026-04-09
+
+### 🎯 Bruno V4 Refactoring — Alle 8 Prompts Implementiert
+
+#### **Prompt 1: Scoring-Logik & Confluence Fixes**
+- **Macro Score Hard Block**: Long in Bärenmarkt → macro_score = 0, Short in Bullenmarkt → macro_score = 0
+- **OFI Hard Filter**: ofi_met nur true bei >= 0.60 (Long) oder <= 0.40 (Short)
+- **Confluence Bonus Fix**: Bonus nur wenn mtf_aligned == true UND (liq_score > 0 OR flow_score > 20)
+- **Datei**: `composite_scorer.py`
+
+#### **Prompt 2: Risk-Based Position Sizing**
+- **1% Risiko-Regel**: risk_amount_usd = total_equity × 0.01
+- **Dynamische Positionsgröße**: target_position_size_usd = risk_amount_usd / sl_distance_pct
+- **Leverage-Cap**: Max 10x, required_leverage = target_size / max_margin
+- **Datei**: `execution_v4.py` → `_calculate_risk_based_position_size()`
+
+#### **Prompt 3: Fee Hurdle Check**
+- **Net Profit Hurdle**: Net profit muss >= 25% des Risikos sein
+- **Roundtrip Fees**: 0.24% (Maker 0.01% + Taker 0.04% + Slippage Buffer)
+- **Reject Reason**: "Trade rejected: Net profit at TP1 ($X) < 25% of risk ($Y)"
+- **Datei**: `execution_v4.py` → `_check_fee_hurdle()`
+
+#### **Prompt 4: Vola-Adjustiertes Trade Management**
+- **ATR-basierte SL/TP/BE**:
+  - SL = 1.2 × atr_pct
+  - TP1 = 1.5 × atr_pct (50% Position)
+  - TP2 = 3.0 × atr_pct (50% Position)
+  - Breakeven-Trigger = 1.0 × atr_pct (MUSS vor TP1 feuern!)
+- **Breakeven Trail**: SL auf Entry + 0.1% Fee-Puffer bei 1.0x ATR Profit
+- **Dateien**: `composite_scorer.py`, `execution_v4.py`
+
+#### **Prompt 5: Sweep & Funding Slot Filter (Anti-Manipulation)**
+- **Sweep OFI Validation**: Sweep-Signal nur freigegeben bei OFI >= 0.60 (Long) / <= 0.40 (Short)
+  - Verhindert "Falling Knife" Käufe ohne Whale-Absorption
+- **Funding EMA9-Cross**: Funding-Signal nur bei strukturellem Shift (Preis kreuzt EMA9)
+  - Verhindert Contrarian-Traps bei extremem Funding ohne Trend-Bestätigung
+- **Datei**: `quant_v4.py`
+
+#### **Prompt 6: Scaled Entries & Break-Even Trailing**
+- **ATR-basierte Steps**:
+  - Tranche 2 (30%): Trigger bei 1.0 × ATR Profit
+  - Tranche 3 (30%): Trigger bei 2.0 × ATR Profit
+- **Break-Even Protection**: Vor Tranche 3 MUSS SL für Tranche 1+2 auf Break-Even (Entry + 0.1%) gezogen sein
+- **Datei**: `scaled_entry.py`, `execution_v4.py`
+
+#### **Prompt 7: Strategy Blending Fix (Brei-Effekt)**
+- **MR Cap bei starkem Trend**: Wenn TA-Score > 80, dann mean_reversion_score auf 0 gecappt
+- **Overbought = Stärke**: In parabolischen Märkten kein Malus für überkaufte Signale
+- **Kein Block**: Trend-Trades werden nicht mehr durch Mean-Reversion blockiert
+- **Datei**: `composite_scorer.py`
+
+#### **Prompt 8: Slot-spezifischer Circuit Breaker**
+- **Slot-spezifische Verlustzählung**: 3 aufeinanderfolgende Losses in einem Slot blockieren nur diesen Slot
+- **Hard Daily Drawdown**: Globaler 24h-Block nur bei -3% Daily Drawdown (nicht bei Trade-Anzahl)
+- **Redis Keys**: `bruno:risk:slot_losses:{slot}`, `bruno:risk:slot_block:{slot}`
+- **Dateien**: `risk.py`, `execution_v4.py`
+
+### 📚 Dokumentation
+- CHANGELOG.md – v4.0 Eintrag mit allen 8 Prompts
+- WINDSURF_MANIFEST.md – V4 Status Update
+- docs/arch.md – V4 Architektur-Refactoring
+
+---
+
 ## [v3.0] – 2026-04-06
 
 ### 🚀 Bybit Data-Hub & Core Math

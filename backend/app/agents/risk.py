@@ -143,18 +143,23 @@ class RiskAgent(PollingAgent):
 
     async def _check_daily_drawdown(self) -> dict:
         """
-        Circuit Breaker: Stoppt Trading für 24h wenn:
-        - Tagesverlust > 3% des Kapitals, ODER
-        - 3 Fehltrades in Folge
+        PROMPT 8: Circuit Breaker überarbeitet.
+        
+        Globaler Block (24h) NUR bei:
+        - Hartem prozentualen Daily Drawdown (z.B. -3% vom Portfolio)
+        
+        Slot-spezifische Verlustzählung:
+        - 3 aufeinanderfolgende Losses im gleichen Slot blockieren nur diesen Slot
+        - Andere Slots können weiter traden
         
         Liest: bruno:portfolio:state (geschrieben vom ExecutionAgent)
         Setzt: bruno:risk:daily_block (Redis, 24h TTL)
+              bruno:risk:slot_block:{slot_name} (Redis, 24h TTL)
         
-        Profitrader-Begründung: Algorithmen geraten in Marktphasen die
-        nicht zu ihrer Logik passen. Der Drawdown-Limit schützt vor
-        unkontrollierten Verlustspiralen ("Bot-Tilt").
+        Profitrader-Begründung: Normale Streuung über verschiedene Slots
+        sollte den Bot nicht für 24 Stunden abschalten.
         """
-        # Prüfe ob Block schon aktiv
+        # Prüfe ob globaler Block schon aktiv
         block = await self.deps.redis.get_cache("bruno:risk:daily_block")
         if block and block.get("active"):
             return {"blocked": True, "reason": f"DAILY BLOCK: {block.get('reason', 'Drawdown limit')}"}
@@ -162,42 +167,92 @@ class RiskAgent(PollingAgent):
         # Portfolio-State laden
         portfolio = await self.deps.redis.get_cache("bruno:portfolio:state") or {}
         initial = float(portfolio.get("initial_capital_eur", 1000))
-        current = float(portfolio.get("capital_eur", initial))
         daily_pnl = float(portfolio.get("daily_pnl_eur", 0))
         
-        # Verlust-Trades heute zählen
-        # trade_pnl_history_eur ist eine Liste der letzten P&L-Werte
-        pnl_history = portfolio.get("trade_pnl_history_eur", [])
-        
-        # Bedingung 1: > 3% Tagesverlust
+        # Bedingung 1: > 3% Tagesverlust (HARD DRAWDOWN BLOCK)
         max_daily_loss = float(ConfigCache.get("DAILY_MAX_LOSS_PCT", 3.0))
         daily_loss_pct = abs(daily_pnl / initial * 100) if daily_pnl < 0 else 0
         
         if daily_loss_pct >= max_daily_loss:
             block_data = {
                 "active": True,
-                "reason": f"Tagesverlust {daily_loss_pct:.1f}% >= {max_daily_loss}%",
+                "reason": f"HARD DRAWDOWN: {daily_loss_pct:.1f}% >= {max_daily_loss}%",
                 "triggered_at": datetime.now(timezone.utc).isoformat(),
+                "type": "hard_drawdown",
             }
             await self.deps.redis.set_cache("bruno:risk:daily_block", block_data, ttl=86400)
-            self.logger.critical(f"DAILY DRAWDOWN BLOCK: {block_data['reason']}")
+            self.logger.critical(f"HARD DRAWDOWN BLOCK: {block_data['reason']}")
             return {"blocked": True, "reason": f"DAILY BLOCK: {block_data['reason']}"}
         
-        # Bedingung 2: 3 Fehltrades in Folge
+        # PROMPT 8: Kein globaler Block mehr bei 3 aufeinanderfolgenden Losses
+        # Stattdessen: Slot-spezifische Verlustzählung in _check_slot_consecutive_losses()
+        
+        return {"blocked": False, "reason": ""}
+    
+    async def _check_slot_consecutive_losses(self, slot_name: str) -> dict:
+        """
+        PROMPT 8: Slot-spezifische Circuit Breaker Logik.
+        
+        Zählt aufeinanderfolgende Verluste pro Slot separat.
+        Ein Slot mit 3 Losses wird blockiert, andere Slots laufen weiter.
+        
+        Redis Keys:
+        - bruno:risk:slot_losses:{slot_name} - Liste der letzten P&Ls pro Slot
+        - bruno:risk:slot_block:{slot_name} - Block-Status pro Slot
+        """
+        # Prüfe ob Slot bereits blockiert
+        slot_block = await self.deps.redis.get_cache(f"bruno:risk:slot_block:{slot_name}")
+        if slot_block and slot_block.get("active"):
+            return {"blocked": True, "reason": f"SLOT BLOCK: {slot_block.get('reason')}"}
+        
+        # Lade Slot-spezifische Trade-Historie
+        slot_losses = await self.deps.redis.get_cache(f"bruno:risk:slot_losses:{slot_name}") or []
+        
         max_consecutive = int(ConfigCache.get("MAX_CONSECUTIVE_LOSSES", 3))
-        if len(pnl_history) >= max_consecutive:
-            recent = pnl_history[-max_consecutive:]
+        
+        # Zähle aufeinanderfolgende Verluste
+        if len(slot_losses) >= max_consecutive:
+            recent = slot_losses[-max_consecutive:]
             if all(p < 0 for p in recent):
                 block_data = {
                     "active": True,
-                    "reason": f"{max_consecutive} Verluste in Folge",
+                    "reason": f"{max_consecutive} consecutive losses in {slot_name} slot",
                     "triggered_at": datetime.now(timezone.utc).isoformat(),
+                    "slot": slot_name,
+                    "type": "slot_consecutive_losses",
                 }
-                await self.deps.redis.set_cache("bruno:risk:daily_block", block_data, ttl=86400)
-                self.logger.critical(f"CONSECUTIVE LOSS BLOCK: {block_data['reason']}")
-                return {"blocked": True, "reason": f"DAILY BLOCK: {block_data['reason']}"}
+                await self.deps.redis.set_cache(
+                    f"bruno:risk:slot_block:{slot_name}", block_data, ttl=86400
+                )
+                self.logger.critical(f"SLOT CONSECUTIVE LOSS BLOCK [{slot_name}]: {block_data['reason']}")
+                return {"blocked": True, "reason": f"SLOT BLOCK: {block_data['reason']}"}
         
         return {"blocked": False, "reason": ""}
+    
+    async def record_slot_trade_result(self, slot_name: str, pnl: float) -> None:
+        """
+        PROMPT 8: Speichert Trade-Ergebnis für slot-spezifische Verlustzählung.
+        
+        Args:
+            slot_name: Name des Slots (trend, sweep, funding)
+            pnl: P&L des Trades in EUR (positiv oder negativ)
+        """
+        try:
+            key = f"bruno:risk:slot_losses:{slot_name}"
+            slot_losses = await self.deps.redis.get_cache(key) or []
+            
+            # Füge neues Ergebnis hinzu, behalte letzte 10
+            slot_losses.append(pnl)
+            slot_losses = slot_losses[-10:]
+            
+            await self.deps.redis.set_cache(key, slot_losses, ttl=86400)
+            
+            self.logger.info(
+                f"Slot trade recorded [{slot_name}]: PnL={pnl:+.2f} EUR, "
+                f"history={len(slot_losses)} trades"
+            )
+        except Exception as e:
+            self.logger.warning(f"Record slot trade error: {e}")
 
     async def process(self) -> None:
         try:

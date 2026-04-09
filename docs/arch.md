@@ -1,10 +1,13 @@
-# Bruno v3 Architektur-Manifest
+# Bruno v4 Architektur-Manifest
 
-> **Version: 3.0.0 (April 2026)**
+> **Version: 4.0.0 (April 2026)**
 >
-> ✅ **V3.0 Architecture Refinement:** Death Zone Removal, Symmetric Scoring, Sweep Signals, Mean Reversion Sub-Engine, ATR-Ratio Regime Detection, Learning Mode Optimization
-> ✅ **V3.0 Strategy Blending:** Trend Following + Mean Reversion mit regime-adaptiver Gewichtung (40%/30%/10%)
-> ✅ **V3.0 No Hard Blocks:** Risk wird in Score gepreist, keine Hard Direction Vetoes mehr
+> ✅ **V4.0 Risk-Based Architecture:** 1% Risiko-Regel, dynamisches Position Sizing, Fee Hurdle Protection
+> ✅ **V4.0 Vola-Adjusted Trade Management:** ATR-basierte SL/TP/BE (1.2x/1.5x/3.0x/1.0x), Break-Even vor TP1
+> ✅ **V4.0 Anti-Manipulation:** Sweep OFI-Validation (>=0.60/<=0.40), Funding EMA9-Cross Filter
+> ✅ **V4.0 Slot-Isolation:** Slot-spezifische Circuit Breaker, Hard Daily Drawdown (-3%), keine Global-Blocks bei Trade-Anzahl
+> ✅ **V4.0 Strategy Blending Fix:** Mean Reversion capped bei starkem Trend (TA > 80), kein "Brei-Effekt"
+> ✅ **V3.0 Architecture Refinement:** Death Zone Removal, Symmetric Scoring, Sweep Signals, Mean Reversion Sub-Engine
 > ✅ **V8.0 Bybit Data Core:** Bybit V5 WebSocket als exklusive "Single Source of Truth", Zero Binance REST
 > ✅ **V8.0 Privacy-First News:** Multi-Source News (CryptoPanic, RSS, FreeCryptoNews) mit SHA256-Deduplizierung
 > ✅ **Mathematical Purity:** Präzise CVD Taker-Mathematik, VWAP/VPOC tägliche Resets, Zero Tolerance für Heuristiken
@@ -149,6 +152,77 @@ for trade in message["data"]:
             self.current_1m_taker_buy += vol
         elif side == "Sell":
             self.current_1m_taker_sell += vol
+```
+
+### V4.0 Risk-Based Architecture (Prompts 1-8)
+
+#### **V4.0 Core Principles**
+- ✅ **1% Risk Rule**: Jeder Trade riskiert exakt 1% des Portfolios
+- ✅ **Dynamic Position Sizing**: Position Size = Risk Amount / SL Distance
+- ✅ **Fee Hurdle Protection**: Net Profit muss >= 25% des Risikos sein
+- ✅ **ATR-Based Trade Management**: SL/TP/BE skalieren mit Volatilität
+- ✅ **Anti-Manipulation**: Sweep- und Funding-Slots mit Validierungs-Filtern
+- ✅ **Slot Isolation**: Circuit Breaker pro Slot, nicht global
+
+#### **V4.0 Position Sizing Formula**
+```python
+# PROMPT 2: Risk-Based Position Sizing
+risk_percent = 0.01  # 1% fix
+risk_amount_usd = total_equity_usd * risk_percent
+sl_distance_pct = abs(entry_price - stop_loss_price) / entry_price
+target_position_size_usd = risk_amount_usd / sl_distance_pct
+required_leverage = target_position_size_usd / max_margin_per_trade
+actual_leverage = min(required_leverage, 10.0)  # Hard cap 10x
+```
+
+#### **V4.0 Fee Hurdle Check**
+```python
+# PROMPT 3: Fee Hurdle
+estimated_fees = target_position_size_usd * 0.0024  # 0.24% roundtrip
+net_profit = gross_profit - estimated_fees
+hurdle_threshold = risk_amount_usd * 0.25  # 25% of risk
+if net_profit < hurdle_threshold:
+    return REJECTED_BY_FEES
+```
+
+#### **V4.0 ATR-Based SL/TP/BE**
+```python
+# PROMPT 4: Vola-Adjusted Trade Management
+atr_pct = atr_14 / current_price
+sl_pct = 1.2 * atr_pct
+tp1_pct = 1.5 * atr_pct  # 50% Position close
+breakeven_trigger_pct = 1.0 * atr_pct  # MUSS vor TP1 feuern!
+```
+
+#### **V4.0 Anti-Manipulation Filters**
+```python
+# PROMPT 5: Sweep OFI Validation
+if sweep_direction == "long" and ofi_buy_pressure >= 0.60:
+    valid = True  # Whale absorption confirmed
+elif sweep_direction == "short" and ofi_buy_pressure <= 0.40:
+    valid = True
+else:
+    return BLOCKED  # No absorption, possible falling knife
+
+# PROMPT 5: Funding EMA9-Cross Filter
+if funding_direction == "short" and current_price < ema9:
+    valid = True  # Structural shift confirmed
+elif funding_direction == "long" and current_price > ema9:
+    valid = True
+else:
+    return BLOCKED  # No trend confirmation, contrarian trap
+```
+
+#### **V4.0 Slot-Specific Circuit Breaker**
+```python
+# PROMPT 8: Slot Isolation (keine Global-Blocks mehr)
+if daily_loss_pct >= 3.0:
+    GLOBAL_BLOCK_24H()  # Nur bei Hard Drawdown
+
+# Slot-spezifisch: 3 consecutive losses in einem Slot
+if all(p < 0 for p in slot_losses[-3:]):
+    SLOT_BLOCK_24H(slot_name)  # Nur dieser Slot
+    # Andere Slots laufen weiter!
 ```
 
 ### V3.0 New Features

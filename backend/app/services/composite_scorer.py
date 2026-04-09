@@ -76,13 +76,32 @@ class CompositeSignal:
     
     def to_decision_feed_entry(self) -> dict:
         """Entry für bruno:decisions:feed (Dashboard-Kompatibilität)."""
-        # Use actual OFI availability from diagnostics
+        # === PROMPT 1 FIX: OFI Hard Filter ===
+        # ofi_met ist NUR true, WENN:
+        # - Für Longs: ofi_buy_pressure >= 0.60
+        # - Für Shorts: ofi_buy_pressure <= 0.40
+        # Werte dazwischen → ofi_met = false
+        ofi_raw = self.diagnostics.get("ofi_buy_pressure", 0.5)
         ofi_available = self.diagnostics.get("ofi_available", True)
+        
+        if not ofi_available or ofi_raw is None:
+            ofi_met = False
+            ofi_status = "no_data"
+        elif self.direction == "long":
+            ofi_met = ofi_raw >= 0.60  # Hard threshold für Longs
+            ofi_status = f"long_threshold_{'pass' if ofi_met else 'fail'}"
+        elif self.direction == "short":
+            ofi_met = ofi_raw <= 0.40  # Hard threshold für Shorts  
+            ofi_status = f"short_threshold_{'pass' if ofi_met else 'fail'}"
+        else:
+            ofi_met = False  # Neutral direction
+            ofi_status = "neutral_direction"
         
         return {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "ofi": self.diagnostics.get("ofi_buy_pressure", 0.0),
-            "ofi_met": ofi_available,
+            "ofi": ofi_raw,
+            "ofi_met": ofi_met,
+            "ofi_status": ofi_status,  # PROMPT 1: Extra logging für OFI Status
             "grss": self.macro_score,
             "outcome": f"SIGNAL_{self.direction.upper()}" if self.should_trade else "COMPOSITE_HOLD",
             "reason": "; ".join(self.signals_active[:3]) if self.signals_active else "Score below threshold",
@@ -140,6 +159,7 @@ class CompositeScorer:
         
         # Extract macro trend from TA data
         macro_trend = ta_data.get("macro_trend", {})
+        macro_trend_direction = macro_trend.get("macro_trend", "unknown")
         
         # 2. Regime bestimmen → Gewichte wählen (NEU: dynamisch)
         regime = self._determine_regime(ta_data, macro_data)
@@ -151,6 +171,12 @@ class CompositeScorer:
         analytics_data = await self.redis.get_cache("bruno:binance:analytics") or {}
         flow_score = await self._score_flow(flow_data, macro_data, analytics_data)
         macro_score = self._score_macro(macro_data)
+        
+        # === PROMPT 1 FIX: Macro Score Hard Block ===
+        # Richtung wird später aus composite Score bestimmt, aber wir können den Macro-Score
+        # vorab auf 0 setzen wenn klar ist, dass der Macro-Trend entgegensteht
+        # Dies wird nach der Richtungsbestimmung (Schritt 5) strenger geprüft
+        
         mean_reversion_score = self._score_mean_reversion(ta_data, regime)
         
         result.ta_score = ta_score
@@ -193,17 +219,35 @@ class CompositeScorer:
         # Normalize mean_reversion_score from -50..+50 to -100..+100 for blending
         mr_normalized = mean_reversion_score * 2
         
+        # PROMPT 7: Strategy Blending Fix (Der "Brei-Effekt")
+        # WENN trend_score extrem hoch (> 80), DANN darf negativer mean_reversion_score
+        # den Gesamt-Score NICHT mehr reduzieren.
+        abs_ta_score = abs(ta_score)
+        mr_contribution = mr_normalized
+        
+        if abs_ta_score > 80 and mr_normalized < 0:
+            # Trend ist extrem stark - "Overbought" ist ein Zeichen von Stärke, kein Malus
+            # Cap Mean Reversion auf 0, damit es den Trend-Score nicht blockiert
+            mr_contribution = 0.0
+            result.signals_active.append(
+                f"MR capped: Trend score {abs_ta_score:.0f} > 80, ignoring overbought signal"
+            )
+            self.logger.info(
+                f"PROMPT 7 BLENDING FIX: TA score {abs_ta_score:.0f} > 80, "
+                f"MR normalized was {mr_normalized:.1f}, capped to 0.0"
+            )
+        
         # Blend Strategy A and B
-        composite = (strategy_a_score * (1 - blend_ratio)) + (mr_normalized * blend_ratio)
+        composite = (strategy_a_score * (1 - blend_ratio)) + (mr_contribution * blend_ratio)
         result.composite_score = round(max(-100, min(100, composite)), 1)
         
         if blend_ratio > 0.2:
             result.signals_active.append(f"Strategy Blend: {blend_ratio*100:.0f}% Mean Reversion ({regime} regime)")
 
-        # 4b. Signal-Confluence-Bonus (NEU)
-        # Wenn 3+ unabhängige Signal-Quellen in dieselbe Richtung zeigen,
-        # ist die Wahrscheinlichkeit eines erfolgreichen Trades signifikant höher.
-        # Bonus: +8 pro zusätzlichem aligned Signal ab dem 3. Signal.
+        # 4b. Signal-Confluence-Bonus (NEU) - PROMPT 1 FIX: Härtere Bedingungen
+        # Der Bonus darf NUR addiert werden, WENN:
+        # a) mtf_aligned == true (Higher Timeframes stimmen überein)
+        # b) liq_score > 0 ODER flow_score > 20 (echte Liquiditäts-/Flow-Backing)
         confluence_signals = []
 
         # TA Richtung
@@ -236,15 +280,26 @@ class CompositeScorer:
 
         dominant_count = max(bull_count, bear_count)
 
-        # Confluence Bonus: ab 3 von 4 aligned Signalen
-        if dominant_count >= 3:
+        # === PROMPT 1 FIX: Confluence Bonus nur bei harten Fakten ===
+        confluence_bonus_eligible = (
+            result.mtf_aligned and  # a) MTF muss aligned sein
+            (liq_score > 0 or abs(flow_score) > 20)  # b) Liq oder Flow muss stark sein
+        )
+        
+        if dominant_count >= 3 and confluence_bonus_eligible:
             bonus = (dominant_count - 2) * 10  # +10 pro Signal ab dem 3.
             if bull_count > bear_count:
                 composite += bonus
-                result.signals_active.append(f"Confluence Bonus +{bonus} ({bull_count}/4 aligned)")
+                result.signals_active.append(f"Confluence Bonus +{bonus} ({bull_count}/4 aligned, MTF✓)")
             else:
                 composite -= bonus
-                result.signals_active.append(f"Confluence Bonus -{bonus} ({bear_count}/4 aligned)")
+                result.signals_active.append(f"Confluence Bonus -{bonus} ({bear_count}/4 aligned, MTF✓)")
+        elif dominant_count >= 3 and not confluence_bonus_eligible:
+            # PROMPT 1: Logge warum kein Bonus gegeben wurde
+            if not result.mtf_aligned:
+                result.signals_active.append(f"Confluence Bonus BLOCKED: MTF not aligned ({bull_count}/4 signals)")
+            else:
+                result.signals_active.append(f"Confluence Bonus BLOCKED: No liq/flow backing (liq={liq_score}, flow={flow_score})")
 
         result.composite_score = round(max(-100, min(100, composite)), 1)
 
@@ -268,6 +323,22 @@ class CompositeScorer:
 
         # 5. Richtung
         result.direction = "long" if composite > 0 else "short" if composite < 0 else "neutral"
+        
+        # === PROMPT 1 FIX: Macro Score Hard Block ===
+        # WENN macro_trend == 'macro_bear' UND direction == 'LONG' → macro_score MUSS 0 sein
+        # WENN macro_trend == 'macro_bull' UND direction == 'SHORT' → macro_score MUSS 0 sein
+        if macro_trend_direction == "macro_bear" and result.direction == "long":
+            old_macro_score = macro_score
+            macro_score = 0.0
+            result.macro_score = 0.0
+            result.signals_active.append(f"MACRO BLOCK: Long in bear market (macro_score {old_macro_score:+.1f} → 0)")
+            self.logger.warning(f"Macro Score Fix: Long trade in bear market - macro_score forced to 0 (was {old_macro_score:+.1f})")
+        elif macro_trend_direction == "macro_bull" and result.direction == "short":
+            old_macro_score = macro_score
+            macro_score = 0.0
+            result.macro_score = 0.0
+            result.signals_active.append(f"MACRO BLOCK: Short in bull market (macro_score {old_macro_score:+.1f} → 0)")
+            self.logger.warning(f"Macro Score Fix: Short trade in bull market - macro_score forced to 0 (was {old_macro_score:+.1f})")
 
         # 5b. RegimeConfig Integration (NEU)
         regime_cfg = REGIME_CONFIGS.get(regime, REGIME_CONFIGS["unknown"])
@@ -806,51 +877,42 @@ class CompositeScorer:
 
     def _calc_sl_tp(self, atr: float, price: float, abs_score: float, regime="unknown") -> tuple:
         """
-        ATR-basierte SL/TP Berechnung mit Scaling-Out.
+        PROMPT 4: Vola-Adjustiertes Trade Management.
         
-        Ergebnis:
-        - SL Prozent
-        - TP1 Prozent (konservatives Teilziel)
-        - TP2 Prozent (Hauptziel)
-        - TP1 Positionsanteil
-        - TP2 Positionsanteil
-        - Breakeven Trigger Prozent
+        Strikte ATR-basierte SL/TP Berechnung:
+        - SL: 1.2x ATR
+        - TP1: 1.5x ATR (50% Position)
+        - TP2: 3.0x ATR (50% Position)
+        - Breakeven: 1.0x ATR (MUSS vor TP1 feuern!)
         """
         if atr <= 0 or price <= 0:
-            return 0.010, 0.012, 0.025, 0.50, 0.50, 0.012  # Default
+            return 0.012, 0.015, 0.030, 0.50, 0.50, 0.010  # Default: 1.2%/1.5%/3.0%, BE=1.0%
         
         atr_pct = atr / price
         
-        # SL Multiplikator basierend auf Score - ANGEPASST FÜR PROFITABILITÄT
-        if abs_score > 80:
-            sl_mult = 1.8    # Hohe Conviction → weiterer SL, größeres Target
-            tp1_mult = 2.5
-            tp2_mult = 4.0
-        elif abs_score > 60:
-            sl_mult = 1.5
-            tp1_mult = 2.2
-            tp2_mult = 3.5
-        else:
-            sl_mult = 1.2    # Minimum: 1.2× ATR
-            tp1_mult = 1.8
-            tp2_mult = 3.0
+        # PROMPT 4: Strikte Multiplikatoren (unabhängig vom Score)
+        sl_mult = 1.2
+        tp1_mult = 1.5
+        tp2_mult = 3.0
+        be_mult = 1.0  # Breakeven MUSS vor TP1 feuern (1.0 < 1.5)
         
-        # Floor: SL nie unter 0.8%, nie unter 1.2× ATR
-        sl_pct = round(max(0.008, min(0.030, atr_pct * sl_mult)), 3)
+        # Berechnung mit harten Grenzen
+        sl_pct = round(max(0.008, min(0.025, atr_pct * sl_mult)), 4)
+        tp1_pct = round(max(0.012, min(0.040, atr_pct * tp1_mult)), 4)  # Min 1.2%
+        tp2_pct = round(max(tp1_pct + 0.01, min(0.080, atr_pct * tp2_mult)), 4)
         
-        # TP muss NACH Fees profitable sein
-        # Minimum TP1 = 1.8× SL (damit R:R nach Fees > 1.5)
-        tp1_pct = round(max(sl_pct * 1.8, min(0.040, atr_pct * tp1_mult)), 3)
-        tp2_pct = round(max(tp1_pct + 0.005, min(0.080, atr_pct * tp2_mult)), 3)
+        # PROMPT 4: Breakeven bei 1.0x ATR (NICHT bei TP1!)
+        breakeven_trigger_pct = round(max(0.005, min(0.020, atr_pct * be_mult)), 4)
         
-        # RegimeConfig SL/TP Override
-        cfg = REGIME_CONFIGS.get(regime, REGIME_CONFIGS["unknown"])
-        sl_pct = max(sl_pct, cfg.stop_loss_pct * 0.5)  # Nie weniger als 50% des Regime-SL
-        sl_pct = min(sl_pct, cfg.stop_loss_pct * 2.0)   # Nie mehr als 200% des Regime-SL
+        # Logging für Transparenz
+        self.logger.info(
+            f"ATR SL/TP: ATR={atr:.0f} ({atr_pct:.2%}) | "
+            f"SL={sl_pct:.2%} (1.2x) | TP1={tp1_pct:.2%} (1.5x) | "
+            f"TP2={tp2_pct:.2%} (3.0x) | BE={breakeven_trigger_pct:.2%} (1.0x)"
+        )
         
         tp1_size_pct = 0.50
         tp2_size_pct = 0.50
-        breakeven_trigger_pct = tp1_pct
 
         return sl_pct, tp1_pct, tp2_pct, tp1_size_pct, tp2_size_pct, breakeven_trigger_pct
 

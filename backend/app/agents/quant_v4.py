@@ -257,6 +257,7 @@ class QuantAgentV4(PollingAgent):
                         self.logger.info(f"TREND SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
                 
                 # 6b. SWEEP-Slot: Eigenständig, basierend auf Sweep-Detection
+                # PROMPT 5: Sweep-Slot Filter (Falling Knife Protection)
                 sweep_signal = strategy_mgr.evaluate_sweep_signal(
                     liq_result.get("sweep", {}),
                     liq_result.get("liq_score", 0),
@@ -265,6 +266,33 @@ class QuantAgentV4(PollingAgent):
                     # Sweep Cooldown (60s — Sweeps sind zeitkritisch)
                     now = time.time()
                     if now - self._last_sweep_signal_time >= 60:
+                        # PROMPT 5: OFI-Validierung für Sweep-Slot
+                        # Ein Sweep-Signal wird erst freigegeben, WENN der OFI Score
+                        # ofi_buy_pressure >= 0.60 (Longs) bzw. <= 0.40 (Shorts) aufweist
+                        ofi_buy_pressure = ofi_data.get("buy_pressure_ratio", 0.5)
+                        sweep_direction = sweep_signal["direction"]
+                        
+                        ofi_valid = False
+                        if sweep_direction == "long" and ofi_buy_pressure >= 0.60:
+                            ofi_valid = True
+                        elif sweep_direction == "short" and ofi_buy_pressure <= 0.40:
+                            ofi_valid = True
+                        
+                        if not ofi_valid:
+                            self.logger.warning(
+                                f"SWEEP SIGNAL BLOCKED: OFI validation failed. "
+                                f"Direction={sweep_direction.upper()}, "
+                                f"OFI={ofi_buy_pressure:.2f} (need {'>=0.60' if sweep_direction=='long' else '<=0.40'})"
+                            )
+                            # Log für Analyse
+                            await self._log_blocked_sweep(sweep_signal, ofi_buy_pressure, "ofi_validation_failed")
+                            return  # Signal nicht senden
+                        
+                        self.logger.info(
+                            f"SWEEP SIGNAL VALIDATED: OFI={ofi_buy_pressure:.2f} "
+                            f"passes threshold for {sweep_direction.upper()}"
+                        )
+                        
                         # Eigenes Sizing für Sweep-Slot
                         from app.services.strategy_manager import STRATEGY_SLOTS
                         sweep_slot = STRATEGY_SLOTS["sweep"]
@@ -291,16 +319,22 @@ class QuantAgentV4(PollingAgent):
                             **signal.to_signal_dict(self.symbol),
                             "strategy_slot": "sweep",
                             "side": "buy" if sweep_signal["direction"] == "long" else "sell",
-                            "reason": sweep_signal["reason"],
+                            "reason": f"{sweep_signal['reason']} | OFI validated: {ofi_buy_pressure:.2f}",
                             "sizing": sweep_sizing,  # ← EIGENES SIZING
+                            "ofi_validation": {
+                                "ofi_buy_pressure": ofi_buy_pressure,
+                                "threshold": 0.60 if sweep_direction == "long" else 0.40,
+                                "passed": True
+                            }
                         }
                         await self.deps.redis.publish_message(
                             "bruno:pubsub:signals", json.dumps(sweep_dict)
                         )
-                        self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']}")
+                        self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']} | OFI={ofi_buy_pressure:.2f}")
                         self._last_sweep_signal_time = now
                 
                 # 6c. FUNDING-Slot: Eigenständig, basierend auf Funding Rate
+                # PROMPT 5: Funding-Slot Filter (Contrarian Trap Protection)
                 macro_data = await self.deps.redis.get_cache("bruno:context:grss") or {}
                 funding_rate = float(macro_data.get("Funding_Rate", 0))
                 funding_div = float(macro_data.get("Funding_Divergence", 0))
@@ -310,6 +344,39 @@ class QuantAgentV4(PollingAgent):
                     # Funding Cooldown (1800s = 30min — Funding ändert sich langsam)
                     now = time.time()
                     if now - self._last_funding_signal_time >= 1800:
+                        # PROMPT 5: EMA9-Cross Filter für Funding-Slot
+                        # Der Preis muss den EMA(9) auf dem Ausführungs-Timeframe
+                        # in die Trade-Richtung gekreuzt haben
+                        ta_snapshot = await self.deps.redis.get_cache("bruno:ta:snapshot") or {}
+                        ema9 = ta_snapshot.get("ema_9", 0)
+                        current_price = best_bid_p
+                        funding_direction = funding_signal["direction"]
+                        
+                        ema_cross_valid = False
+                        if ema9 > 0:
+                            if funding_direction == "short" and current_price < ema9:
+                                # Short-Signal: Preis muss unter EMA9 sein
+                                ema_cross_valid = True
+                            elif funding_direction == "long" and current_price > ema9:
+                                # Long-Signal: Preis muss über EMA9 sein
+                                ema_cross_valid = True
+                        
+                        if not ema_cross_valid:
+                            self.logger.warning(
+                                f"FUNDING SIGNAL BLOCKED: EMA9 cross validation failed. "
+                                f"Direction={funding_direction.upper()}, "
+                                f"Price={current_price:,.0f}, EMA9={ema9:,.0f} "
+                                f"(need Price {'<' if funding_direction=='short' else '>'} EMA9)"
+                            )
+                            await self._log_blocked_funding(funding_signal, current_price, ema9, "ema_cross_failed")
+                            return  # Signal nicht senden
+                        
+                        self.logger.info(
+                            f"FUNDING SIGNAL VALIDATED: Price={current_price:,.0f} "
+                            f"{'<' if funding_direction=='short' else '>'} EMA9={ema9:,.0f} "
+                            f"for {funding_direction.upper()}"
+                        )
+                        
                         # Eigenes Sizing für Funding-Slot
                         from app.services.strategy_manager import STRATEGY_SLOTS
                         funding_slot = STRATEGY_SLOTS["funding"]
@@ -336,13 +403,19 @@ class QuantAgentV4(PollingAgent):
                             **signal.to_signal_dict(self.symbol),
                             "strategy_slot": "funding",
                             "side": "buy" if funding_signal["direction"] == "long" else "sell",
-                            "reason": funding_signal["reason"],
+                            "reason": f"{funding_signal['reason']} | EMA9 validated: {current_price:,.0f} {'<' if funding_direction=='short' else '>'} {ema9:,.0f}",
                             "sizing": funding_sizing,  # ← EIGENES SIZING
+                            "ema9_validation": {
+                                "price": current_price,
+                                "ema9": ema9,
+                                "direction": funding_direction,
+                                "passed": True
+                            }
                         }
                         await self.deps.redis.publish_message(
                             "bruno:pubsub:signals", json.dumps(funding_dict)
                         )
-                        self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']}")
+                        self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']} | EMA9 cross validated")
                         self._last_funding_signal_time = now
 
                 # Phantom Trade (Learning Mode)
@@ -494,3 +567,38 @@ class QuantAgentV4(PollingAgent):
 
         except Exception as e:
             self.logger.warning(f"Phantom Trade Fehler (nicht kritisch): {e}")
+
+    async def _log_blocked_sweep(self, sweep_signal: dict, ofi_buy_pressure: float, reason: str) -> None:
+        """Loggt blockierte Sweep-Signale für Analyse."""
+        try:
+            entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "type": "SWEEP_BLOCKED",
+                "reason": reason,
+                "direction": sweep_signal.get("direction"),
+                "ofi_buy_pressure": ofi_buy_pressure,
+                "threshold": 0.60 if sweep_signal.get("direction") == "long" else 0.40,
+                "sweep_intensity": sweep_signal.get("sweep_intensity", 0),
+            }
+            await self.deps.redis.redis.lpush("bruno:signals:blocked", json.dumps(entry))
+            await self.deps.redis.redis.ltrim("bruno:signals:blocked", 0, 199)
+        except Exception as e:
+            self.logger.warning(f"Log blocked sweep error: {e}")
+
+    async def _log_blocked_funding(self, funding_signal: dict, price: float, ema9: float, reason: str) -> None:
+        """Loggt blockierte Funding-Signale für Analyse."""
+        try:
+            entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "type": "FUNDING_BLOCKED",
+                "reason": reason,
+                "direction": funding_signal.get("direction"),
+                "price": price,
+                "ema9": ema9,
+                "funding_rate": funding_signal.get("funding_rate", 0),
+                "funding_bps": funding_signal.get("funding_rate", 0) * 10000,
+            }
+            await self.deps.redis.redis.lpush("bruno:signals:blocked", json.dumps(entry))
+            await self.deps.redis.redis.ltrim("bruno:signals:blocked", 0, 199)
+        except Exception as e:
+            self.logger.warning(f"Log blocked funding error: {e}")

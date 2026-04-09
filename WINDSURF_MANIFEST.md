@@ -31,6 +31,37 @@
 
 ## STATUS UPDATE (April 2026)
 
+### ✅ BRUNO v4.0 — Refactoring & Manipulation-Schutz (April 2026)
+**Kritische Logik-Verbesserungen für professionelles Trading.**
+
+#### **Prompt 1-8 Implementiert:**
+
+| Prompt | Feature | Datei |
+|--------|---------|-------|
+| **1** | Scoring Fixes (Macro Block, OFI >=0.60/<=0.40, Confluence härter) | `composite_scorer.py` |
+| **2** | Risk-Based Sizing (1% Risiko, dynamische Positionsgröße) | `execution_v4.py` |
+| **3** | Fee Hurdle (Net Profit >= 25% Risiko, 0.24% Roundtrip) | `execution_v4.py` |
+| **4** | Vola-Adjustiertes SL/TP/BE (1.2x/1.5x/3.0x/1.0x ATR) | `composite_scorer.py`, `execution_v4.py` |
+| **5** | Anti-Manipulation (Sweep OFI-Check, Funding EMA9-Cross) | `quant_v4.py` |
+| **6** | Scaled Entries (ATR-basierte Steps 1.0x/2.0x, BE-Trail) | `scaled_entry.py` |
+| **7** | Strategy Blending Fix (MR capped bei TA > 80) | `composite_scorer.py` |
+| **8** | Slot-spezifischer Circuit Breaker (Hard -3% DD, Slot-Isolation) | `risk.py`, `execution_v4.py` |
+
+**Wichtige Logik-Änderungen:**
+- **Keine fixen $64 Positionen mehr** – Alles dynamisch risikobasiert
+- **Gebühren-Schutz** – Trades mit zu geringem Netto-Erwartungswert werden blockiert
+- **Falling Knife Protection** – Sweep-Entries nur mit validiertem OFI (Whale-Absorption)
+- **Contrarian Trap Protection** – Funding-Trades nur mit EMA9-Trend-Bestätigung
+- **Kein Global-Block bei 3 Losses** – Nur der betroffene Slot wird blockiert
+- **Breakeven MUSS vor TP1 feuern** – Keine Trades die bei +0.5% breakeven gehen
+
+**Redis Keys (neu):**
+- `bruno:risk:slot_losses:{slot}` – Slot-spezifische P&L-Historie
+- `bruno:risk:slot_block:{slot}` – Slot-spezifischer 24h Block
+- `bruno:signals:blocked` – Blockierte Sweep/Funding Signale für Analyse
+
+---
+
 ### ✅ BRUNO v8.0 — Privacy-First News & Bybit Data Core - FULLY OPERATIONAL
 - **Bybit V5 WebSocket als exklusive Single Source of Truth:** ✅ VERBUNDEN - kline.1.BTCUSDT, publicTrade.BTCUSDT mit präziser CVD Taker-Mathematik
 - **Complete Binance REST Purge:** BinanceAnalyticsService entfernt, alle API Calls aus ContextAgent eliminiert
