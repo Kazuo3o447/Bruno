@@ -386,18 +386,8 @@ class CompositeScorer:
             "critical_data_gap": critical_data_gap,
             "ofi_available": flow_data.get("OFI_Available", True),
             "ofi_buy_pressure": flow_data.get("OFI_Buy_Pressure", 0.0),
-            "regime_allows_direction": (
-                regime_cfg.allow_longs if result.direction == "long"
-                else regime_cfg.allow_shorts if result.direction == "short"
-                else True
-            ),
             "macro_trend": macro_trend.get("macro_trend", "unknown"),
             "macro_data_sufficient": not macro_trend.get("insufficient_data", False),
-            "macro_allows_direction": (
-                mt_allow_longs if result.direction == "long"
-                else mt_allow_shorts if result.direction == "short"
-                else True
-            ),
             "daily_ema_200": macro_trend.get("daily_ema_200", 0),
             "price_vs_daily_ema200": macro_trend.get("price_vs_ema200", "unknown"),
             "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
@@ -909,8 +899,6 @@ class CompositeScorer:
             gap = threshold - abs(result.composite_score)
             biggest_drag = "ta" if abs(result.ta_score) < 20 else "liq" if abs(result.liq_score) < 5 else "flow"
             return f"SCORE_TOO_LOW (Score={result.composite_score:+.1f}, Gap={gap:.1f}, weakest={biggest_drag})"
-        if not result.mtf_aligned:
-            return "MTF_NOT_ALIGNED"
         return "NONE"
 
     async def get_health_status(self) -> dict:

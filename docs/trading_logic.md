@@ -771,6 +771,38 @@ signals.append(f"⚠ Macro Bear headwind: score {original_score:.1f} → {score:
 
 **Ergebnis:** CompositeScore von 2.4 → 6.6 (+175%)
 
+#### Bug 4: Hard-Blocker MTF_NOT_ALIGNED und regime_allows_direction Entfernt
+
+**Problem:** MTF_NOT_ALIGNED und regime_allows_direction fungierten als binäre Gates, die Trades blockierten selbst wenn der CompositeScore den Threshold deutlich überschritt. Dies widersprach dem Bruno v3 Prinzip, dass nur der CompositeScore + Threshold als Entscheidungs-Gate fungieren darf.
+
+**Lösung:** Beide Hard-Blocker entfernt - sie beeinflussen nur noch den Score:
+
+```python
+# VORHER (_get_block_reason):
+if not result.mtf_aligned:
+    return "MTF_NOT_ALIGNED"
+
+# Telemetrie-Output:
+"regime_allows_direction": (
+    regime_cfg.allow_longs if result.direction == "long"
+    else regime_cfg.allow_shorts if result.direction == "short"
+    else True
+)
+
+# NACHHER (_get_block_reason):
+# MTF_NOT_ALIGNED entfernt - MTF beeinflusst nur den Score via Multiplikator
+# regime_allows_direction aus Telemetrie entfernt - kein Gate mehr
+
+# Verbleibende Gates:
+if macro_data.get("Veto_Active"):
+    return f"GRSS_VETO (GRSS={macro_data.get('GRSS_Score', 0):.1f} < threshold)"
+if abs(result.composite_score) < threshold:
+    return f"SCORE_TOO_LOW (Score={result.composite_score:+.1f}, Gap={gap:.1f}, weakest={biggest_drag})"
+return "NONE"
+```
+
+**Ergebnis:** Nur noch CompositeScore + Threshold als Gate. MTF und Regime beeinflussen nur noch den Score, nicht die Trade-Entscheidung.
+
 ### 12.4 Stage-by-Stage TA-Breakdown Diagnostik
 
 **Problem:** Der TA-Breakdown zeigte eine Residual-Differenz (~21 Punkte), die nicht durch die sichtbaren Komponenten erklärbar war. Dies erschwerte die Fehlersuche und Validierung.
