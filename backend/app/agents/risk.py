@@ -249,14 +249,15 @@ class RiskAgent(PollingAgent):
                 if pause and pause.get("paused"):
                     veto, reason = True, "VETO: System manuell pausiert."
             
-            # ── 5. Death Zone (< 0.5% zu Mega-Wall) ───────────
+            # ── 5. Death Zone (REMOVED in v3 — Clusters are opportunities) ──
             if not veto:
-                price = float(micro.get("price", 0))
-                liq = await self.deps.redis.get_cache("bruno:liq:intelligence") or {}
-                for c in liq.get("clusters", []):
-                    if c.get("total_usdt", 0) > 500000 and abs(c.get("distance_pct", 99)) < 0.5:
-                        veto, reason = True, f"VETO: Death Zone {c['zone_price']}"
-                        break
+                pass
+                # price = float(micro.get("price", 0))
+                # liq = await self.deps.redis.get_cache("bruno:liq:intelligence") or {}
+                # for c in liq.get("clusters", []):
+                #     if c.get("total_usdt", 0) > 500000 and abs(c.get("distance_pct", 99)) < 0.5:
+                #         veto, reason = True, f"VETO: Death Zone {c['zone_price']}"
+                #         break
             
             # ── 6. Daily Drawdown Limit (NEU — Profitrader #6) ─
             if not veto:

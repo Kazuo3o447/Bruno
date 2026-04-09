@@ -1,21 +1,16 @@
 # Bruno Trading Platform — Project Status
 
-> **Referenz: WINDSURF_MANIFEST.md v2.1.1 — Einzige Quelle der Wahrheit**
+> **Version:** 3.0.0 (April 2026)  
+> **Referenz:** Bruno v3 Architecture Refinement
 > 
+> ✅ **v3.0 Architecture Refinement:** Death Zone Removal, Symmetric Scoring, Sweep Signals, Mean Reversion Sub-Engine, ATR-Ratio Regime Detection, Learning Mode Optimization
+> ✅ **Strategy Blending (A/B):** Trend Following + Mean Reversion mit regime-adaptiver Gewichtung (40%/30%/10%)
+> ✅ **No Hard Blocks:** Risk wird in Score gepreist, keine Hard Direction Vetoes mehr
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT**
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-API-Integration
-> ✅ **Port-Architektur:** Vollständig korrigiert und stabilisiert
-> ✅ **Critical Fixes:** Alle 8 kritischen Probleme behoben
-> ✅ **LLM-Infrastruktur:** Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt)
-> ✅ **API-Keys Integration:** Alle API-Keys konfiguriert und validiert (2026-04-06)
-> ✅ **Bybit Migration:** Bybit deaktiviert, Binance als stabile Primärquelle (2026-04-06)
-> ✅ **Max Pain Removal:** Max Pain Logik entfernt, System vereinfacht (2026-04-06)
-> ✅ **HF_TOKEN Integration:** HuggingFace Token aktiv und Sentiment-Models ladend (2026-04-06)
-> ✅ **Logic-Bugs Fixed:** Alle 6 kritischen Logic-Bugs behoben (2026-04-06)
-> ✅ **Scoring Hotfix:** Balanced Scoring mit Conviction-Gate Removal (2026-04-06)
-> 
-> Dieses Dokument zeigt den technischen Ist-Stand.
-> Für Architektur, Phasen und Entscheidungen siehe Manifest.
+> ✅ **Bybit V5 Core:** Single Source of Truth für Marktdaten
+> ✅ **Deepseek API:** Post-Trade Analyse (kein LLM im Live Trading)
+> ✅ **Paper Trading Only:** PAPER_TRADING_ONLY=true enforced
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -25,36 +20,31 @@
 
 | Attribut | Wert |
 |----------|------|
-| **Manifest Version** | `v2.1.1` |
-| **Codename** | Scoring Hotfix |
-| **Status** | ✅ Phase A-E COMPLETED — Phase F COMPLETED — Phase G.0 COMPLETED — Phase v2.1 COMPLETED — Logic-Bugs COMPLETED — Scoring Hotfix COMPLETED |
+| **Manifest Version** | `v3.0.0` |
+| **Codename** | Architecture Refinement |
+| **Status** | ✅ v3.0 COMPLETED — Alle 6 Tasks implementiert |
 | **Dashboard** | ✅ Voll funktionsfähig mit API-Integration (7 Seiten) |
-| **Port-Konfiguration** | ✅ Vollständig korrigiert (Backend:8000, Frontend:3000, API:/api/v1, WS:/ws/*) |
-| **Critical Fixes** | ✅ Alle 8 Probleme behoben (API, Config, OFI, Presets) |
-| **Logic-Bugs** | ✅ Alle 6 Logic-Bugs behoben (Regime, OFI, Macro, F&G, EUR/USD) |
-| **Scoring Hotfix** | ✅ 3 Scoring-Bugs behoben (TA-Breakdown, Conviction-Gate, Macro Penalty) |
-| **LLM-Integration** | ✅ Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt) |
-| **Trading Engine** | ✅ Deterministic Composite Scoring (6-Gate Pipeline) |
-| **API Keys Status** | ✅ Alle API-Keys konfiguriert: HF_TOKEN, ALPHA_VANTAGE, DEEPSEEK, FRED, LUNARCRUSH |
-| **Data Sources** | ✅ Binance (Primär), CryptoPanic (News), Alpha Vantage (Macro), DeepSeek (Analysis) |
+| **Trading Engine** | ✅ Strategy Blending (A/B) mit Mean Reversion Sub-Engine |
+| **Scoring** | ✅ Symmetric Scoring, Sweep Signals (+30/-30), Death Zone entfernt |
+| **Regime Detection** | ✅ ATR-Ratio & Bollinger Band Width statt VIX |
+| **Learning Mode** | ✅ Threshold 16 statt 30, kein Hard Floor |
+| **LLM-Integration** | ✅ Deepseek Reasoning API für Post-Trade Analyse |
+| **Data Sources** | ✅ Bybit V5 (Primär), CryptoPanic (News), Yahoo Finance (FX) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
-| **Letztes Update** | April 2026 (v2.1.1 - Scoring Hotfix & Balanced Logic) |
+| **Letztes Update** | April 2026 (v3.0 - Architecture Refinement) |
 
 ---
 
-## 🎯 Aktueller Stand: Phase v2.1.1 — Scoring Hotfix (COMPLETED)
+## 🎯 Aktueller Stand: v3.0 Architecture Refinement (COMPLETED)
 
-> 🚀 **System-Status:** Rock-solid mit balanced deterministischer Trading-Engine
+> 🚀 **System-Status:** Professional deterministic trading mit symmetric scoring und strategy diversification
 > 📊 **Dashboard-Status:** Alle 7 Seiten implementiert und API-Integration stabil
 > 🔧 **Container-Status:** Vollständig neu aufgebaut mit sauberen Volumes und stabiler Konfiguration
-> ⚙️ **Config-System:** Hot-Reload implementiert, 4 Presets verfügbar
-> 🤖 **LLM-Status:** Deepseek Reasoning API für Post-Trade Analyse (Ollama entfernt)
-> 🔑 **API-Keys:** Alle kritischen API-Keys konfiguriert und validiert
-> 📡 **Data Sources:** Binance (stabil), CryptoPanic (News), Alpha Vantage (Macro), LunarCrush (optional)
-> 🧠 **Sentiment:** HuggingFace Models werden heruntergeladen und sind aktiv
-> 🎯 **Logic-Engine:** Sequentielle should_trade Logik implementiert
-> 🛡️ **Risk Management:** Conservative insufficient_data handling
-> ⚖️ **Scoring:** Balanced mit TA-Breakdown Transparenz und fairen Chancen
+> 🤖 **LLM-Status:** Deepseek Reasoning API für Post-Trade Analyse (kein LLM im Live Trading)
+> 📡 **Data Sources:** Bybit V5 (Single Source of Truth), CryptoPanic (News), Yahoo Finance (FX)
+> 🎯 **Logic-Engine:** Strategy Blending (A/B) mit regime-adaptiver Gewichtung
+> 🛡️ **Risk Management:** No Hard Blocks, Death Zone entfernt, Risk in Score gepreist
+> ⚖️ **Scoring:** Symmetric Bull/Bear, Sweep Signals (+30/-30), Mean Reversion Sub-Engine
 
 **Ziel:** Vollständige API-Integration mit stabilen Datenquellen und Sentiment-Analyse. Phase v2.2 ist abgeschlossen.
 

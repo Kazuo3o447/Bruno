@@ -1,15 +1,13 @@
-# Architektur-Manifest
+# Bruno v3 Architektur-Manifest
 
-> **Referenz: WINDSURF_MANIFEST.md v8.0**
+> **Version: 3.0.0 (April 2026)**
 >
-> ✅ **V8.0 Privacy-First News & Bybit Data Core:** Multi-Source News Ingestion (CryptoPanic, RSS, Tier-3 FreeCryptoNews) mit SHA256-Deduplizierung, Zero-Trust Defensive Architecture, Bybit V5 WebSocket als exklusive "Single Source of Truth", Complete Binance REST Purge
-> ✅ **V8.0 Mathematical Purity:** Präzise CVD Taker-Mathematik, VWAP/VPOC tägliche Resets, Trade-Deduplizierung via execution IDs, Zero Tolerance für Heuristiken
-> ✅ **V3.0 Bybit Data-Hub:** Bybit V5 WebSocket als primäre "Single Source of Truth", Binance Fallback (5s Heartbeat), Institutionelle CVD mit Bybit side-Field
-> ✅ **V3.0 Privacy & Stability:** CryptoPanic API (diskrete News), HF_TOKEN für HuggingFace, ConfigCache Singleton, CompositeScorer Logging Sync
-> ✅ **V2.2 Institutionelle Features:** Multi-Level Exit (TP1/TP2), ATR Trailing Stop, Volume Profile VPOC, Data Gap Veto, 1m Backtester
-> ✅ **V2.2 Purge Complete:** Max Pain & Google Trends entfernt, BinanceAnalyticsService entfernt, None-basierte Data-Gap-Behandlung
-> ✅ **Execution-State isoliert:** Position-spezifischer State statt globaler Flags
-> ✅ **Prompt 7 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware TA/Volume/Liq
+> ✅ **V3.0 Architecture Refinement:** Death Zone Removal, Symmetric Scoring, Sweep Signals, Mean Reversion Sub-Engine, ATR-Ratio Regime Detection, Learning Mode Optimization
+> ✅ **V3.0 Strategy Blending:** Trend Following + Mean Reversion mit regime-adaptiver Gewichtung (40%/30%/10%)
+> ✅ **V3.0 No Hard Blocks:** Risk wird in Score gepreist, keine Hard Direction Vetoes mehr
+> ✅ **V8.0 Bybit Data Core:** Bybit V5 WebSocket als exklusive "Single Source of Truth", Zero Binance REST
+> ✅ **V8.0 Privacy-First News:** Multi-Source News (CryptoPanic, RSS, FreeCryptoNews) mit SHA256-Deduplizierung
+> ✅ **Mathematical Purity:** Präzise CVD Taker-Mathematik, VWAP/VPOC tägliche Resets, Zero Tolerance für Heuristiken
 > ✅ **Primäre Umgebung:** Windows mit **Ryzen 7 7800X3D + RX 7900 XT** (Cloud API Trading Stack)
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
@@ -112,7 +110,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 ---
 
-## V8.0 Datenquellen-Architektur (Privacy-First News & Bybit Core)
+## V3.0 Datenquellen-Architektur (Bybit Core + Advanced Indicators)
 
 ### News Ingestion (Multi-Source, SHA256 Deduplizierung, Zero-Trust Architecture)
 ```
@@ -153,13 +151,14 @@ for trade in message["data"]:
             self.current_1m_taker_sell += vol
 ```
 
-### V8.0 Purge Status
-- ✅ **BinanceAnalyticsService** komplett entfernt
-- ✅ **Max Pain** bereits deaktiviert  
-- ✅ **Google Trends** nicht vorhanden
-- ✅ **Alle Binance REST Calls** aus ContextAgent entfernt
-- ✅ **Bybit V5** als exklusive Datenquelle
-- **Fehlerbehandlung** mit Retry-Logic und Fallbacks
+### V3.0 New Features
+- ✅ **Bollinger Bands** für Regime Detection (BB-Width)
+- ✅ **ATR-Ratio** (ATR/Price) für Volatilitäts-Normalisierung
+- ✅ **Sweep Signals** (+30/-30) mit 5min TTL
+- ✅ **Mean Reversion Score** (-50..+50) für Contrarian-Trades
+- ✅ **Strategy Blending** (Trend Following + Mean Reversion)
+- ❌ **Death Zone Veto** entfernt - Clusters sind Opportunities
+- ❌ **Conviction Gates** entfernt - nur Threshold Gate
 
 **Unterstützte Endpunkte:**
 ```python

@@ -1,117 +1,189 @@
-# Bruno v2.1.1 Trading Logic (Multi-Strategy Architecture + Scoring Hotfix)
+# Bruno v3.0 Trading Logic
 
 ## 1. Purpose
 
-Bruno v2.1.1 is a **multi-strategy institutional** deterministic trading system with zero tolerance for heuristics and logic bugs. The system features:
+Bruno v3.0 is a **deterministic institutional** trading system with zero tolerance for heuristics and hard blocks. The system features:
 
-1. **Multi-Strategy Architecture** - 3 unkorrelierte Strategie-Slots (Trend, Sweep, Funding)
-2. **Scaled Entry Engine** - Pyramiding für Trend-Strategie (40%/30%/30% Tranchen)
-3. **Professional Position Sizing** - Risk-based mit Leverage-Effizienz und Fee-Awareness
-4. **Portfolio-Level Risk Management** - Max 80% Exposure, Slot-Isolation
-5. **Macro Trend Filter** - Daily EMA 50/200 moderate penalties (50% statt 80%)
-6. **OFI Pipeline Quality Gate** - Datenqualitäts-Checks für Order Flow
-7. **RegimeConfig Integration** - Regime-spezifische Trading-Regeln
-8. **Sequential should_trade Logic** - Deterministische Entscheidungsreihenfolge
-9. **Robust Data Sources** - Retry-Logik für alle externen APIs
-10. **Dynamic FX Rates** - EUR/USD via Yahoo Finance mit Redis-Cache
-11. **Balanced Scoring** - Keine zusätzlichen Conviction-Blocker
-12. **Detailed TA Breakdown** - Vollständige Score-Komponenten-Transparenz
-13. **Binance Hedge Mode** - Gleichzeitige Long+Short Positionen
-14. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
-15. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
+1. **Strategy Blending (A/B)** - Trend Following + Mean Reversion mit regime-adaptiver Gewichtung
+2. **Sweep Signal Integration** - Professional Liquidity Sweep Detection (+30/-30, 5min TTL)
+3. **Symmetric Scoring Logic** - Faire Bull/Bear Behandlung (keine Asymmetrie mehr)
+4. **No Hard Blocks** - Risk wird in Score gepreist, nicht geblockt
+5. **ATR-Ratio Regime Detection** - Volatilität normalisiert auf Preis statt VIX
+6. **Bollinger Bands** - BB-Width für präzise Regime-Erkennung
+7. **Death Zone Removal** - Liquidation Clusters als Opportunities, nicht Gefahren
+8. **Learning Mode Optimization** - Threshold 16 statt 30, kein Hard Floor
+9. **Sequential should_trade Logic** - Deterministische Entscheidungsreihenfolge
+10. **Robust Data Sources** - Bybit V5 WebSocket als Single Source of Truth
+11. **Balanced Scoring** - Keine Conviction-Blocker, nur Threshold Gate
+12. **Bybit V5 Single Source** - Exklusive WebSocket-Daten mit präziser CVD
+13. **Privacy-First News** - Multi-Source News mit SHA256 Deduplizierung
+14. **Deepseek API** - Post-Trade Analyse (kein LLM im Live Trading)
 
-The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing professional multi-strategy risk management and **balanced scoring logic**.
+The system maintains **100% deterministic live trading** with **zero heuristics** policy while implementing symmetric scoring and strategy diversification.
 
-## 2. Data Flow Overview (v2.1.1 Scoring Hotfix)
+## 2. Data Flow Overview (v3.0)
 
 ```text
 Bybit V5 WebSocket → BybitV5Client → Redis (CVD, VWAP, VPOC)
     ↓
 News Sources (CryptoPanic, RSS, Free-Crypto-News) → NewsIngestionService → SentimentAnalyzer
     ↓
-TechnicalAnalysisAgent → bruno:ta:snapshot (Detailed TA Breakdown + Moderate Macro Penalties)
+TechnicalAnalysisAgent → bruno:ta:snapshot
+    ├── Bollinger Bands (BB-Width)
+    ├── ATR-Ratio (ATR/Price)
+    ├── EMA Stack, RSI, VWAP
+    └── Macro Trend (Daily EMA 50/200)
     ↓
-ContextAgent → bruno:context:grss (GRSS v3, Funding Rate, EUR/USD from Yahoo Finance)
+Liquidity Engine → bruno:liq:intelligence
+    ├── Sweep Detection (3× confirmation)
+    ├── Sweep Signal (+30/-30, 5min TTL)
+    └── Liquidation Clusters (opportunities, no veto)
     ↓
-QuantAgentV4 → Multi-Strategy Dispatch (Trend/Sweep/Funding + Cooldowns)
+ContextAgent → bruno:context:grss (GRSS v3, Funding Rate, EUR/USD)
     ↓
-StrategyManager → Portfolio Risk Checks → Slot Allocation
+CompositeScorer → bruno:decisions:feed
+    ├── Strategy A: Trend Following (TA + Liq + Flow + Macro)
+    ├── Strategy B: Mean Reversion (RSI + VWAP Distance)
+    ├── Strategy Blending (regime-adaptive: 40%/30%/10%)
+    └── Symmetric Scoring (Bull/Bear balanced)
     ↓
-CompositeScorer → Sequential Signal Generation (Threshold → Conviction → Regime → Macro → Sizing)
+Regime Detector (v3)
+    ├── ATR-Ratio > 2.5% → high_vola
+    ├── BB-Width > 4.0% → high_vola
+    └── EMA Stack + Macro Trend + Vola-Filter
     ↓
-ScaledEntryEngine → Tranche Management (Trend-Slot)
+Risk Agent (v3)
+    ├── Data Freshness Checks
+    ├── Daily Drawdown Limit
+    └── ✅ Death Zone REMOVED (no veto)
     ↓
-ExecutionAgentV4 → Slot-Aware Order Execution
+Execution Agent
+    ├── Paper Trading Only (PAPER_TRADING_ONLY=true)
+    ├── Multi-Level TP (TP1 50% / TP2 50%)
+    └── Breakeven Stop @ +0.5%
     ↓
 PositionTracker → Multi-Slot Position Management
 ```
 
-### 2.1 Critical Logic Fixes (v2.1)
+### 2.1 v3 Architecture Changes
 
-**🔴 SHOWSTOPPER BUGS FIXED:**
+**🔴 MAJOR ARCHITECTURE REFINEMENTS:**
 
-1. **Sequential should_trade Logic** - Regime/Macro-Blöcke können nicht von Threshold überschrieben werden
-2. **Single OFI Penalty** - Keine Vierfach-Strafe mehr (nur Threshold +8 + Conviction*0.5)
-3. **Conservative insufficient_data** - Bei <200 Daily Candles: keine Longs/Shorts
-4. **F&G Retry Logic** - 5× Retry mit exponentiellem Backoff + 6h Polling
-5. **Dynamic EUR/USD** - Yahoo Finance API statt hardcoded 1.08
+1. **Death Zone Removal** - Liquidation Clusters sind jetzt Trading-Opportunities, kein Veto mehr
+2. **Symmetric Scoring** - Macro Bull + Long erhält +20% Bonus (wie Bear + Short)
+3. **Sweep Signal Integration** - +30/-30 Score mit 5min TTL für SSL/BSL Sweeps
+4. **Mean Reversion Sub-Engine** - Contrarian Strategy mit RSI + VWAP Distance (-50..+50)
+5. **Strategy Blending (A/B)** - Trend Following + Mean Reversion mit regime-adaptiver Gewichtung
+6. **ATR-Ratio Regime Detection** - Volatilität normalisiert auf Preis statt VIX
+7. **Bollinger Bands** - BB-Width für präzise Regime-Erkennung
+8. **Learning Mode Optimization** - Threshold 16 statt 30, kein Hard Floor
+9. **Conviction Gates Removed** - Nur Threshold Gate, keine Conviction-Blocker
 
-### 2.2 Multi-Strategy Slots
+### 2.2 Strategy Blending (A/B)
 
-**3 unabhängige Strategie-Slots mit eigenem Kapital und Risk Management:**
+**Zwei Strategien werden regime-adaptiv kombiniert:**
 
 ```python
-STRATEGY_SLOTS = {
-    "trend": StrategySlot(
-        capital_allocation_pct=0.40,  # 40% des Kapitals
-        max_leverage=3,
-        scaled_entry_enabled=True,      # Pyramiding
-        sl_atr_mult=1.5,                # 1.5× ATR SL
-        tp_atr_mult=3.0,                # 3.0× ATR TP
-    ),
-    "sweep": StrategySlot(
-        capital_allocation_pct=0.30,  # 30% des Kapitals
-        max_leverage=4,                 # Aggressiver
-        scaled_entry_enabled=False,     # Sofortige Entry
-        sl_atr_mult=1.0,                # Enger SL
-        max_hold_minutes=120,           # 2h Max
-    ),
-    "funding": StrategySlot(
-        capital_allocation_pct=0.30,  # 30% des Kapitals
-        max_leverage=2,                 # Konservativ
-        sl_atr_mult=2.0,                # Weiter SL
-        max_hold_minutes=480,           # 8h Max
-    ),
+# Strategy A: Trend Following (TA + Liq + Flow + Macro)
+strategy_a_score = (
+    ta_score * weights["ta"] +
+    (liq_score * 2) * weights["liq"] +
+    (flow_score * 2) * weights["flow"] +
+    (macro_score * 2) * weights["macro"]
+)
+
+# Strategy B: Mean Reversion (RSI + VWAP Distance)
+strategy_b_score = mean_reversion_score * 2  # Normalize to -100..+100
+
+# Blend Ratio by Regime
+blend_ratios = {
+    "ranging": 0.4,        # 40% MR, 60% Trend
+    "high_vola": 0.3,      # 30% MR, 70% Trend
+    "trending_bull": 0.1,  # 10% MR, 90% Trend
+    "bear": 0.1,           # 10% MR, 90% Trend
+    "default": 0.2         # 20% MR, 80% Trend
 }
+
+# Final Composite
+composite = (strategy_a * (1 - blend)) + (strategy_b * blend)
 ```
 
-### 2.2 Scaled Entry Engine (Trend-Slot)
+### 2.3 Mean Reversion Sub-Engine
 
-**Pyramiding statt All-In Entry:**
+**Contrarian Strategy für überkaufte/überverkaufte Zustände:**
 
 ```python
-# Tranche 1 (40%): Sofort bei Signal
-# Tranche 2 (30%): Bei +0.5% Bestätigung
-# Tranche 3 (30%): Bei +1.0% Breakout
+# RSI Extremes (±20 Punkte)
+if rsi < 20:   score += 20  # Stark oversold → bullish
+elif rsi < 30: score += 15  # Oversold
+elif rsi < 40: score += 8   # Leicht oversold
 
-tranches = [
-    {"number": 1, "size_pct": 0.40, "trigger_price": entry_price},
-    {"number": 2, "size_pct": 0.30, "trigger_price": entry_price * 1.005},
-    {"number": 3, "size_pct": 0.30, "trigger_price": entry_price * 1.010},
+elif rsi > 80:   score -= 20  # Stark overbought → bearish
+elif rsi > 70:   score -= 15  # Overbought
+elif rsi > 60:   score -= 8   # Leicht overbought
+
+# VWAP Distanz (±15 Punkte)
+vwap_distance_pct = ((price - vwap) / vwap) * 100
+if vwap_distance_pct < -1.5:   score += 15  # Preis >1.5% unter VWAP
+elif vwap_distance_pct < -0.8: score += 8
+elif vwap_distance_pct > 1.5:  score -= 15  # Preis >1.5% über VWAP
+elif vwap_distance_pct > 0.8:  score -= 8
+
+# Regime-Adjustment
+if regime in ("trending_bull", "bear"):
+    score *= 0.5  # 50% Reduktion in Trends
+elif regime == "high_vola":
+    score *= 0.7  # 30% Reduktion bei hoher Vola
+```
+
+**Output:** Mean Reversion Score: -50 bis +50
+
+### 2.4 Sweep Signal (+30/-30)
+
+**Professional Liquidity Sweep Detection mit 3-facher Bestätigung:**
+
+```python
+# Sweep-Bedingungen (ALLE müssen erfüllt sein):
+1. Liquidation Spike: >$500k in 5 Minuten, >70% eine Seite
+2. Wick Formation: Bullish/Bearish Hammer (aus TA Snapshot)
+3. OI Delta: Open Interest fällt (Positionen schließen, nicht neu eröffnen)
+
+# Scoring:
+SSL Sweep (longs liquidated) → +30 Score (bullish)
+BSL Sweep (shorts liquidated) → -30 Score (bearish)
+
+# TTL: 5 Minuten (300 Sekunden)
+self._active_sweep_signals = [
+    {"side": "long", "score": 30.0, "expiry": now + 300}
 ]
 ```
 
-### 2.3 Professional Position Sizing
+### 2.5 Regime Detection (v3 - ATR-Ratio)
 
-**Risk-based mit Fee-Awareness:**
+**Volatilität normalisiert auf Preis statt VIX:**
 
 ```python
-# Risiko = fix 2% des SLOT-Kapitals
-# Position = Risiko ÷ SL-Distanz
-# R:R > 1.5 nach Fees erforderlich
+# ATR-Ratio: Volatilität relativ zum Preis
+atr = float(ta_data.get("atr_14", 0.0))
+price = float(ta_data.get("price", 0.0))
+atr_ratio = (atr / price * 100) if price > 0 else 0.0
 
-position_size_usd = slot_capital * 0.02 / sl_pct
-fees_round_trip = position_size_usd * 0.0008
+# BB-Width: Bollinger Band Breite
+bb_data = ta_data.get("bollinger_bands", {})
+bb_width = float(bb_data.get("width", 0.0))
+
+# High Volatility Detection
+if atr_ratio > 2.5 or bb_width > 4.0:
+    return "high_vola"
+
+# Trend Detection mit Volatilitäts-Filter
+if ema_stack in ("perfect_bull", "bull"):
+    if atr_ratio > 1.8:
+        return "ranging"  # Zu hohe Vola bricht Trend
+    return "trending_bull" if atr_ratio < 1.0 else "ranging"
+```
+
+### 2.6 Learning Mode Optimization
 rr_after_fees = (tp_profit - fees) / (sl_loss + fees)
 ```
 

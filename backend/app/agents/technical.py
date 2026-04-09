@@ -486,6 +486,43 @@ class TechnicalAnalysisAgent(PollingAgent):
         
         return sum(true_ranges[-period:]) / period
 
+    def _calc_bollinger_bands(self, candles: List[Dict], period: int = 20, std_dev: float = 2.0) -> dict:
+        """
+        Berechnet Bollinger Bands (20, 2) für Regime-Detection.
+        
+        Returns:
+        - upper: Oberes Band (SMA + 2×STD)
+        - middle: Mittleres Band (SMA)
+        - lower: Unteres Band (SMA - 2×STD)
+        - width: Bandbreite in % ((upper - lower) / middle)
+        - position: Preisposition (0 = unteres Band, 1 = oberes Band)
+        """
+        if len(candles) < period:
+            return {"upper": 0.0, "middle": 0.0, "lower": 0.0, "width": 0.0, "position": 0.5}
+        
+        closes = [c["close"] for c in candles]
+        sma = sum(closes[-period:]) / period
+        
+        # Standardabweichung
+        variance = sum((x - sma) ** 2 for x in closes[-period:]) / period
+        std = variance ** 0.5
+        
+        upper = sma + (std_dev * std)
+        lower = sma - (std_dev * std)
+        
+        width = ((upper - lower) / sma) * 100 if sma > 0 else 0.0
+        
+        current_price = closes[-1]
+        position = (current_price - lower) / (upper - lower) if (upper - lower) > 0 else 0.5
+        
+        return {
+            "upper": round(upper, 2),
+            "middle": round(sma, 2),
+            "lower": round(lower, 2),
+            "width": round(width, 4),
+            "position": round(max(0.0, min(1.0, position)), 4)
+        }
+
     def _check_mtf_alignment(self, c5m, c15m, c1h, c4h) -> dict:
         """
         Multi-Timeframe EMA-Alignment.
@@ -1069,6 +1106,10 @@ class TechnicalAnalysisAgent(PollingAgent):
                 # Short-Signal im Bärenmarkt = verstärken
                 score *= 1.2  # 20% Bonus statt 30% - moderater
                 signals.append("Macro Bear confirms short signal")
+            elif mt == "macro_bull" and score > 0:
+                # Long-Signal im Bullenmarkt = verstärken
+                score *= 1.2  # 20% Bonus - symmetrisch zu macro_bear + short
+                signals.append("Macro Bull confirms long signal")
             elif mt == "macro_bull" and score < 0:
                 # Short-Signal im Bullenmarkt = abschwächen
                 original_score = score
@@ -1267,6 +1308,9 @@ class TechnicalAnalysisAgent(PollingAgent):
             vwap    = self._calc_vwap(candles_15m)
             atr_14  = self._calc_atr(candles_1h, 14)
             
+            # NEU: Bollinger Bands für Regime-Detection (Bruno v3)
+            bollinger_bands = self._calc_bollinger_bands(candles_1h, period=20, std_dev=2.0)
+            
             # 3. Multi-Timeframe EMA-Alignment
             mtf = self._check_mtf_alignment(candles_5m, candles_15m, candles_1h, candles_4h)
             
@@ -1329,6 +1373,8 @@ class TechnicalAnalysisAgent(PollingAgent):
                 "regime_used": regime,  # Für Debugging
                 # NEU: Macro Trend Filter
                 "macro_trend": macro_trend,
+                # NEU: Bollinger Bands für Regime-Detection (Bruno v3)
+                "bollinger_bands": bollinger_bands,
                 # HOTFIX: TA-Breakdown für Debugging
                 "ta_breakdown": ta_score.get("ta_breakdown", {}),
             }

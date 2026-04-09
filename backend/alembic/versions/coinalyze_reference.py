@@ -5,7 +5,6 @@ Unabhängige externe Datenquelle für Backtests.
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ
 
 revision = "coinalyze_reference"
 down_revision = None  # Ändere dies je nach deiner aktuellsten Migration
@@ -22,7 +21,7 @@ def upgrade():
     # OHLCV Candles
     op.create_table(
         "coinalyze_candles",
-        sa.Column("time", TIMESTAMPTZ, nullable=False),
+        sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("symbol", sa.Text, nullable=False),
         sa.Column("interval", sa.Text, nullable=False),
         sa.Column("open", sa.Numeric, nullable=False),
@@ -41,7 +40,7 @@ def upgrade():
     # Liquidations
     op.create_table(
         "coinalyze_liquidations",
-        sa.Column("time", TIMESTAMPTZ, nullable=False),
+        sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("symbol", sa.Text, nullable=False),
         sa.Column("interval", sa.Text, nullable=False),
         sa.Column("long_liquidations_usd", sa.Numeric),
@@ -56,7 +55,7 @@ def upgrade():
     # Open Interest
     op.create_table(
         "coinalyze_open_interest",
-        sa.Column("time", TIMESTAMPTZ, nullable=False),
+        sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("symbol", sa.Text, nullable=False),
         sa.Column("interval", sa.Text, nullable=False),
         sa.Column("open_interest_open", sa.Numeric),
@@ -73,7 +72,7 @@ def upgrade():
     # Funding Rate
     op.create_table(
         "coinalyze_funding",
-        sa.Column("time", TIMESTAMPTZ, nullable=False),
+        sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("symbol", sa.Text, nullable=False),
         sa.Column("interval", sa.Text, nullable=False),
         sa.Column("funding_open", sa.Numeric),
@@ -90,7 +89,7 @@ def upgrade():
     # Long/Short Ratio
     op.create_table(
         "coinalyze_long_short_ratio",
-        sa.Column("time", TIMESTAMPTZ, nullable=False),
+        sa.Column("time", sa.TIMESTAMP(timezone=True), nullable=False),
         sa.Column("symbol", sa.Text, nullable=False),
         sa.Column("interval", sa.Text, nullable=False),
         sa.Column("long_short_ratio", sa.Numeric),

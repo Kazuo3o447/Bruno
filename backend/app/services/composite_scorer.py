@@ -24,6 +24,7 @@ class CompositeSignal:
     liq_score: float = 0.0
     flow_score: float = 0.0
     macro_score: float = 0.0
+    mean_reversion_score: float = 0.0  # NEU: Mean Reversion Sub-Engine
     conviction: float = 0.0
     position_size_pct: float = 0.0
     stop_loss_pct: float = 0.010
@@ -54,6 +55,7 @@ class CompositeSignal:
             "liq_score": self.liq_score,
             "flow_score": self.flow_score,
             "macro_score": self.macro_score,
+            "mean_reversion_score": self.mean_reversion_score,
             "conviction": self.conviction,
             "stop_loss_pct": self.stop_loss_pct,
             "take_profit_pct": self.take_profit_pct,
@@ -94,6 +96,7 @@ class CompositeSignal:
             "liq_score": self.liq_score,
             "flow_score": self.flow_score,
             "macro_score": self.macro_score,
+            "mean_reversion_score": self.mean_reversion_score,
             "weight_preset": self.weight_preset,
             "take_profit_1_pct": self.take_profit_1_pct,
             "take_profit_2_pct": self.take_profit_2_pct,
@@ -138,21 +141,23 @@ class CompositeScorer:
         # Extract macro trend from TA data
         macro_trend = ta_data.get("macro_trend", {})
         
-        # 2. Einzelscores
+        # 2. Regime bestimmen → Gewichte wählen (NEU: dynamisch)
+        regime = self._determine_regime(ta_data, macro_data)
+        result.regime = regime
+        
+        # 3. Einzelscores
         ta_score = self._score_ta(ta_data)
         liq_score = self._score_liq(liq_data)
         analytics_data = await self.redis.get_cache("bruno:binance:analytics") or {}
         flow_score = await self._score_flow(flow_data, macro_data, analytics_data)
         macro_score = self._score_macro(macro_data)
+        mean_reversion_score = self._score_mean_reversion(ta_data, regime)
         
         result.ta_score = ta_score
         result.liq_score = liq_score
         result.flow_score = flow_score
         result.macro_score = macro_score
-
-        # 3. Regime bestimmen → Gewichte wählen (NEU: dynamisch)
-        regime = self._determine_regime(ta_data, macro_data)
-        result.regime = regime
+        result.mean_reversion_score = mean_reversion_score
 
         trend_strength = float(ta_data.get("trend", {}).get("strength", 0.0))
         weights = self._get_weights(regime, trend_strength)
@@ -163,15 +168,37 @@ class CompositeScorer:
         sweep = liq_data.get("sweep", {})
         result.sweep_confirmed = sweep.get("all_confirmed", False)
         
-        # 4. Gewichteter Composite Score
-        # TA: -100..+100, Liq/Flow/Macro: -50..+50 (×2 normalisiert auf 100)
-        composite = (
+        # 4. Strategy Blending (A/B)
+        # Strategy A (Trend Following): TA + Liq + Flow + Macro
+        # Strategy B (Mean Reversion): Mean Reversion Score
+        # Blend ratio based on regime: Ranging = more B, Trending = more A
+        
+        strategy_a_score = (
             ta_score * weights["ta"] +
             (liq_score * 2) * weights["liq"] +
             (flow_score * 2) * weights["flow"] +
             (macro_score * 2) * weights["macro"]
         )
+        
+        # Blend ratio: 0.0 = pure A, 1.0 = pure B
+        if regime == "ranging":
+            blend_ratio = 0.4  # 40% Mean Reversion, 60% Trend Following
+        elif regime == "high_vola":
+            blend_ratio = 0.3  # 30% Mean Reversion, 70% Trend Following
+        elif regime in ("trending_bull", "bear"):
+            blend_ratio = 0.1  # 10% Mean Reversion, 90% Trend Following
+        else:
+            blend_ratio = 0.2  # Default: 20% Mean Reversion
+        
+        # Normalize mean_reversion_score from -50..+50 to -100..+100 for blending
+        mr_normalized = mean_reversion_score * 2
+        
+        # Blend Strategy A and B
+        composite = (strategy_a_score * (1 - blend_ratio)) + (mr_normalized * blend_ratio)
         result.composite_score = round(max(-100, min(100, composite)), 1)
+        
+        if blend_ratio > 0.2:
+            result.signals_active.append(f"Strategy Blend: {blend_ratio*100:.0f}% Mean Reversion ({regime} regime)")
 
         # 4b. Signal-Confluence-Bonus (NEU)
         # Wenn 3+ unabhängige Signal-Quellen in dieselbe Richtung zeigen,
@@ -624,29 +651,63 @@ class CompositeScorer:
         return round(max(-50, min(50, score)), 1)
 
     def _determine_regime(self, ta_data, macro_data) -> str:
-        """Deterministische Regime-Bestimmung mit Macro Trend Override."""
-        trend = ta_data.get("trend", {})
-        vix = float(macro_data.get("VIX", 20.0))
+        """
+        Regime-Bestimmung mit ATR-Ratio und BB-Width (Bruno v3).
+        
+        Metriken:
+        - ATR-Ratio: ATR(14) / Preis (Volatilitätsmaß)
+        - BB-Width: Bollinger Band Breite in % (Volatilitätsmaß)
+        - Macro Trend: Daily-Trend für Kontext
+        
+        Regime-Logik:
+        - high_vola: ATR-Ratio > 2.5% oder BB-Width > 4%
+        - trending_bull: EMA Stack bull + Macro Bull + moderate Volatilität
+        - bear: EMA Stack bear
+        - ranging: Default bei gemischten Signalen
+        """
+        # ATR-Ratio berechnen
+        atr = float(ta_data.get("atr_14", 0.0))
+        price = float(ta_data.get("price", 0.0))
+        atr_ratio = (atr / price * 100) if price > 0 else 0.0
+        
+        # BB-Width aus TA-Daten (wenn verfügbar, sonst schätzen)
+        bb_data = ta_data.get("bollinger_bands", {})
+        bb_width = float(bb_data.get("width", 0.0))
+        
+        # Macro Trend für Kontext
         macro_trend = ta_data.get("macro_trend", {})
         mt = macro_trend.get("macro_trend", "unknown")
         
-        if vix > 35: return "high_vola"
+        # 1. High Volatility Detection (ATR-Ratio oder BB-Width)
+        if atr_ratio > 2.5 or bb_width > 4.0:
+            return "high_vola"
         
-        # MACRO OVERRIDE: Daily-Trend schlägt 1h-Trend
+        # 2. Trend Detection mit Macro Override
+        trend = ta_data.get("trend", {})
+        ema_stack = trend.get("ema_stack", "mixed")
+        
+        # Macro Override: Daily-Trend schlägt 1h-Trend
         if mt == "macro_bear":
-            ema_stack = trend.get("ema_stack", "mixed")
             if ema_stack in ("perfect_bull", "bull"):
                 # 1h bull in daily bear = RANGING (Bear Market Rally!)
-                return "ranging"  # NICHT trending_bull!
+                return "ranging"
             return "bear"
         
-        ema_stack = trend.get("ema_stack", "mixed")
-        if ema_stack in ("perfect_bull", "bull"):
-            if mt == "macro_bull":
+        if mt == "macro_bull":
+            if ema_stack in ("perfect_bull", "bull"):
                 return "trending_bull"  # Nur wenn AUCH daily bull
             return "ranging"  # 1h bull ohne daily confirmation = ranging
+        
+        # Ohne klaren Macro-Trend: EMA Stack entscheidet
+        if ema_stack in ("perfect_bull", "bull"):
+            # Prüfe Volatilität: zu hohe Vola = nicht trending
+            if atr_ratio > 1.8:
+                return "ranging"  # Hohe Vola bricht Trend
+            return "trending_bull" if atr_ratio < 1.0 else "ranging"
         elif ema_stack in ("perfect_bear", "bear"):
             return "bear"
+        
+        # Default: Ranging bei gemischten Signalen
         return "ranging"
 
     def _score_ta(self, ta_data: dict) -> float:
@@ -664,11 +725,71 @@ class CompositeScorer:
         # GRSS: 0-100, konvertiere zu -50 bis +50 (50 = neutral)
         return round(grss - 50, 1)
 
+    def _score_mean_reversion(self, ta_data: dict, regime: str) -> float:
+        """
+        Mean Reversion Sub-Engine Score -50 bis +50.
+        
+        Signalisiert überkauft/überverkauft Zustände für Kontrarian-Trades.
+        Höherer Score = bullish mean reversion (buy dip), negativer = bearish (sell rip).
+        
+        Komponenten:
+        - RSI Extrem (oversold/overbought)
+        - VWAP Distanz
+        - Bollinger Band Position (wenn verfügbar)
+        - Support/Resistance Nähe
+        """
+        score = 0.0
+        
+        # RSI aus TA-Daten
+        rsi = float(ta_data.get("rsi", 50.0))
+        vwap = float(ta_data.get("vwap", 0.0))
+        price = float(ta_data.get("price", 0.0))
+        
+        if price <= 0 or vwap <= 0:
+            return 0.0
+        
+        # 1. RSI Mean Reversion (±20 Punkte)
+        # RSI < 25 = stark oversold (bullish MR), RSI > 75 = stark overbought (bearish MR)
+        if rsi < 20:
+            score += 20  # Stark oversold
+        elif rsi < 30:
+            score += 15  # Oversold
+        elif rsi < 40:
+            score += 8   # Leicht oversold
+        elif rsi > 80:
+            score -= 20  # Stark overbought
+        elif rsi > 70:
+            score -= 15  # Overbought
+        elif rsi > 60:
+            score -= 8   # Leicht overbought
+        
+        # 2. VWAP Distanz (±15 Punkte)
+        # Preis weit unter VWAP = bullish MR, weit über = bearish MR
+        vwap_distance_pct = ((price - vwap) / vwap) * 100
+        
+        if vwap_distance_pct < -1.5:  # Preis >1.5% unter VWAP
+            score += 15
+        elif vwap_distance_pct < -0.8:
+            score += 8
+        elif vwap_distance_pct > 1.5:  # Preis >1.5% über VWAP
+            score -= 15
+        elif vwap_distance_pct > 0.8:
+            score -= 8
+        
+        # 3. Regime-Adjustment
+        # In trending Märkten ist Mean Reversion riskanter → reduziere Score
+        if regime in ("trending_bull", "bear"):
+            score *= 0.5  # 50% Reduktion in starken Trends
+        elif regime == "high_vola":
+            score *= 0.7  # 30% Reduktion bei hoher Volatilität
+        
+        return round(max(-50, min(50, score)), 1)
+
     def _get_threshold(self, atr: float = 0.0, price: float = 0.0, macro_data: dict = None) -> float:
         """Adaptiver Threshold: Basis × Volatilitäts-Multiplikator × Event-Multiplikator."""
         learning_enabled = ConfigCache.get("LEARNING_MODE_ENABLED", False)
         if learning_enabled:
-            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 30))
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 16))  # Lowered to 16 for Bruno v3
         else:
             base = float(ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 40))
 
@@ -687,8 +808,11 @@ class CompositeScorer:
                 event_mult = float(active_event.get("threshold_mult", 1.0))
                 self.logger.info(f"Event Guard: {active_event.get('name')} — Threshold ×{event_mult}")
 
-        # HARD FLOOR: Threshold darf NIEMALS unter 25 fallen
-        return round(max(25.0, base * vol_mult * event_mult), 1)
+        # HARD FLOOR: In Learning Mode, allow lower thresholds (no floor), in Prod: min 25
+        if learning_enabled:
+            return round(base * vol_mult * event_mult, 1)  # No floor in Learning Mode
+        else:
+            return round(max(25.0, base * vol_mult * event_mult), 1)  # Prod floor at 25
 
     def _calc_sl_tp(self, atr: float, price: float, abs_score: float, regime="unknown") -> tuple:
         """
