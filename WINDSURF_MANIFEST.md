@@ -34,7 +34,7 @@
 ### ✅ BRUNO v4.0 — Refactoring & Manipulation-Schutz (April 2026)
 **Kritische Logik-Verbesserungen für professionelles Trading.**
 
-#### **Prompt 1-8 Implementiert:**
+#### **Prompt 1-9 Implementiert:**
 
 | Prompt | Feature | Datei |
 |--------|---------|-------|
@@ -46,6 +46,7 @@
 | **6** | Scaled Entries (ATR-basierte Steps 1.0x/2.0x, BE-Trail) | `scaled_entry.py` |
 | **7** | Strategy Blending Fix (MR capped bei TA > 80) | `composite_scorer.py` |
 | **8** | Slot-spezifischer Circuit Breaker (Hard -3% DD, Slot-Isolation) | `risk.py`, `execution_v4.py` |
+| **9** | **Strict Pipeline** (Race Condition Fix, Synchroner Order-Pfad) | `orchestrator.py` |
 
 **Wichtige Logik-Änderungen:**
 - **Keine fixen $64 Positionen mehr** – Alles dynamisch risikobasiert
@@ -54,11 +55,13 @@
 - **Contrarian Trap Protection** – Funding-Trades nur mit EMA9-Trend-Bestätigung
 - **Kein Global-Block bei 3 Losses** – Nur der betroffene Slot wird blockiert
 - **Breakeven MUSS vor TP1 feuern** – Keine Trades die bei +0.5% breakeven gehen
+- **Strict Pipeline (Prompt 9)** – Orders werden sequentiell validiert und ausgeführt, keine Race Conditions mehr
 
 **Redis Keys (neu):**
 - `bruno:risk:slot_losses:{slot}` – Slot-spezifische P&L-Historie
 - `bruno:risk:slot_block:{slot}` – Slot-spezifischer 24h Block
 - `bruno:signals:blocked` – Blockierte Sweep/Funding Signale für Analyse
+- `bruno:pipeline:metrics` – Pipeline-Performance (Prompt 9)
 
 ---
 

@@ -128,7 +128,13 @@ async def main():
     orchestrator = AgentOrchestrator(deps)
     orchestrator.register("ingestion", IngestionAgentV2(deps))
     orchestrator.register("technical", TechnicalAnalysisAgent(deps))
-    orchestrator.register("quant", QuantAgentV4(deps, symbol="BTCUSDT"))
+    # PROMPT 9: QuantAgent mit Strict Pipeline Callback initialisieren
+    # Der Orchestrator's submit_signal_for_validation Methode wird als Callback übergeben
+    orchestrator.register("quant", QuantAgentV4(
+        deps, 
+        symbol="BTCUSDT",
+        signal_submit_callback=orchestrator.submit_signal_for_validation
+    ))
     orchestrator.register("context", ContextAgent(deps))
     orchestrator.register("sentiment", SentimentAgent(deps))
     orchestrator.register("risk", RiskAgent(deps))

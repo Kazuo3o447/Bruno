@@ -225,6 +225,51 @@ if all(p < 0 for p in slot_losses[-3:]):
     # Andere Slots laufen weiter!
 ```
 
+#### **V4.0 Strict Pipeline (Prompt 9)**
+```python
+# PROMPT 9: Race Condition Fix - Synchroner Order-Pfad
+
+# 1. QuantAgent generiert Signal
+signal = await quant_agent.generate_signal()
+
+# 2. Signal wird via Callback an Orchestrator eingereiht
+submitted = await orchestrator.submit_signal_for_validation(signal)
+
+# 3. Strict Pipeline verarbeitet sequentiell:
+async def _run_strict_pipeline():
+    signal = await signal_queue.get()
+    
+    # SYNCHRONER AWAIT: RiskAgent holt FRISCHEN Portfolio-State
+    order_payload = await risk_agent.validate_and_size_order(signal)
+    
+    if order_payload is None:
+        return  # Signal abgelehnt
+    
+    # SYNCHRONER AWAIT: ExecutionAgent führt Order atomar aus
+    await execution_agent.execute_order(order_payload)
+
+# Vorteile:
+# - Keine Race Conditions zwischen Signalgen. und Portfolio-Validierung
+# - Frischer Portfolio-State bei jeder Validierung
+# - Atomare Order-Ausführung
+# - Deterministische Reihenfolge
+```
+
+**Pipeline Flow:**
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────┐     ┌──────────────┐
+│ QuantAgent  │────▶│ Orchestrator     │────▶│ RiskAgent   │────▶│ ExecutionAgent│
+│             │     │ (Strict Pipeline)│     │             │     │              │
+└─────────────┘     └──────────────────┘     └─────────────┘     └──────────────┘
+       │                      │                      │                    │
+       │  Callback            │  await validate      │  await execute     │
+       │  submit_signal       │  _and_size_order   │  _order            │
+       │                      │                      │                    │
+       ▼                      ▼                      ▼                    ▼
+   Signal Queue          Fresh State             Order Payload      Order Executed
+   (asyncio.Queue)       Check                     (validated)        (atomic)
+```
+
 ### V3.0 New Features
 - ✅ **Bollinger Bands** für Regime Detection (BB-Width)
 - ✅ **ATR-Ratio** (ATR/Price) für Volatilitäts-Normalisierung

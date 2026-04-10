@@ -4,9 +4,9 @@ Alle wichtigen Änderungen und Fixes pro Version.
 
 ---
 
-## [v4.0] – 2026-04-09
+## [v4.0] – 2026-04-09 - Critical Logic Refactoring (Prompts 1-9) Prompts Implementiert
 
-### 🎯 Bruno V4 Refactoring — Alle 8 Prompts Implementiert
+### 🎯 Bruno V4 Refactoring — Alle 9 Prompts Implementiert
 
 #### **Prompt 1: Scoring-Logik & Confluence Fixes**
 - **Macro Score Hard Block**: Long in Bärenmarkt → macro_score = 0, Short in Bullenmarkt → macro_score = 0
@@ -61,8 +61,20 @@ Alle wichtigen Änderungen und Fixes pro Version.
 - **Redis Keys**: `bruno:risk:slot_losses:{slot}`, `bruno:risk:slot_block:{slot}`
 - **Dateien**: `risk.py`, `execution_v4.py`
 
+#### **Prompt 9: Orchestrator Race Condition Fix (Strict Pipeline)**
+- **Kritischer Order-Pfad**: Von losem Pub/Sub zu synchroner Pipeline umgebaut
+- **Sequentielle Validierung**:
+  1. QuantAgent generiert Signal → reicht via Callback an Orchestrator ein
+  2. Orchestrator wartet synchron auf `RiskAgent.validate_and_size_order(signal)`
+  3. RiskAgent holt FRISCHEN Portfolio-State und führt alle Checks durch
+  4. NUR bei Freigabe: Orchestrator ruft `ExecutionAgent.execute_order(order_payload)`
+- **Race Condition Elimination**: Keine Timing-Probleme zwischen Signalgenerierung und Portfolio-Validierung
+- **Legacy Mode**: Pub/Sub bleibt für Monitoring/Backwards-Kompatibilität erhalten
+- **Neue Redis Keys**: `bruno:pipeline:metrics` für Pipeline-Performance-Monitoring
+- **Dateien**: `orchestrator.py`, `risk.py`, `execution_v4.py`, `quant_v4.py`, `worker.py`
+
 ### 📚 Dokumentation
-- CHANGELOG.md – v4.0 Eintrag mit allen 8 Prompts
+- CHANGELOG.md – v4.0 Eintrag mit allen 9 Prompts
 - WINDSURF_MANIFEST.md – V4 Status Update
 - docs/arch.md – V4 Architektur-Refactoring
 

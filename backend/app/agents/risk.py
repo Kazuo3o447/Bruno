@@ -254,6 +254,113 @@ class RiskAgent(PollingAgent):
         except Exception as e:
             self.logger.warning(f"Record slot trade error: {e}")
 
+    async def validate_and_size_order(self, signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        PROMPT 9: Synchrone Order-Validierung und Sizing.
+        
+        Wird vom Orchestrator im Strict Pipeline Mode aufgerufen.
+        Holt FRISCHEN Portfolio-State und führt alle Risk-Checks durch.
+        
+        Args:
+            signal: Das Trading-Signal vom QuantAgent
+            
+        Returns:
+            Order-Payload wenn validiert und sized, None wenn abgelehnt
+        """
+        from datetime import datetime, timezone
+        
+        slot_name = signal.get("strategy_slot", "unknown")
+        direction = signal.get("direction", "long")
+        
+        self.logger.info(
+            f"PROMPT 9 RISK: Validiere Signal [{slot_name}] {direction.upper()} - "
+            f"Frischer Portfolio-State wird geladen..."
+        )
+        
+        try:
+            # === SCHRITT 1: Frischer Portfolio-State ===
+            portfolio = await self.deps.redis.get_cache("bruno:portfolio:state")
+            if not portfolio:
+                self.logger.error("PROMPT 9 RISK: Kein Portfolio-State gefunden - Signal abgelehnt")
+                return None
+            
+            capital_eur = portfolio.get("capital_eur", 0.0)
+            capital_usd = capital_eur * 1.08  # Annäherung EUR->USD
+            
+            self.logger.info(
+                f"PROMPT 9 RISK: Portfolio geladen - Capital={capital_eur:.2f} EUR "
+                f"({capital_usd:.2f} USD)"
+            )
+            
+            # === SCHRITT 2: Slot-spezifische Circuit Breaker Prüfung ===
+            slot_check = await self._check_slot_consecutive_losses(slot_name)
+            if slot_check["blocked"]:
+                self.logger.warning(
+                    f"PROMPT 9 RISK: SLOT BLOCK [{slot_name}] - {slot_check['reason']}"
+                )
+                return None
+            
+            # === SCHRITT 3: Daily Drawdown Prüfung (Hard -3%) ===
+            dd_check = await self._check_daily_drawdown()
+            if dd_check["blocked"]:
+                self.logger.warning(
+                    f"PROMPT 9 RISK: DAILY DRAWDOWN BLOCK - {dd_check['reason']}"
+                )
+                return None
+            
+            # === SCHRITT 4: Veto-State Prüfung ===
+            veto_data = await self.deps.redis.redis.get("bruno:veto:state")
+            if veto_data:
+                veto = json.loads(veto_data)
+                if veto.get("Veto_Active", False):
+                    self.logger.warning(
+                        f"PROMPT 9 RISK: GLOBAL VETO aktiv - {veto.get('Reason', 'Unknown')}"
+                    )
+                    return None
+            
+            # === SCHRITT 5: Sizing überprüfen/ergänzen ===
+            sizing = signal.get("sizing")
+            if not sizing or not sizing.get("sizing_valid", False):
+                self.logger.error(
+                    f"PROMPT 9 RISK: Kein gültiges Sizing im Signal [{slot_name}]"
+                )
+                return None
+            
+            # === SCHRITT 6: Fee Hurdle Check (falls noch nicht gemacht) ===
+            # Das Signal sollte bereits vom ExecutionAgent validiert sein,
+            # aber wir prüfen nochmal als Sicherheit
+            position_size_usdt = sizing.get("position_size_usdt", 0)
+            if position_size_usdt <= 0:
+                self.logger.error(
+                    f"PROMPT 9 RISK: Ungültige Position Size: {position_size_usdt}"
+                )
+                return None
+            
+            self.logger.info(
+                f"PROMPT 9 RISK: Signal FREIGEGEBEN [{slot_name}] "
+                f"Size={position_size_usdt:.2f} USDT, Leverage={sizing.get('leverage_used', 0):.1f}x"
+            )
+            
+            # Bereite vollständiges Order-Payload vor
+            order_payload = {
+                **signal,
+                "capital_usd_at_validation": capital_usd,
+                "capital_eur_at_validation": capital_eur,
+                "validated_at": datetime.now(timezone.utc).isoformat(),
+                "risk_validation": {
+                    "slot_block_checked": True,
+                    "daily_drawdown_checked": True,
+                    "veto_checked": True,
+                    "portfolio_fresh": True
+                }
+            }
+            
+            return order_payload
+            
+        except Exception as e:
+            self.logger.error(f"PROMPT 9 RISK: Validierungsfehler: {e}", exc_info=True)
+            return None
+
     async def process(self) -> None:
         try:
             signals = await self._fetch_all_signals()

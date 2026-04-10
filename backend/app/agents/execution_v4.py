@@ -1029,16 +1029,72 @@ class ExecutionAgentV4(StreamingAgent):
         portfolio["last_update"] = datetime.now(timezone.utc).isoformat()
         await self.deps.redis.set_cache("bruno:portfolio:state", portfolio)
 
+    async def execute_order(self, order_payload: Dict[str, Any]) -> bool:
+        """
+        PROMPT 9: Synchrone Order-Execution.
+        
+        Wird vom Orchestrator im Strict Pipeline Mode aufgerufen.
+        Führt die Order atomar aus mit vollständigem validierten Payload.
+        
+        Args:
+            order_payload: Vollständig validiertes Order-Payload vom RiskAgent
+            
+        Returns:
+            True wenn Order erfolgreich ausgeführt, False bei Fehler
+        """
+        slot_name = order_payload.get("strategy_slot", "unknown")
+        direction = order_payload.get("direction", "long")
+        
+        self.logger.info(
+            f"PROMPT 9 EXECUTION: Führe Order aus [{slot_name}] {direction.upper()} - "
+            f"Validiert um {order_payload.get('validated_at', 'unknown')}"
+        )
+        
+        try:
+            # Verwende die bestehende _execute_trade Logik
+            # Das Payload ist bereits vollständig validiert und gesized
+            result = await self._execute_trade(order_payload)
+            
+            if result:
+                self.logger.info(
+                    f"PROMPT 9 EXECUTION: Order erfolgreich ausgeführt [{slot_name}]"
+                )
+                return True
+            else:
+                self.logger.error(
+                    f"PROMPT 9 EXECUTION: Order-Ausführung fehlgeschlagen [{slot_name}]"
+                )
+                return False
+                
+        except Exception as e:
+            self.logger.error(
+                f"PROMPT 9 EXECUTION: Kritischer Fehler bei Order-Ausführung [{slot_name}]: {e}",
+                exc_info=True
+            )
+            return False
+
     async def _listen_to_signals(self):
-        """Hintergrund-Task: Empfängt Trading-Signale."""
+        """
+        Hintergrund-Task: Empfängt Trading-Signale.
+        
+        PROMPT 9 HINWEIS: Im Strict Pipeline Mode wird diese Methode nicht verwendet.
+        Stattdessen werden Orders direkt via execute_order() vom Orchestrator aufgerufen.
+        Diese Methode bleibt für Abwärtskompatibilität und Monitoring-Zwecke erhalten.
+        """
         pubsub = await self.deps.redis.subscribe_channel("bruno:pubsub:signals")
-        self.logger.info("Signal-Listener aktiv.")
+        self.logger.info("Signal-Listener aktiv (Legacy Mode - nicht im Strict Pipeline).")
         while self.state.running:
             try:
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if msg and msg['type'] == 'message':
                     signal = json.loads(msg['data'])
-                    await self._execute_trade(signal)
+                    # Im Strict Pipeline Mode ignorieren wir Pub/Sub Signale
+                    # und warnen stattdessen
+                    self.logger.warning(
+                        f"PROMPT 9 WARNUNG: Pub/Sub Signal empfangen aber Strict Pipeline ist aktiv! "
+                        f"Signal [{signal.get('strategy_slot', 'unknown')}] wird ignoriert. "
+                        f"Orders müssen via Orchestrator Pipeline laufen."
+                    )
             except Exception as e:
                 self.logger.error(f"Signal-Listener Fehler: {e}")
                 await asyncio.sleep(1)

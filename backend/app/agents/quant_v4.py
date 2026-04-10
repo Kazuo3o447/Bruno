@@ -11,15 +11,26 @@ import json
 import logging
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from sqlalchemy import text
 
 class QuantAgentV4(PollingAgent):
     """
     Bruno v2 Quant Agent — Deterministic Composite Scoring.
     Ersetzt quant_v3 + LLM-Cascade. 60s Intervall.
+    
+    PROMPT 9: Strict Pipeline Integration
+    ================================
+    Statt direkt Pub/Sub zu verwenden, reicht der QuantAgent Signale
+    an den Orchestrator weiter via signal_submit_callback.
+    Der Orchestrator führt dann synchron Risk-Validierung und Execution durch.
     """
-    def __init__(self, deps: AgentDependencies, symbol: str = "BTCUSDT"):
+    def __init__(
+        self, 
+        deps: AgentDependencies, 
+        symbol: str = "BTCUSDT",
+        signal_submit_callback: Optional[Callable[[Dict[str, Any]], Any]] = None
+    ):
         super().__init__("quant", deps)
         self.symbol = symbol
         self.cvd_cumulative = 0.0
@@ -36,6 +47,12 @@ class QuantAgentV4(PollingAgent):
         self._score_lock = asyncio.Lock()
         self._liquidation_listener_task: Optional[asyncio.Task] = None
         self._liquidation_spike_threshold_usdt: float = 500_000.0
+        
+        # PROMPT 9: Callback für Strict Pipeline
+        # Wenn gesetzt, werden Signale über diesen Callback an den Orchestrator gereicht
+        # statt direkt via Pub/Sub
+        self._signal_submit_callback: Optional[Callable[[Dict[str, Any]], Any]] = signal_submit_callback
+        self._strict_pipeline_mode: bool = signal_submit_callback is not None
         
         self.liq_engine = LiquidityEngine(deps.db_session_factory, deps.redis)
         self.scorer = CompositeScorer(redis_client=deps.redis)
@@ -250,11 +267,11 @@ class QuantAgentV4(PollingAgent):
                     if now - self._last_signal_time >= cooldown:
                         signal_dict = signal.to_signal_dict(self.symbol)
                         signal_dict["strategy_slot"] = "trend"
-                        await self.deps.redis.publish_message(
-                            "bruno:pubsub:signals", json.dumps(signal_dict)
-                        )
-                        self._last_signal_time = now
-                        self.logger.info(f"TREND SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
+                        # PROMPT 9: Verwende _submit_signal für Strict Pipeline
+                        submitted = await self._submit_signal(signal_dict, "trend")
+                        if submitted:
+                            self._last_signal_time = now
+                            self.logger.info(f"TREND SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
                 
                 # 6b. SWEEP-Slot: Eigenständig, basierend auf Sweep-Detection
                 # PROMPT 5: Sweep-Slot Filter (Falling Knife Protection)
@@ -327,11 +344,11 @@ class QuantAgentV4(PollingAgent):
                                 "passed": True
                             }
                         }
-                        await self.deps.redis.publish_message(
-                            "bruno:pubsub:signals", json.dumps(sweep_dict)
-                        )
-                        self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']} | OFI={ofi_buy_pressure:.2f}")
-                        self._last_sweep_signal_time = now
+                        # PROMPT 9: Verwende _submit_signal für Strict Pipeline
+                        submitted = await self._submit_signal(sweep_dict, "sweep")
+                        if submitted:
+                            self.logger.info(f"SWEEP SIGNAL: {sweep_signal['direction'].upper()} | {sweep_signal['reason']} | OFI={ofi_buy_pressure:.2f}")
+                            self._last_sweep_signal_time = now
                 
                 # 6c. FUNDING-Slot: Eigenständig, basierend auf Funding Rate
                 # PROMPT 5: Funding-Slot Filter (Contrarian Trap Protection)
@@ -412,11 +429,11 @@ class QuantAgentV4(PollingAgent):
                                 "passed": True
                             }
                         }
-                        await self.deps.redis.publish_message(
-                            "bruno:pubsub:signals", json.dumps(funding_dict)
-                        )
-                        self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']} | EMA9 cross validated")
-                        self._last_funding_signal_time = now
+                        # PROMPT 9: Verwende _submit_signal für Strict Pipeline
+                        submitted = await self._submit_signal(funding_dict, "funding")
+                        if submitted:
+                            self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']} | EMA9 cross validated")
+                            self._last_funding_signal_time = now
 
                 # Phantom Trade (Learning Mode)
                 if (not signal.should_trade and self.deps.config.DRY_RUN
@@ -602,3 +619,49 @@ class QuantAgentV4(PollingAgent):
             await self.deps.redis.redis.ltrim("bruno:signals:blocked", 0, 199)
         except Exception as e:
             self.logger.warning(f"Log blocked funding error: {e}")
+
+    async def _submit_signal(self, signal_dict: Dict[str, Any], slot_name: str) -> bool:
+        """
+        PROMPT 9: Zentrale Signal-Submission Methode.
+        
+        Wählt automatisch zwischen Strict Pipeline Mode und Legacy Pub/Sub:
+        - Strict Pipeline: Verwendet Callback zum Orchestrator
+        - Legacy Mode: Verwendet Redis Pub/Sub
+        
+        Args:
+            signal_dict: Das vollständige Signal-Dictionary
+            slot_name: Name des Strategy Slots (trend, sweep, funding)
+            
+        Returns:
+            True wenn Signal erfolgreich eingereicht, False bei Fehler
+        """
+        if self._strict_pipeline_mode and self._signal_submit_callback:
+            # PROMPT 9: Strict Pipeline - Signal über Callback an Orchestrator
+            try:
+                result = await self._signal_submit_callback(signal_dict)
+                if result:
+                    self.logger.info(
+                        f"PROMPT 9: Signal via Strict Pipeline eingereicht [{slot_name}]"
+                    )
+                    return True
+                else:
+                    self.logger.warning(
+                        f"PROMPT 9: Signal-Queue voll oder Pipeline-Fehler [{slot_name}]"
+                    )
+                    return False
+            except Exception as e:
+                self.logger.error(
+                    f"PROMPT 9: Fehler bei Strict Pipeline Submission [{slot_name}]: {e}"
+                )
+                return False
+        else:
+            # Legacy Mode: Redis Pub/Sub
+            try:
+                await self.deps.redis.publish_message(
+                    "bruno:pubsub:signals", json.dumps(signal_dict)
+                )
+                self.logger.info(f"Signal via Pub/Sub veröffentlicht [{slot_name}]")
+                return True
+            except Exception as e:
+                self.logger.error(f"Fehler bei Pub/Sub Signal-Publikation [{slot_name}]: {e}")
+                return False

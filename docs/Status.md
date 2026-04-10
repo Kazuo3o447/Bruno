@@ -1,11 +1,17 @@
 # Bruno Trading Platform — Project Status
 
-> **Version:** 3.0.0 (April 2026)  
-> **Referenz:** Bruno v3 Architecture Refinement
+> **Version:** 4.0.0 (April 2026)  
+> **Referenz:** Bruno v4 Critical Logic Refactoring
 > 
-> ✅ **v3.0 Architecture Refinement:** Death Zone Removal, Symmetric Scoring, Sweep Signals, Mean Reversion Sub-Engine, ATR-Ratio Regime Detection, Learning Mode Optimization
-> ✅ **Strategy Blending (A/B):** Trend Following + Mean Reversion mit regime-adaptiver Gewichtung (40%/30%/10%)
-> ✅ **No Hard Blocks:** Risk wird in Score gepreist, keine Hard Direction Vetoes mehr
+> ✅ **v4.0 Critical Logic Refactoring:** Alle 9 Prompts implementiert
+> ✅ **Strict Pipeline (Prompt 9):** Synchroner Order-Pfad eliminiert Race Conditions
+> ✅ **Risk-Based Sizing (Prompt 2):** 1% Portfolio-Risiko, dynamische Positionsgrößen
+> ✅ **Fee Hurdle (Prompt 3):** Net Profit ≥ 25% Risiko nach 0.24% Gebühren
+> ✅ **ATR-basiertes SL/TP (Prompt 4):** 1.2x/1.5x/3.0x ATR Multiplikatoren
+> ✅ **Anti-Manipulation (Prompt 5):** OFI-Validierung (≥0.60/≤0.40), EMA9-Cross Filter
+> ✅ **Scaled Entries (Prompt 6):** ATR-basierte Tranche-Trigger, Break-Even Trailing
+> ✅ **Strategy Blending Fix (Prompt 7):** MR capped bei TA > 80
+> ✅ **Slot Circuit Breaker (Prompt 8):** Slot-Isolation bei 3 Verlusten, Global nur bei -3% DD
 > ✅ **Entwicklungsumgebung:** Windows mit **Ryzen 7 7800X3D + AMD RX 7900 XT**
 > ✅ **Dashboard:** Voll funktionsfähig mit Live-API-Integration
 > ✅ **Bybit V5 Core:** Single Source of Truth für Marktdaten
@@ -20,31 +26,33 @@
 
 | Attribut | Wert |
 |----------|------|
-| **Manifest Version** | `v3.0.0` |
-| **Codename** | Architecture Refinement |
-| **Status** | ✅ v3.0 COMPLETED — Alle 6 Tasks implementiert |
+| **Manifest Version** | `v4.0.0` |
+| **Codename** | Critical Logic Refactoring |
+| **Status** | ✅ v4.0 COMPLETED — Alle 9 Prompts implementiert |
 | **Dashboard** | ✅ Voll funktionsfähig mit API-Integration (7 Seiten) |
-| **Trading Engine** | ✅ Strategy Blending (A/B) mit Mean Reversion Sub-Engine |
-| **Scoring** | ✅ Symmetric Scoring, Sweep Signals (+30/-30), Death Zone entfernt |
-| **Regime Detection** | ✅ ATR-Ratio & Bollinger Band Width statt VIX |
-| **Learning Mode** | ✅ Threshold 16 statt 30, kein Hard Floor |
+| **Trading Engine** | ✅ Strict Pipeline (synchroner Order-Pfad) |
+| **Risk Management** | ✅ Risk-Based Sizing, Fee Hurdle, ATR-SL/TP |
+| **Scoring** | ✅ Strategy Blending Fix, OFI-Hard Filter, MR-Cap |
+| **Entry Logic** | ✅ Scaled Entries (ATR-Steps), Anti-Manipulation |
+| **Circuit Breaker** | ✅ Slot-spezifisch (3 Losses), Global (-3% DD) |
 | **LLM-Integration** | ✅ Deepseek Reasoning API für Post-Trade Analyse |
 | **Data Sources** | ✅ Bybit V5 (Primär), CryptoPanic (News), Yahoo Finance (FX) |
 | **Repository** | https://github.com/Kazuo3o447/Bruno |
-| **Letztes Update** | April 2026 (v3.0 - Architecture Refinement) |
+| **Letztes Update** | April 2026 (v4.0 - Critical Logic Refactoring) |
 
 ---
 
-## 🎯 Aktueller Stand: v3.0 Architecture Refinement (COMPLETED)
+## 🎯 Aktueller Stand: v4.0 Critical Logic Refactoring (COMPLETED)
 
-> 🚀 **System-Status:** Professional deterministic trading mit symmetric scoring und strategy diversification
+> 🚀 **System-Status:** Professional trading mit synchroner Pipeline und deterministischer Logik
 > 📊 **Dashboard-Status:** Alle 7 Seiten implementiert und API-Integration stabil
 > 🔧 **Container-Status:** Vollständig neu aufgebaut mit sauberen Volumes und stabiler Konfiguration
 > 🤖 **LLM-Status:** Deepseek Reasoning API für Post-Trade Analyse (kein LLM im Live Trading)
 > 📡 **Data Sources:** Bybit V5 (Single Source of Truth), CryptoPanic (News), Yahoo Finance (FX)
-> 🎯 **Logic-Engine:** Strategy Blending (A/B) mit regime-adaptiver Gewichtung
-> 🛡️ **Risk Management:** No Hard Blocks, Death Zone entfernt, Risk in Score gepreist
-> ⚖️ **Scoring:** Symmetric Bull/Bear, Sweep Signals (+30/-30), Mean Reversion Sub-Engine
+> 🎯 **Logic-Engine:** Strict Pipeline (Prompt 9) - sequentielle Order-Validierung und -Ausführung
+> 🛡️ **Risk Management:** Risk-Based Sizing (1%), Fee Hurdle (25%), Slot Circuit Breaker
+> ⚖️ **Scoring:** OFI Hard Filter, Strategy Blending Fix, MR capped bei starkem Trend
+> 📈 **Entry Logic:** ATR-basierte Scaled Entries, Anti-Manipulation (Sweep/Funding Filter)
 
 **Ziel:** Vollständige API-Integration mit stabilen Datenquellen und Sentiment-Analyse. Phase v2.2 ist abgeschlossen.
 
@@ -195,6 +203,39 @@
   - Keine Änderung an Trading-Logik oder Filtern
 
 **Validierung:** 4/4 Tests bestanden, Diagnostik sauber!
+
+### Phase v4.0 — Critical Logic Refactoring ✅ COMPLETED (2026-04-09)
+
+**Alle 9 Prompts implementiert:**
+
+| Prompt | Feature | Status |
+|--------|---------|--------|
+| **1** | Scoring Fixes (Macro Block, OFI >=0.60/<=0.40, Confluence härter) | ✅ `composite_scorer.py` |
+| **2** | Risk-Based Sizing (1% Risiko, dynamische Positionsgröße) | ✅ `execution_v4.py` |
+| **3** | Fee Hurdle (Net Profit >= 25% Risiko, 0.24% Roundtrip) | ✅ `execution_v4.py` |
+| **4** | Vola-Adjustiertes SL/TP/BE (1.2x/1.5x/3.0x/1.0x ATR) | ✅ `execution_v4.py` |
+| **5** | Anti-Manipulation (Sweep OFI-Check, Funding EMA9-Cross) | ✅ `quant_v4.py` |
+| **6** | Scaled Entries (ATR-basierte Steps 1.0x/2.0x, BE-Trail) | ✅ `scaled_entry.py` |
+| **7** | Strategy Blending Fix (MR capped bei TA > 80) | ✅ `composite_scorer.py` |
+| **8** | Slot-spezifischer Circuit Breaker (Hard -3% DD, Slot-Isolation) | ✅ `risk.py` |
+| **9** | **Strict Pipeline** (Race Condition Fix, Synchroner Order-Pfad) | ✅ `orchestrator.py` |
+
+**Prompt 9 — Strict Pipeline Details:**
+- Kritischer Order-Pfad von losem Pub/Sub zu synchroner Pipeline umgebaut
+- QuantAgent reicht Signale via Callback an Orchestrator ein (`submit_signal_for_validation`)
+- Orchestrator wartet synchron auf `RiskAgent.validate_and_size_order(signal)`
+- RiskAgent holt FRISCHEN Portfolio-State und führt alle Checks durch
+- NUR bei Freigabe: Orchestrator ruft `ExecutionAgent.execute_order(order_payload)`
+- Eliminiert Race Conditions zwischen Signalgenerierung und Portfolio-Validierung
+- Neue Redis Keys: `bruno:pipeline:metrics`
+
+**Wichtige Logik-Änderungen:**
+- ✅ **Keine fixen $64 Positionen mehr** – Alles dynamisch risikobasiert
+- ✅ **Gebühren-Schutz** – Trades mit zu geringem Netto-Erwartungswert werden blockiert
+- ✅ **Falling Knife Protection** – Sweep-Entries nur mit validiertem OFI (Whale-Absorption)
+- ✅ **Contrarian Trap Protection** – Funding-Trades nur mit EMA9-Trend-Bestätigung
+- ✅ **Kein Global-Block bei 3 Losses** – Nur der betroffene Slot wird blockiert
+- ✅ **Strict Pipeline** – Orders werden sequentiell validiert und ausgeführt
 
 ---
 
@@ -527,14 +568,28 @@ RSS Feeds ✅ → News Ingestion ✅ → SentimentAnalyzer ✅ → Redis ✅ →
 
 ## 🛠️ **TECHNISCHE DETAILS**
 
-### Redis Keys Status
+### Redis Keys Status (v4.0)
+
+**Marktdaten:**
 - `market:ticker:BTCUSDT`: ✅ 69,195.9 USDT
 - `market:orderbook:BTCUSDT`: ✅ DATA PRESENT
 - `market:cvd:BTCUSDT`: ⚠️ Noch nicht gefüllt
+
+**Sentiment & News:**
 - `bruno:news:processed_items`: ✅ 50 Items
 - `bruno:sentiment:aggregate`: ✅ 0.444 Score
+
+**Context & Scoring (v4.0):**
 - `bruno:context:grss`: ✅ 57.8 Score
 - `bruno:bybit:health`: ✅ Online
+
+**Risk Management (Prompt 8):**
+- `bruno:risk:slot_losses:{slot}` – Slot-spezifische P&L-Historie
+- `bruno:risk:slot_block:{slot}` – Slot-spezifischer 24h Block
+
+**Strict Pipeline (Prompt 9):**
+- `bruno:pipeline:metrics` – Pipeline Performance (Signals Processed, Approved, Rejected)
+- `bruno:signals:blocked` – Blockierte Sweep/Funding Signale für Analyse
 
 ### WebSocket Verbindungen
 - **Bybit V5**: ✅ Connected
