@@ -254,6 +254,44 @@ class RiskAgent(PollingAgent):
         except Exception as e:
             self.logger.warning(f"Record slot trade error: {e}")
 
+    async def _check_global_killswitch(self) -> dict:
+        """
+        PROMPT 01: Globaler Kill-Switch & Circuit Breaker.
+        
+        Prüft harte Block-Conditions am Anfang jeder Trade-Evaluierung:
+        1. Daily Loss Limit (bruno:portfolio:daily_limit_hit)
+        2. Global Consecutive Losses (bruno:portfolio:state.consecutive_losses_global)
+        
+        Returns:
+            dict: {"blocked": bool, "reason": str}
+        """
+        from datetime import datetime, timezone
+        
+        today = datetime.now(timezone.utc).date().isoformat()
+        
+        # 1. Daily Loss Limit Check
+        daily_limit_hit = await self.deps.redis.get_cache("bruno:portfolio:daily_limit_hit")
+        if daily_limit_hit and daily_limit_hit.get("hit") == True:
+            hit_date = daily_limit_hit.get("date")
+            if hit_date == today:
+                return {"blocked": True, "reason": "DAILY_LOSS_LIMIT_HIT"}
+        
+        # 2. Global Consecutive Losses Check
+        portfolio = await self.deps.redis.get_cache("bruno:portfolio:state") or {}
+        consecutive_losses_global = portfolio.get("consecutive_losses_global", 0)
+        
+        max_consecutive = int(ConfigCache.get("MAX_CONSECUTIVE_LOSSES", 8))
+        max_consecutive_learning = int(ConfigCache.get("MAX_CONSECUTIVE_LOSSES_LEARNING", 12))
+        
+        # Im Learning Mode sind höhere Limits erlaubt
+        learning_enabled = ConfigCache.get("LEARNING_MODE_ENABLED", False)
+        effective_max = max_consecutive_learning if learning_enabled else max_consecutive
+        
+        if consecutive_losses_global >= effective_max:
+            return {"blocked": True, "reason": "MAX_CONSECUTIVE_LOSSES_GLOBAL"}
+        
+        return {"blocked": False, "reason": ""}
+
     async def validate_and_size_order(self, signal: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         PROMPT 9: Synchrone Order-Validierung und Sizing.
@@ -271,6 +309,14 @@ class RiskAgent(PollingAgent):
         
         slot_name = signal.get("strategy_slot", "unknown")
         direction = signal.get("direction", "long")
+        
+        # === PROMPT 01: Globaler Kill-Switch (erste Prüfung vor allem anderen) ===
+        killswitch = await self._check_global_killswitch()
+        if killswitch["blocked"]:
+            self.logger.critical(
+                f"PROMPT 01 KILLSWITCH: Trade BLOCKIERT [{slot_name}] - {killswitch['reason']}"
+            )
+            return None
         
         self.logger.info(
             f"PROMPT 9 RISK: Validiere Signal [{slot_name}] {direction.upper()} - "

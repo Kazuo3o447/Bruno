@@ -86,19 +86,73 @@ const SCHEMA: Record<string, {
   },
 };
 
+type KillSwitchStatus = {
+  killswitch_active: boolean;
+  daily_limit_hit: boolean;
+  consecutive_losses_global: number;
+  effective_max_consecutive: number;
+  reason: string | null;
+};
+
 export default function EinstellungenPage() {
   const [config, setConfig] = useState<Record<string, number>>({});
   const [pending, setPending] = useState<Record<string, number>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // PROMPT 01: Kill-Switch State
+  const [killSwitch, setKillSwitch] = useState<KillSwitchStatus | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     fetch(`${API}/config`).then(r => r.json()).then(d => {
       setConfig(d.config ?? {});
       setPending(d.config ?? {});
     });
+    
+    // PROMPT 01: Fetch kill-switch status
+    fetchKillSwitchStatus();
+    
+    // Refresh every 10 seconds
+    const interval = setInterval(fetchKillSwitchStatus, 10000);
+    return () => clearInterval(interval);
   }, []);
+  
+  const fetchKillSwitchStatus = async () => {
+    try {
+      const res = await fetch(`${API}/risk/killswitch_status`);
+      if (res.ok) {
+        const data = await res.json();
+        setKillSwitch(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch kill-switch status:", e);
+    }
+  };
+  
+  const resetKillSwitch = async (scope: "daily" | "consecutive" | "all") => {
+    setResetting(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const res = await fetch(`${API}/risk/reset_killswitch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: today, scope }),
+      });
+      
+      if (res.ok) {
+        await fetchKillSwitchStatus();
+      } else {
+        const err = await res.json();
+        setError(err.detail || "Reset fehlgeschlagen");
+      }
+    } catch (e) {
+      setError("Netzwerkfehler beim Reset");
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const hasChanges = Object.keys(SCHEMA).some(k => pending[k] !== config[k]);
 
@@ -161,6 +215,65 @@ export default function EinstellungenPage() {
         {error && (
           <div className="border border-red-800 rounded px-3 py-2 text-red-400 font-mono text-xs mb-4">
             {error}
+          </div>
+        )}
+
+        {/* PROMPT 01: Kill-Switch Banner */}
+        {killSwitch?.killswitch_active && (
+          <div className="border-2 border-red-600 rounded-lg p-4 mb-6 bg-red-950/30">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl">🛑</div>
+              <div className="flex-1">
+                <div className="font-mono text-sm font-bold text-red-400 mb-1">
+                  KILL-SWITCH AKTIV — TRADING BLOCKIERT
+                </div>
+                <div className="font-mono text-xs text-red-300/80 mb-3">
+                  Grund: {killSwitch.reason}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono mb-3">
+                  <div className="text-zinc-400">
+                    Daily Limit: <span className={killSwitch.daily_limit_hit ? "text-red-400" : "text-emerald-400"}>
+                      {killSwitch.daily_limit_hit ? "HIT" : "OK"}
+                    </span>
+                  </div>
+                  <div className="text-zinc-400">
+                    Consecutive: <span className={killSwitch.consecutive_losses_global >= killSwitch.effective_max_consecutive ? "text-red-400" : "text-emerald-400"}>
+                      {killSwitch.consecutive_losses_global}/{killSwitch.effective_max_consecutive}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {killSwitch.daily_limit_hit && (
+                    <button
+                      onClick={() => resetKillSwitch("daily")}
+                      disabled={resetting}
+                      className="font-mono text-xs px-3 py-1.5 border border-red-600 text-red-400 rounded hover:bg-red-900/50 disabled:opacity-50"
+                    >
+                      {resetting ? "Reset..." : "Reset Daily Limit"}
+                    </button>
+                  )}
+                  {killSwitch.consecutive_losses_global >= killSwitch.effective_max_consecutive && (
+                    <button
+                      onClick={() => resetKillSwitch("consecutive")}
+                      disabled={resetting}
+                      className="font-mono text-xs px-3 py-1.5 border border-red-600 text-red-400 rounded hover:bg-red-900/50 disabled:opacity-50"
+                    >
+                      {resetting ? "Reset..." : "Reset Consecutive"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => resetKillSwitch("all")}
+                    disabled={resetting}
+                    className="font-mono text-xs px-3 py-1.5 border border-red-600 text-red-400 rounded hover:bg-red-900/50 disabled:opacity-50"
+                  >
+                    {resetting ? "Reset..." : "Reset All"}
+                  </button>
+                </div>
+                <div className="font-mono text-xs text-zinc-500 mt-2">
+                  ⚠️ Reset nur für aktuellen Tag möglich. Manuelles Eingreifen erforderlich.
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

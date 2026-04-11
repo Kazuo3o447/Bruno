@@ -4,6 +4,63 @@ Alle wichtigen Änderungen und Fixes pro Version.
 
 ---
 
+## [v3.0.0] — 2026-04-11 - Conflict Resolution & Paper Launch Ready
+
+### Added (Prompts 01-06)
+
+#### PROMPT 02: Macro Conflict Resolution
+- `mr_mode` Flag in `CompositeSignal` für Mean-Reversion-Modus
+- Konflikt-Erkennung zwischen TA+Liq+Flow und Macro-Trend
+- 50% Sizing-Reduktion + enger SL (0.8×ATR) + schnellerer TP1 (1.0×ATR) im MR-Modus
+
+#### PROMPT 03: Composite v3 — Trainingsdaten-Generierung
+- Dominant Signal Wins: Stärkstes Signal gewinnt, Gegenrichtung nur 50% gewichtet
+- Konfidenz-basierter dynamischer Threshold (Confluence -3, MTF -5)
+- Threshold Learning: 8 (war 15), Prod: 25 (war 40)
+- MR-Modus asymmetrische Gewichtung: Liq/Flow 30%, TA 25%, Macro 15%
+
+#### PROMPT 04: Bybit Exchange Adapter v2 — Hedge Mode & Idempotenz
+- Position Mode Detection (`GET /v5/account/info`)
+- `positionIdx` Mapping: 0=one-way, 1=long, 2=short
+- `reduceOnly=True` für SL/TP/Close Orders
+- `orderLinkId` für Idempotenz bei Retries
+
+#### PROMPT 05: Funding-Aware Trading
+- `FundingMonitor` Service (pollt alle 60s)
+- Funding Score -10..+10 mit 5% Gewichtung
+- Soft-Veto: Threshold +3 bei |funding| > 0.05% gegen Trade-Richtung
+
+#### PROMPT 06: Execution Hygiene v4.1
+- Score-basierte SL/TP Differenzierung (High/Mid/Low Conviction)
+- BE-Trigger garantiert vor TP1 (min 0.4×ATR Abstand)
+- Live Slippage Reject: Position sofort schließen bei Excess-Slippage
+- Composite default von 50 auf 25 korrigiert
+
+### Added (Infrastructure)
+- `backend/scripts/smoke_test_paper.py` — 4-Szenarien Smoke Test
+- `BRUNO_PAPER_LAUNCH_CHECKLIST.md` — Komplette Launch-Checkliste
+- Neue Test-Suites:
+  - `backend/tests/test_conflict_resolution.py`
+  - `backend/tests/test_composite_reform.py`
+  - `backend/tests/test_bybit_hedge_mode.py`
+  - `backend/tests/test_funding_filter.py`
+  - `backend/tests/test_execution_hygiene.py`
+
+### Config Updates
+```json
+"COMPOSITE_THRESHOLD_LEARNING": 8,
+"COMPOSITE_THRESHOLD_PROD": 25,
+"CONFLUENCE_BONUS_2OF3": -3,
+"MTF_ALIGN_BONUS": -5,
+"FUNDING_VETO_THRESHOLD_BPS": 5,
+"FUNDING_SUBSCORE_WEIGHT": 0.05,
+"MAX_SLIPPAGE_PCT": 0.001,
+"SLIPPAGE_REJECT_MULTIPLIER": 1.5,
+"TELEGRAM_NOTIFICATIONS_ENABLED": false
+```
+
+---
+
 ## [v3.0.0-fix09] — 2026-04-11 - BRUNO-FIX-09: Phantom Evaluator
 
 ### Added

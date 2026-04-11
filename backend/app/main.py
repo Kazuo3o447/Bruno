@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export, backtest_api, debrief_api
+from app.routers import backup, ws, agents, logs, systemtest, agents_status, trades, monitoring, positions, market, sentiment_test, liquidations, decisions, config_api, export, backtest_api, debrief_api, risk_api
 from app.core.redis_client import redis_client
 from app.core.database import init_db, close_db
 from app.core.log_manager import log_manager
@@ -45,6 +45,7 @@ app.include_router(config_api.router, prefix="/api/v1", tags=["config"])
 app.include_router(export.router, prefix="/api/v1", tags=["export"])
 app.include_router(backtest_api.router, prefix="/api/v1", tags=["backtest"])
 app.include_router(debrief_api.router, prefix="/api/v1", tags=["debriefs"])
+app.include_router(risk_api.router, prefix="/api/v1", tags=["risk"])
 
 @app.on_event("startup")
 async def startup_event():

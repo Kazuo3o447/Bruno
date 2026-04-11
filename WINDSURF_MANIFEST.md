@@ -45,7 +45,15 @@
 - `bruno:risk:slot_losses:{slot}` – Slot-spezifische P&L-Historie
 - `bruno:risk:slot_block:{slot}` – Slot-spezifischer 24h Block
 - `bruno:signals:blocked` – Blockierte Signale für Analyse
-- `bruno:context:grss` – GRSS Score mit Data_Status (BRUNO-FIX-06)
+- `bruno:context:grss` – GRSS Score mit Data_Status (BRUNO-FIX-07)
+- `bruno:portfolio:daily_limit_hit` – Globaler Daily Loss Limit Circuit Breaker (BRUNO-FIX-06)
+- `bruno:portfolio:state` – Portfolio State inkl. `consecutive_losses_global` (BRUNO-FIX-06)
+- `bruno:bybit:position_mode` – Bybit Hedge/One-Way Mode Status (PROMPT 04)
+- `bruno:orders:pending:{orderLinkId}` – Pending Orders für Retry-Deduplikation (PROMPT 04)
+- `market:funding:current` – Aktueller Funding Rate (PROMPT 05)
+- `market:funding:8h_avg` – 8h Funding Durchschnitt (PROMPT 05)
+- `market:funding:24h_avg` – 24h Funding Durchschnitt (PROMPT 05)
+- `market:funding:predicted_next` – Vorhergesagter nächster Funding (PROMPT 05)
 
 ---
 
@@ -217,7 +225,40 @@ Threshold — alle anderen konservativen Filter blieben aktiv. Das NBER-Paper
 diesen Zustand als Ursache für "biased value systems" in RL-Tradingbots, wo 
 aggressive Strategien systematisch aus der Exploration herausgefiltert werden.
 
-### ✅ BRUNO-FIX-06: Data Gap Resilience (April 2026)
+### ✅ BRUNO-FIX-06: Global Kill-Switch v1 (April 2026)
+
+**Zweck:** Harte Circuit Breaker verhindern das Weitertrading nach kritischen Verlustereignissen.
+
+**Redis Keys:**
+| Key | Daten | TTL |
+|-----|-------|-----|
+| `bruno:portfolio:daily_limit_hit` | `{"hit": true/false, "date": "YYYY-MM-DD"}` | 86400s |
+| `bruno:portfolio:state` | `{"consecutive_losses_global": N, ...}` | persist |
+
+**Config Parameter:**
+| Parameter | Prod | Learning | Beschreibung |
+|-----------|------|----------|--------------|
+| `DAILY_MAX_LOSS_PCT` | 15% | 25% | Max Tagesverlust (absolut) |
+| `MAX_CONSECUTIVE_LOSSES` | 8 | 12 | Max aufeinanderfolgende Verluste |
+
+**Block-Conditions (OR-Logik):**
+1. `bruno:portfolio:daily_limit_hit.hit == true` UND `date == today` → Block
+2. `bruno:portfolio:state.consecutive_losses_global >= MAX_CONSECUTIVE_LOSSES` → Block
+
+**Reset-Mechanismus:**
+- `POST /api/v1/risk/reset_killswitch` mit Body `{"date": "YYYY-MM-DD", "scope": "daily|consecutive|all"}`
+- Sicherheits-Check: Datum muss heute sein
+- Manuelles Eingreifen erforderlich (kein Auto-Reset)
+
+**Counter-Logik (ExecutionAgentV4):**
+- Trade mit PnL > 0 → `consecutive_losses_global = 0`
+- Trade mit PnL ≤ 0 → `consecutive_losses_global += 1`
+
+**Integration:**
+- Prüfung am Anfang von `RiskAgent.validate_and_size_order()` (vor allen anderen Checks)
+- Frontend zeigt aktiven Kill-Switch in Einstellungen mit Reset-Buttons
+
+### ✅ BRUNO-FIX-07: Data Gap Resilience (April 2026)
 
 Bruno toleriert partielle Datenlücken ohne strukturell zu blockieren:
 
@@ -277,6 +318,301 @@ Transparente Status-Info im `bruno:context:grss` Cache:
 | 3 | quant | bruno:quant:micro, bruno:liq:intelligence, bruno:decisions:feed, bruno:pubsub:signals |
 | 4 | risk | bruno:veto:state |
 | 5 | execution | bruno:portfolio:state |
+
+### PROMPT 02: Macro Conflict Resolution (April 2026)
+
+**Problem:** Bot bleibt in Grauzone hängen wenn TA/Flow/Liq bullish sind aber Macro bearish (oder umgekehrt). Composite-Score bleibt schwach-positiv, Richtung wird als "long" bestimmt, aber Macro-Block setzt macro_score=0 → Trade bleibt im 2.5-HOLD-Pattern.
+
+**Lösung:** Konflikt-Resolution VOR der Direction-Bestimmung.
+
+**Algorithmus:**
+```
+Schritt 1: preliminary_dir = sign(ta_score + liq_score + flow_score)
+Schritt 2: macro_dir = aus macro_trend (macro_bull=long, macro_bear=short, neutral=neutral)
+Schritt 3: conflict = (macro_dir != neutral AND macro_dir != preliminary_dir)
+
+IF conflict:
+    → MR-MODE (Mean-Reversion gegen Macro)
+    → mr_mode = True
+    → macro_score = 0 (kein Bonus)
+    → Sizing: 50% Risk
+    → SL: 0.8x ATR (engerer Cut)
+    → TP1: 1.0x ATR (schnelleres Profit-Taking)
+ELSE:
+    → TREND-ALIGNED
+    → mr_mode = False
+    → Voller Macro-Bonus, normales Sizing
+```
+
+**Effekt:**
+- Bei Konflikt → Kleiner MR-Trade (50% Size, enger SL, schneller TP)
+- Bei Confluence → Voller Trend-Trade (100% Size, normaler SL/TP)
+- Keine Grauzone mehr — Bot entscheidet sich aktiv
+
+**Signal-Flag:** `mr_mode: bool` in `CompositeSignal.to_signal_dict()`
+
+### PROMPT 03: Composite v3 — Trainingsdaten-Generierung (April 2026)
+
+**Problem:** Composite erreicht in 60–70% der Bars nie den Threshold. Für Paper Trading brauchen wir MEHR Trades als Trainingsdaten.
+
+**Lösung:** Dreipunkt-Reform
+
+#### 1. Dominant Signal Wins (Konflikt-Penalty entfernt)
+**Alte Logik:** `TA + Liq + Flow` (entgegengesetzte Signale cancellen sich aus)
+**Neue Logik:** Stärkstes Signal gewinnt, schwächere werden auf 50% reduziert (nicht negiert)
+
+```python
+# Beispiel: TA+12.5, Liq-20, Flow+19.4
+# ALT: 12.5 - 20 + 19.4 = +11.9 (schwach positiv, evtl. HOLD)
+# NEU: Liq dominiert (-20), TA und Flow 50% reduziert
+#      6.25 - 20 + 9.7 = -4.05 (klar negativ, SHORT)
+```
+
+**Effekt:** Keine Grauzone durch Signalcancellation mehr.
+
+#### 2. Konfidenz-basierter dynamischer Threshold
+| Bedingung | Threshold-Änderung |
+|-----------|-------------------|
+| Base Learning | 8 (war 15) |
+| Base Prod | 25 (war 40) |
+| ≥2 Sub-Scores aligned | -3 Punkte |
+| MTF aligned | -5 Punkte |
+| Hard Floor Learning | 8 (nie darunter) |
+
+**Config Keys:**
+```json
+"COMPOSITE_THRESHOLD_LEARNING": 8,
+"COMPOSITE_THRESHOLD_PROD": 25,
+"COMPOSITE_FLOOR_LEARNING": 8,
+"CONFLUENCE_BONUS_2OF3": -3,
+"MTF_ALIGN_BONUS": -5
+```
+
+#### 3. MR-Modus asymmetrische Gewichtung
+Im Mean-Reversion-Modus (Prompt 02):
+| Komponente | Gewicht |
+|------------|---------|
+| Liq | 30% |
+| Flow | 30% |
+| TA | 25% |
+| Macro | 15% |
+
+**Grund:** Gegen-Macro-Trades brauchen stärkeres Flow/Liq-Backing.
+
+**Erwarteter Effekt:** Trade-Frequenz im Paper-Mode: 3–8 Trades/24h (statt 0).
+
+### PROMPT 04: Bybit Exchange Adapter v2 — Hedge Mode & Idempotenz (April 2026)
+
+**Problem:** `execution_v4.py` verwendet keine `positionIdx`, keine `reduceOnly`-Flags und keine `orderLinkId`. Bei Bybit Hedge Mode öffnet ein Long-Close fälschlich einen Short. Bei Netzwerk-Retry kann eine Order doppelt eingereicht werden.
+
+**Lösung:** Vier-Punkt-Reform
+
+#### 1. Position Mode Detection
+```python
+# Startup: GET /v5/account/info → unifiedMarginStatus
+# unifiedMarginStatus >= 2 → Hedge Mode
+# unifiedMarginStatus < 2  → One-Way Mode
+# Persistiert in: bruno:bybit:position_mode
+```
+
+#### 2. positionIdx Mapping
+| Mode | Order Type | Seite | positionIdx | Bedeutung |
+|------|-----------|-------|-------------|-----------|
+| One-Way | Alle | - | 0 | Keine getrennten Positionen |
+| Hedge | Entry Buy | Long | 1 | Long eröffnen |
+| Hedge | Entry Sell | Short | 2 | Short eröffnen |
+| Hedge | Close/SL/TP Sell | Long | 1 | Long schließen |
+| Hedge | Close/SL/TP Buy | Short | 2 | Short schließen |
+
+**Wichtig:** Close-Orders schließen die GEGENPOSITION (reduceOnly).
+
+#### 3. reduceOnly Flag
+| Order Art | reduceOnly |
+|-----------|------------|
+| Entry | False |
+| Close | True |
+| Stop-Loss | True |
+| Take-Profit | True |
+
+**Effekt:** Keine versehentliche Eröffnung einer Gegenposition beim Schließen.
+
+#### 4. orderLinkId Idempotenz
+```python
+# Format: bruno-{slot}-{epoch_ms}-{uuid4[:6]}
+# Beispiel: bruno-trend-1712834567890-a1b2c3
+
+# Persistiert in: bruno:orders:pending:{orderLinkId} (TTL 600s)
+# Bei Netzwerk-Retry: gleiche orderLinkId → Bybit dedupliziert
+```
+
+**Redis Schema:**
+```
+bruno:bybit:position_mode → {mode: "hedge", unified_margin_status: 2}
+bruno:orders:pending:{orderLinkId} → {order_data, status, created_at}
+```
+
+**APIs:**
+- `create_bybit_order()` — Entry/Close mit positionIdx und reduceOnly
+- `create_bybit_sl_order()` — Stop-Loss mit triggerPrice
+- `create_bybit_tp_order()` — Take-Profit mit triggerPrice
+- `detect_bybit_position_mode()` — Mode Detection beim Startup
+
+**Test-Szenarien:**
+1. One-Way: Long öffnen → Long schließen (Netto-Position = 0)
+2. Hedge: Long öffnen → Short öffnen (beide koexistieren)
+3. Hedge: Long-Close mit reduceOnly=True (kein Short-Open)
+4. Retry: Gleiche orderLinkId → Bybit gibt gleiche Order-ID zurück
+
+### PROMPT 05: Funding-Aware Trading (April 2026)
+
+**Problem:** Funding Rate wird ignoriert. Bei BTC Perp typisch 0.01% pro 8h, in Trends auch 0.05%+. Ein 24h-Hold gegen Funding kostet ~0.15% — frisst TP1 von 1.0–1.5%. Branchenstandard ist Funding-aware Trading.
+
+**Lösung:** Funding-Monitor + Sub-Score + Soft-Veto
+
+#### 1. FundingMonitor Service
+```python
+# Pollt alle 60s: GET /v5/market/funding/history
+Redis Keys:
+- market:funding:current → {funding_rate, funding_bps, timestamp}
+- market:funding:8h_avg → {avg_rate, avg_bps}
+- market:funding:24h_avg → {avg_rate, avg_bps}
+- market:funding:predicted_next → {predicted_rate, predicted_bps}
+```
+
+#### 2. Funding Score (Range -10..+10, Gewicht 5%)
+**Scoring-Logik:**
+| Bedingung | Funding | Score für Long | Score für Short |
+|-----------|---------|---------------|-----------------|
+| Negativ | < 0% | +5 (Shorts zahlen) | -5 (teuer für Short) |
+| Tief | 0-0.03% | 0 | 0 |
+| Hoch | > 0.03% | -5 (Long zahlt) | +5 (gut für Short) |
+| Extrem | > 0.05% | -8 (sehr teuer) | +8 (sehr gut) |
+
+**Formel:** `composite += funding_score * 2 * 0.05` (5% Gewicht)
+
+#### 3. Soft-Veto (kein Hard-Block)
+**Trigger:**
+- `|funding| > 0.05%` (5 bps)
+- Trade-Richtung gegen Funding
+- `predicted_holding_minutes > 240` (4h)
+
+**Effekt:**
+```
+FUNDING_HEADWIND_WARNING: +0.06% against long, Threshold +3
+```
+
+**Config:**
+```json
+"FUNDING_VETO_THRESHOLD_BPS": 5,    # 0.05%
+"FUNDING_PREDICTED_HOLD_MIN": 240,   # 4h
+"FUNDING_SUBSCORE_WEIGHT": 0.05      # 5% Gewicht
+```
+
+**Beispielrechnung:**
+- Long-Trade bei Funding +0.06%: `funding_score = -8`
+- Composite wird um 0.8 Punkte reduziert
+- Threshold wird um +3 erhöht
+- Netto-Effekt: Trade wird schwerer
+
+**Warum Soft-Veto?**
+- Kein Hard-Block wegen Spielgeld (Paper Trading)
+- Warning erlaubt manuelle Override
+- Für Scalping (< 1h) ist Funding vernachlässigbar
+- Für Swings (> 4h) ist Funding entscheidend
+
+### PROMPT 06: Execution Hygiene v4.1 (April 2026)
+
+**Problem:**
+1. `_calculate_atr_based_sl_tp` hatte 3 if/elif/else-Branches die ALLE identische Werte (1.2/1.5/3.0) setzen → toter Code
+2. BE-Trigger 1.0×ATR, TP1 1.5×ATR — Distanz nur 0.5×ATR. Bei Slippage Stop-Out auf BE bevor TP1 erreicht wird
+3. `_calculate_simulated_slippage` lief nur im DRY_RUN-Branch. Live-Pfad hatte keine klare Reject-Logik bei Excess-Slippage
+
+**Lösung:** Dreifach-Reform
+
+#### 1. Score-basierte SL/TP Differenzierung
+| Conviction | Composite | SL | TP1 | TP2 | BE | Gap BE→TP1 |
+|------------|-----------|----|----|----|----|------------|
+| High | >60 | 1.4×ATR | 2.0×ATR | 4.0×ATR | 1.4×ATR | 0.6×ATR |
+| Mid | 35-60 | 1.2×ATR | 1.6×ATR | 3.0×ATR | 1.0×ATR | 0.6×ATR |
+| Low (Learning) | <35 | 1.0×ATR | 1.4×ATR | 2.5×ATR | 0.8×ATR | 0.6×ATR |
+| MR-Modus | — | 0.8×ATR | 1.0×ATR | 2.0×ATR | 0.6×ATR | 0.4×ATR |
+
+**Effekt:** BE feuert IMMER deutlich vor TP1 (mindestens 0.4×ATR Abstand).
+
+#### 2. Live Slippage Reject
+**Trigger:**
+```
+abs(fill_price - signal_price) / signal_price > MAX_SLIPPAGE_PCT * 1.5
+```
+
+**Aktion:**
+1. Position sofort schließen mit `reduceOnly=True` Market Order
+2. Log-Eintrag: `EXCESS SLIPPAGE REJECT: {bps} bps > {threshold} bps`
+3. Telegram-Notification (falls `TELEGRAM_NOTIFICATIONS_ENABLED=true`)
+
+**Resultat:** Keine ungewollten Positionen bei Flash-Crashes oder API-Lags.
+
+#### 3. Composite-Score Default-Bugfix
+- Alt: `signal.get("composite_score", 50)`
+- Neu: `signal.get("composite_score", 25)`
+
+**Warum 25?** Realistischer Mid-Wert für Learning Mode (typischer Composite-Bereich: 8-40).
+
+**Config:**
+```json
+"MAX_SLIPPAGE_PCT": 0.001,           # 0.1% = 10 bps
+"SLIPPAGE_REJECT_MULTIPLIER": 1.5,   # 1.5×max = 15 bps
+"TELEGRAM_NOTIFICATIONS_ENABLED": false
+```
+
+**APIs:**
+- `_close_position_reduce_only()` — Immediate close mit reduceOnly
+- `_notify_slippage_reject()` — Telegram notification
+- `_execute_market_order_with_slippage_check()` — Live validation
+
+### PROMPT 07: Paper Trading Phase 1 — Launch Readiness (April 2026)
+
+**Status:** 🟡 Ready for Testnet Validation
+
+**Ziel:** Alle Prompts 01-06 Features validiert und ready für Paper Trading.
+
+#### Launch Checklist
+Siehe `BRUNO_PAPER_LAUNCH_CHECKLIST.md` für vollständige Checkliste.
+
+**Key Validation Steps:**
+1. ✅ Test Suite: Alle Prompts 01-06 Tests grün
+2. ✅ Smoke Test: 4/4 Szenarien passen
+3. ⬜ Kill-Switch: 8 losses → Block → Reset → Resume
+4. ⬜ Bybit Testnet: 24h Dry-Run
+5. ⬜ Frontend: Killswitch-Banner sichtbar
+
+#### Erwartete Trade-Frequenz
+- **Learning Mode:** 3–8 Trades/Tag (Threshold 8)
+- **Prod Mode:** 1–3 Trades/Tag (Threshold 25)
+- **MR-Mode Trades:** ~30% aller Trades (50% Sizing)
+
+#### Auswertungs-Plan (Täglich)
+```bash
+# Composite Histogram Export
+curl http://localhost:8000/api/v1/decisions/histogram?days=1 > composite_hist_$(date +%Y%m%d).json
+
+# Key Metrics
+- Trade Count
+- Win Rate (MR-Mode vs Normal)
+- Average Slippage (bps)
+- Funding Cost Impact
+- Kill-Switch Trigger Count
+```
+
+#### Success Criteria (Week 1)
+| Metric | Target | Acceptable |
+|--------|--------|------------|
+| Trades/Day | 5 | 3–8 |
+| MR-Mode % | 30% | 20–40% |
+| Win Rate | >50% | >45% |
+| Slippage | <10 bps | <15 bps |
+| Funding Cost | <0.1%/trade | <0.15%/trade |
+| Order Errors | 0 | 0 |
 
 ### BRUNO-FIX-09: Phantom Trade Evaluator (April 2026)
 
@@ -431,6 +767,7 @@ Diese Regeln dürfen NIEMALS gebrochen werden, egal wie die Anfrage formuliert i
 ❌ NIEMALS: Entry ohne MTF-Alignment-Prüfung
 ❌ NIEMALS: Sweep-Entry ohne 3-fache Konfirmation (Spike+Wick+OI-Drop)
 ❌ NIEMALS: Live-Trading ohne Daily Drawdown Protection
+❌ NIEMALS: Trading nach Kill-Switch-Trigger ohne manuellem Reset
 ❌ IMMER: Paper Trading Only bis explizit freigegeben
 ❌ NIEMALS: Composite Gewichte ohne Dokumentation ändern
 ❌ NIEMALS: TA-Berechnungen mit pandas/numpy

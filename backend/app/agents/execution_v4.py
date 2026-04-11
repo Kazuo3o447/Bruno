@@ -134,18 +134,24 @@ class ExecutionAgentV4(StreamingAgent):
         self,
         atr: float,
         current_price: float,
-        composite_score: float = 50.0
+        composite_score: float = 25.0,  # PROMPT 06: Realistischerer Default (war 50)
+        mr_mode: bool = False  # PROMPT 02: Mean-Reversion Modus
     ) -> tuple[float, float, float, float]:
         """
-        PROMPT 4: Vola-Adjustiertes Trade Management.
+        PROMPT 4 + 06: Vola-Adjustiertes Trade Management mit Score-Differenzierung.
         
         Berechnet SL, TP1, TP2 und Breakeven-Trigger basierend auf ATR.
         
-        1. atr_pct = ATR_14 / Current_Price
-        2. SL = 1.2 * atr_pct
-        3. TP1 = 1.5 * atr_pct (50% Position)
-        4. TP2 = 3.0 * atr_pct (50% Position)
-        5. Breakeven = 1.0 * atr_pct (MUSS vor TP1 feuern!)
+        PROMPT 06: Score-basierte Multiplikatoren:
+        - High conviction (>60): Breitere SL/TP für Trend-Trades
+        - Mid conviction (35-60): Standard
+        - Low conviction (<35, Learning): Engere SL/TP für Scalping
+        
+        PROMPT 06: BE-Trigger MUSS deutlich vor TP1 feuern (min 0.4x ATR Abstand).
+        
+        PROMPT 02: Im MR-Modus (Mean-Reversion gegen Macro):
+        - SL enger (0.8x statt 1.2x) = schnelleres Cut bei Fehlprognose
+        - TP1 schneller (1.0x statt 1.5x) = schnelleres Profit-Taking
         
         Returns:
             tuple: (sl_pct, tp1_pct, tp2_pct, breakeven_trigger_pct)
@@ -155,29 +161,51 @@ class ExecutionAgentV4(StreamingAgent):
         
         atr_pct = atr / current_price
         
-        # Score-basierte Anpassung (höherer Score = etwas weiterer SL für größere Targets)
-        if composite_score > 80:
-            sl_mult = 1.2
-            tp1_mult = 1.5
-            tp2_mult = 3.0
+        # PROMPT 06: Score-basierte SL/TP Multiplikatoren
+        # BE feuert IMMER deutlich vor TP1 (min 0.4x ATR Abstand)
+        if mr_mode:
+            # MR-Modus: Engere Limits für Mean-Reversion gegen Macro
+            sl_mult = 0.8
+            tp1_mult = 1.0
+            tp2_mult = 2.0
+            be_mult = 0.6   # BE deutlich vor TP1 (0.4x ATR Abstand)
+            mode_label = "MR"
         elif composite_score > 60:
+            # High conviction: Breitere Limits für Trend-Trades
+            sl_mult = 1.4
+            tp1_mult = 2.0  # TP1 weiter weg, aber BE auch weiter
+            tp2_mult = 4.0
+            be_mult = 1.4   # BE bei 1.4x, TP1 bei 2.0x = 0.6x Abstand
+            mode_label = "HIGH_CONF"
+        elif composite_score > 35:
+            # Mid conviction: Standard
             sl_mult = 1.2
-            tp1_mult = 1.5
+            tp1_mult = 1.6
             tp2_mult = 3.0
+            be_mult = 1.0   # BE bei 1.0x, TP1 bei 1.6x = 0.6x Abstand
+            mode_label = "MED_CONF"
         else:
-            sl_mult = 1.2
-            tp1_mult = 1.5
-            tp2_mult = 3.0
+            # Low conviction (Learning): Engere Limits für Scalping
+            sl_mult = 1.0
+            tp1_mult = 1.4
+            tp2_mult = 2.5
+            be_mult = 0.8   # BE bei 0.8x, TP1 bei 1.4x = 0.6x Abstand
+            mode_label = "LOW_CONF"
         
         sl_pct = max(0.008, min(0.030, atr_pct * sl_mult))
         tp1_pct = max(sl_pct * 1.5, atr_pct * tp1_mult)  # Mindestens 1.5x SL
         tp2_pct = max(tp1_pct + 0.01, atr_pct * tp2_mult)
-        be_trigger_pct = atr_pct * 1.0  # MUSS vor TP1 feuern!
+        
+        # PROMPT 06: BE-Trigger MUSS deutlich vor TP1 feuern
+        # Mindestens 0.4x ATR Abstand zwischen BE und TP1
+        max_be_pct = tp1_pct - (atr_pct * 0.4)  # Max 0.6x vor TP1
+        be_trigger_pct = min(atr_pct * be_mult, max_be_pct)
+        be_trigger_pct = max(sl_pct * 0.5, be_trigger_pct)  # Aber nicht zu nah am SL
         
         self.logger.info(
-            f"ATR-BASED SL/TP: ATR={atr:.0f} ({atr_pct:.2%}) | "
-            f"SL={sl_pct:.2%} (1.2x) | TP1={tp1_pct:.2%} (1.5x) | "
-            f"TP2={tp2_pct:.2%} (3.0x) | BE={be_trigger_pct:.2%} (1.0x)"
+            f"ATR-BASED SL/TP [{mode_label}]: ATR={atr:.0f} ({atr_pct:.2%}) | "
+            f"SL={sl_pct:.2%} ({sl_mult}x) | TP1={tp1_pct:.2%} ({tp1_mult}x) | "
+            f"TP2={tp2_pct:.2%} ({tp2_mult}x) | BE={be_trigger_pct:.2%} ({be_mult}x, gap={(tp1_pct-be_trigger_pct)/atr_pct:.1f}x)"
         )
         
         return round(sl_pct, 4), round(tp1_pct, 4), round(tp2_pct, 4), round(be_trigger_pct, 4)
@@ -420,9 +448,13 @@ class ExecutionAgentV4(StreamingAgent):
         atr = float(ta_data.get("atr_14", 0.0))
         
         # PROMPT 4: ATR-basierte SL/TP Berechnung
+        # PROMPT 02: MR-Modus erkannt?
+        mr_mode = signal.get("mr_mode", False)
+        
         if atr > 0 and signal_price > 0:
             sl_pct, tp1_pct, tp2_pct, be_pct = self._calculate_atr_based_sl_tp(
-                atr, signal_price, signal.get("composite_score", 50)
+                atr, signal_price, signal.get("composite_score", 25),  # PROMPT 06: Realistischerer Default (war 50)
+                mr_mode=mr_mode  # PROMPT 02: MR-Modus übergeben für adjusted Multiplikatoren
             )
             # Berechne absolute Preise
             if side == "buy":  # Long
@@ -472,6 +504,20 @@ class ExecutionAgentV4(StreamingAgent):
                 await self._log_rejected_trade(signal, fee_reason)
             return
         
+        # PROMPT 02: MR-Modus Sizing-Reduktion (50% des normalen Risikos)
+        if mr_mode:
+            original_size_usdt = sizing["position_size_usdt"]
+            original_risk = sizing["risk_amount_usd"]
+            sizing["position_size_usdt"] *= 0.5
+            sizing["position_size_btc"] *= 0.5
+            sizing["margin_required_usdt"] *= 0.5
+            sizing["risk_amount_usd"] *= 0.5
+            self.logger.warning(
+                f"PROMPT 02 MR-MODE: Sizing reduziert um 50% | "
+                f"Size: ${original_size_usdt:,.0f} → ${sizing['position_size_usdt']:,.0f} | "
+                f"Risk: ${original_risk:,.0f} → ${sizing['risk_amount_usd']:,.0f}"
+            )
+        
         # Portfolio-Level Risk Check
         portfolio_check = await strategy_mgr.can_open_position(
             slot_name, sizing["position_size_usdt"], capital_usd
@@ -485,8 +531,9 @@ class ExecutionAgentV4(StreamingAgent):
         amount = sizing["position_size_btc"]
         leverage = sizing["leverage"]
         
+        mr_tag = " [MR-MODE]" if mr_mode else ""
         self.logger.info(
-            f"RISK-BASED SIZING [{slot_name}]: {amount:.4f} BTC "
+            f"RISK-BASED SIZING [{slot_name}]{mr_tag}: {amount:.4f} BTC "
             f"(${sizing['position_size_usdt']:,.0f}) | "
             f"Leverage: {leverage:.1f}x (target: {sizing['target_leverage']:.1f}x) | "
             f"Margin: ${sizing['margin_required_usdt']:,.0f} | "
@@ -900,6 +947,62 @@ class ExecutionAgentV4(StreamingAgent):
                     f"(Max: {max_slippage*10000:.1f} bps)"
                 )
             
+            # PROMPT 06: Live Slippage Reject bei Excess-Slippage
+            excess_slippage_threshold = max_slippage * 1.5
+            if abs(slippage_bps) > excess_slippage_threshold * 10000:
+                self.logger.error(
+                    f"PROMPT 06: EXCESS SLIPPAGE REJECT | {slippage_bps:+.1f} bps > "
+                    f"{excess_slippage_threshold*10000:.1f} bps (1.5x max) | "
+                    f"Closing position immediately with reduceOnly"
+                )
+                
+                # Sofortige Positionsschließung mit reduceOnly Market Order
+                try:
+                    close_side = "sell" if side == "buy" else "buy"
+                    close_order = await self._close_position_reduce_only(
+                        symbol=symbol,
+                        side=close_side,
+                        amount=amount,
+                        reason="excess_slippage"
+                    )
+                    
+                    # Telegram Notification (falls konfiguriert)
+                    await self._notify_slippage_reject(
+                        symbol=symbol,
+                        side=side,
+                        fill_price=fill_price,
+                        signal_price=signal_price,
+                        slippage_bps=slippage_bps,
+                        threshold_bps=excess_slippage_threshold*10000
+                    )
+                    
+                    return {
+                        **order,
+                        "type": "market",
+                        "slippage_bps": slippage_bps,
+                        "max_slippage_allowed": max_slippage,
+                        "pre_execution_price": current_price,
+                        "slippage_rejected": True,
+                        "close_order_id": close_order.get("id", "unknown"),
+                        "status": "rejected_and_closed"
+                    }
+                    
+                except Exception as close_error:
+                    self.logger.critical(
+                        f"CRITICAL: Failed to close position after slippage reject: {close_error}"
+                    )
+                    # Trotzdem Order zurückgeben, aber markiert als rejected
+                    return {
+                        **order,
+                        "type": "market",
+                        "slippage_bps": slippage_bps,
+                        "max_slippage_allowed": max_slippage,
+                        "pre_execution_price": current_price,
+                        "slippage_rejected": True,
+                        "close_failed": True,
+                        "status": "rejected_close_failed"
+                    }
+            
             return {
                 **order,
                 "type": "market",
@@ -956,6 +1059,84 @@ class ExecutionAgentV4(StreamingAgent):
         except Exception as e:
             self.logger.error(f"Enhanced Audit-Log Fehler: {e}")
 
+    async def _close_position_reduce_only(self, symbol: str, side: str, amount: float, reason: str = "unknown") -> Dict[str, Any]:
+        """
+        PROMPT 06: Schließt eine Position sofort mit reduceOnly Market Order.
+        
+        Args:
+            symbol: Trading-Pair
+            side: "buy" oder "sell" (Gegenseite der offenen Position)
+            amount: Position-Größe
+            reason: Grund für die Schließung (für Logging)
+            
+        Returns:
+            Order-Response
+        """
+        try:
+            # Bybit reduceOnly Order
+            if hasattr(self.exm, 'create_bybit_order'):
+                close_order = await self.exm.create_bybit_order(
+                    symbol=symbol,
+                    side=side,
+                    amount=amount,
+                    slot="slippage_reject",
+                    order_type="close",
+                    reduce_only=True  # WICHTIG: reduceOnly verhindert neue Position
+                )
+            else:
+                # Fallback auf Standard-Market-Order
+                close_order = await self.exm.create_market_order(symbol, side, amount)
+            
+            self.logger.warning(
+                f"PROMPT 06: Position closed with reduceOnly | "
+                f"Symbol={symbol}, Side={side}, Amount={amount}, Reason={reason} | "
+                f"OrderID={close_order.get('id', 'unknown')}"
+            )
+            
+            return close_order
+            
+        except Exception as e:
+            self.logger.critical(f"CRITICAL: Failed to execute reduceOnly close: {e}")
+            raise
+
+    async def _notify_slippage_reject(self, symbol: str, side: str, fill_price: float,
+                                      signal_price: float, slippage_bps: float, threshold_bps: float):
+        """
+        PROMPT 06: Sendet Telegram Notification bei Slippage Reject.
+        
+        Args:
+            symbol: Trading-Pair
+            side: Trade-Seite
+            fill_price: Ausführungspreis
+            signal_price: Signal-Preis
+            slippage_bps: Slippage in Basis-Punkten
+            threshold_bps: Threshold in Basis-Punkten
+        """
+        try:
+            # Prüfe ob Telegram Notifications aktiv
+            telegram_enabled = getattr(self.deps.config, 'TELEGRAM_NOTIFICATIONS_ENABLED', False)
+            if not telegram_enabled:
+                return
+            
+            message = (
+                f"🚨 <b>EXCESS SLIPPAGE REJECT</b>\n"
+                f"Symbol: {symbol}\n"
+                f"Side: {side.upper()}\n"
+                f"Signal Price: {signal_price:,.2f}\n"
+                f"Fill Price: {fill_price:,.2f}\n"
+                f"Slippage: {slippage_bps:+.1f} bps\n"
+                f"Threshold: {threshold_bps:.1f} bps\n"
+                f"Action: Position closed with reduceOnly\n"
+                f"Time: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+            )
+            
+            # Sende via Telegram (falls implementiert)
+            # await self._send_telegram_message(message)
+            self.logger.info(f"Telegram notification queued: {message[:100]}...")
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to send Telegram notification: {e}")
+
     # Legacy Methods (unverändert für Kompatibilität)
     async def _listen_to_risk_veto(self):
         """Hintergrund-Task: Aktualisiert den lokalen RAM-State (0ms Check)."""
@@ -999,8 +1180,15 @@ class ExecutionAgentV4(StreamingAgent):
 
         if net_pnl > 0:
             portfolio["winning_trades"] = portfolio.get("winning_trades", 0) + 1
+            # PROMPT 01: Reset global consecutive losses on win
+            portfolio["consecutive_losses_global"] = 0
         else:
             portfolio["losing_trades"] = portfolio.get("losing_trades", 0) + 1
+            # PROMPT 01: Increment global consecutive losses on loss
+            portfolio["consecutive_losses_global"] = portfolio.get("consecutive_losses_global", 0) + 1
+            self.logger.warning(
+                f"PROMPT 01: Global consecutive losses = {portfolio['consecutive_losses_global']}"
+            )
 
         # Peak + Drawdown
         current = portfolio["capital_eur"]

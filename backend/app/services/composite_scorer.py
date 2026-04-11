@@ -25,6 +25,7 @@ class CompositeSignal:
     flow_score: float = 0.0
     macro_score: float = 0.0
     mean_reversion_score: float = 0.0  # NEU: Mean Reversion Sub-Engine
+    funding_score: float = 0.0         # PROMPT 05: Funding Rate Score
     conviction: float = 0.0
     position_size_pct: float = 0.0
     stop_loss_pct: float = 0.010
@@ -41,6 +42,7 @@ class CompositeSignal:
     mtf_aligned: bool = False         # NEU: aus TA-Snapshot
     sweep_confirmed: bool = False     # NEU: aus Liq-Intelligence
     diagnostics: dict = field(default_factory=dict)  # NEU: Decision Diagnostics
+    mr_mode: bool = False             # PROMPT 02: Mean-Reversion-Modus bei Macro-Konflikt
     
     def to_signal_dict(self, symbol: str = "BTCUSDT") -> dict:
         """Signal-Dict kompatibel mit ExecutionAgentV3."""
@@ -60,6 +62,7 @@ class CompositeSignal:
             "flow_score": self.flow_score,
             "macro_score": self.macro_score,
             "mean_reversion_score": self.mean_reversion_score,
+            "funding_score": self.funding_score,  # PROMPT 05
             "conviction": self.conviction,
             "stop_loss_pct": self.stop_loss_pct,
             "take_profit_pct": self.take_profit_pct,
@@ -76,6 +79,7 @@ class CompositeSignal:
             "sweep_confirmed": self.sweep_confirmed,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "sizing": getattr(self, 'sizing', {}),  # Ganzes Dict für ExecutionAgent
+            "mr_mode": self.mr_mode,  # PROMPT 02: Mean-Reversion-Modus für ExecutionAgent
         }
     
     def to_decision_feed_entry(self) -> dict:
@@ -183,14 +187,29 @@ class CompositeScorer:
         
         mean_reversion_score = self._score_mean_reversion(ta_data, regime)
         
+        # PROMPT 05: Funding Rate Score berechnen
+        funding_score = await self._score_funding(direction_hint="long" if preliminary_composite_check > 0 else "short")
+        
         result.ta_score = ta_score
         result.liq_score = liq_score
         result.flow_score = flow_score
         result.macro_score = macro_score
         result.mean_reversion_score = mean_reversion_score
+        result.funding_score = funding_score  # PROMPT 05
 
         trend_strength = float(ta_data.get("trend", {}).get("strength", 0.0))
-        weights = self._get_weights(regime, trend_strength)
+        
+        # PROMPT 03: Preliminary MR-Modus Erkennung für Gewichtung
+        # (wird später in der Conflict Resolution verfeinert)
+        preliminary_mr_mode = False
+        preliminary_composite_check = ta_score + liq_score + flow_score
+        preliminary_dir_check = "long" if preliminary_composite_check > 0 else "short" if preliminary_composite_check < 0 else "neutral"
+        if macro_trend_direction in ["macro_bull", "macro_bear"]:
+            macro_dir_check = "long" if macro_trend_direction == "macro_bull" else "short"
+            if preliminary_dir_check != "neutral" and preliminary_dir_check != macro_dir_check:
+                preliminary_mr_mode = True
+        
+        weights = self._get_weights(regime, trend_strength, mr_mode=preliminary_mr_mode)
         result.weight_preset = self._blend_label(self._regime_blend(regime, trend_strength), regime)
 
         # MTF + Sweep Status (VOR Confluence-Bonus setzen!)
@@ -203,11 +222,43 @@ class CompositeScorer:
         # Strategy B (Mean Reversion): Mean Reversion Score
         # Blend ratio based on regime: Ranging = more B, Trending = more A
         
+        # PROMPT 03: Dominant Signal Wins - Konflikt-Penalty entfernt
+        # Stärkstes Signal gewinnt, schwächere werden auf 50% reduziert (nicht negiert)
+        raw_scores = {"ta": ta_score, "liq": liq_score, "flow": flow_score}
+        dominant_signal = max(raw_scores.items(), key=lambda x: abs(x[1]))
+        dominant_name = dominant_signal[0]
+        dominant_value = dominant_signal[1]
+        dominant_sign = 1 if dominant_value > 0 else -1 if dominant_value < 0 else 0
+        
+        # Anwenden der Konflikt-Resolution: Signale in gleiche Richtung = 100%,
+        # Signale in Gegenrichtung = 50% (nicht negiert)
+        adjusted_scores = {}
+        for name, value in raw_scores.items():
+            if dominant_sign == 0:
+                adjusted_scores[name] = value
+            else:
+                value_sign = 1 if value > 0 else -1 if value < 0 else 0
+                if value_sign == dominant_sign or value_sign == 0:
+                    adjusted_scores[name] = value  # Gleiche Richtung = 100%
+                else:
+                    adjusted_scores[name] = value * 0.5  # Gegenrichtung = 50% (nicht negiert)
+        
+        # Log wenn Konflikt auftrat
+        if any(s != 0 for s in [1 if raw_scores[k]*dominant_sign < 0 else 0 for k in raw_scores]):
+            result.signals_active.append(
+                f"Conflict resolved: {dominant_name} dominates ({dominant_value:+.1f}), "
+                f"opposing reduced to 50%"
+            )
+        
+        # PROMPT 05: Funding Score mit 5% Gewichtung
+        funding_weight = float(ConfigCache.get("FUNDING_SUBSCORE_WEIGHT", 0.05))
+        
         strategy_a_score = (
-            ta_score * weights["ta"] +
-            (liq_score * 2) * weights["liq"] +
-            (flow_score * 2) * weights["flow"] +
-            (macro_score * 2) * weights["macro"]
+            adjusted_scores["ta"] * weights["ta"] +
+            (adjusted_scores["liq"] * 2) * weights["liq"] +
+            (adjusted_scores["flow"] * 2) * weights["flow"] +
+            (macro_score * 2) * weights["macro"] +
+            (funding_score * 2) * funding_weight  # PROMPT 05: Funding Score
         )
         
         # BRUNO-FIX-03: Reduzierte Blend-Ratios + MR als reiner Verstärker
@@ -350,32 +401,69 @@ class CompositeScorer:
 
         result.composite_score = round(max(-100, min(100, composite)), 1)
 
-        # 5. Richtung
-        result.direction = "long" if composite > 0 else "short" if composite < 0 else "neutral"
+        # === PROMPT 02: Macro Conflict Resolution VOR Direction-Bestimmung ===
+        # Schritt 1: Preliminary Direction aus TA + Liq + Flow (ohne Macro)
+        preliminary_composite = ta_score + liq_score + flow_score
+        preliminary_dir = "long" if preliminary_composite > 0 else "short" if preliminary_composite < 0 else "neutral"
         
-        # === PROMPT 1 FIX: Macro Score Hard Block ===
-        # WENN macro_trend == 'macro_bear' UND direction == 'LONG' → macro_score MUSS 0 sein
-        # WENN macro_trend == 'macro_bull' UND direction == 'SHORT' → macro_score MUSS 0 sein
-        if macro_trend_direction == "macro_bear" and result.direction == "long":
-            old_macro_score = macro_score
-            macro_score = 0.0
-            result.macro_score = 0.0
-            result.signals_active.append(f"MACRO BLOCK: Long in bear market (macro_score {old_macro_score:+.1f} → 0)")
-            self.logger.warning(f"Macro Score Fix: Long trade in bear market - macro_score forced to 0 (was {old_macro_score:+.1f})")
-        elif macro_trend_direction == "macro_bull" and result.direction == "short":
-            old_macro_score = macro_score
-            macro_score = 0.0
-            result.macro_score = 0.0
-            result.signals_active.append(f"MACRO BLOCK: Short in bull market (macro_score {old_macro_score:+.1f} → 0)")
-            self.logger.warning(f"Macro Score Fix: Short trade in bull market - macro_score forced to 0 (was {old_macro_score:+.1f})")
+        # Schritt 2: Macro Direction bestimmen
+        macro_dir = "neutral"
+        if macro_trend_direction == "macro_bull":
+            macro_dir = "long"
+        elif macro_trend_direction == "macro_bear":
+            macro_dir = "short"
+        
+        # Schritt 3: Konflikt-Erkennung
+        conflict = (macro_dir != "neutral" and macro_dir != preliminary_dir and preliminary_dir != "neutral")
+        
+        if conflict:
+            # Mean-Reversion-Modus: Trade gegen Macro erlaubt, aber mit reduziertem Risiko
+            result.mr_mode = True
+            macro_score = 0  # Kein Macro-Bonus im MR-Modus
+            result.macro_score = 0
+            result.signals_active.append(
+                f"MR MODE: {preliminary_dir.upper()} vs Macro {macro_dir.upper()} "
+                f"(TA+Liq+Flow={preliminary_composite:+.1f}, Macro={macro_trend_direction})"
+            )
+            self.logger.warning(
+                f"PROMPT 02: Mean-Reversion Modus aktiviert - {preliminary_dir} vs {macro_dir} "
+                f"| Sizing: 50%, SL: 0.8x, TP1: 1.0x"
+            )
+        else:
+            # Trend-Aligned: Voller Macro-Bonus, normales Sizing
+            result.mr_mode = False
+            if preliminary_dir != "neutral":
+                result.signals_active.append(
+                    f"TREND ALIGNED: {preliminary_dir.upper()} with Macro {macro_dir.upper()}"
+                )
+        
+        # 5. Richtung (jetzt mit berücksichtigtem Macro-Score)
+        result.direction = "long" if composite > 0 else "short" if composite < 0 else "neutral"
 
         # 5b. RegimeConfig Integration (NEU)
         regime_cfg = REGIME_CONFIGS.get(regime, REGIME_CONFIGS["unknown"])
         
         # 7. Threshold + Bonus-Logic
         atr = float(ta_data.get("atr_14", 0.0) or 0.0)
-        threshold = self._get_threshold(atr, result.price, macro_data)
+        
+        # PROMPT 03: Confluence zählen für Threshold-Bonus
+        confluence_aligned = 0
+        if adjusted_scores["ta"] != 0 and ((adjusted_scores["ta"] > 0) == (composite > 0)):
+            confluence_aligned += 1
+        if adjusted_scores["liq"] != 0 and ((adjusted_scores["liq"] > 0) == (composite > 0)):
+            confluence_aligned += 1
+        if adjusted_scores["flow"] != 0 and ((adjusted_scores["flow"] > 0) == (composite > 0)):
+            confluence_aligned += 1
+        
+        threshold = self._get_threshold(
+            atr, result.price, macro_data,
+            confluence_aligned=confluence_aligned,
+            mtf_aligned=result.mtf_aligned
+        )
         abs_score = abs(composite)
+        
+        # PROMPT 05: Funding-Daten für Soft-Veto und Diagnostics
+        funding_data = await self.redis.get_cache("market:funding:current") or {}
         
         # Sweep-Bonus: Ein bestätigter 3×-Sweep senkt den Threshold um 15
         # Begründung: Sweeps sind die höchstwahrscheinlichen Setups
@@ -393,6 +481,40 @@ class CompositeScorer:
             else:
                 effective_threshold += 8
                 result.signals_active.append("OFI Data Gap: Threshold +8")
+        
+        # PROMPT 05: Soft-Veto für hohe Funding Rates
+        # Wenn |funding| > 0.05% UND Richtung gegen Funding → Threshold +3
+        funding_veto_threshold_bps = float(ConfigCache.get("FUNDING_VETO_THRESHOLD_BPS", 5))
+        funding_hold_min = float(ConfigCache.get("FUNDING_PREDICTED_HOLD_MIN", 240))
+        
+        # funding_data wurde bereits oben geholt
+        funding_rate = funding_data.get("funding_rate", 0)
+        funding_bps = funding_data.get("funding_bps", abs(funding_rate * 10000))
+        
+        if funding_bps > funding_veto_threshold_bps:
+            # Prüfe ob Trade-Richtung gegen Funding läuft
+            # Long-Trade bei positivem Funding = teuer
+            # Short-Trade bei negativem Funding = teuer
+            direction_against_funding = (
+                (result.direction == "long" and funding_rate > 0) or
+                (result.direction == "short" and funding_rate < 0)
+            )
+            
+            if direction_against_funding:
+                # Lange Hold-Zeit würde Funding-Kosten signifikant machen
+                # Für Scalping (< 4h) ist Funding oft vernachlässigbar
+                # Für Swings (> 4h) ist Funding ein Faktor
+                # Wir gehen konservativ davon aus, dass durchschnittliche Hold-Zeit
+                # bei 4h+ liegt → Soft-Veto
+                effective_threshold += 3
+                result.signals_active.append(
+                    f"FUNDING_HEADWIND_WARNING: {funding_rate:.4%} against {result.direction}, "
+                    f"Threshold +3"
+                )
+                self.logger.warning(
+                    f"PROMPT 05: Funding Headwind detected | {funding_rate:.4%} vs {result.direction} | "
+                    f"Consider shorter hold or skip trade"
+                )
         
         # BRUNO-FIX-06: critical_data_gap ist jetzt eine ECHTE Blackout-Bedingung
         data_status = macro_data.get("Data_Status", {})
@@ -527,25 +649,42 @@ class CompositeScorer:
             "daily_ema_200": macro_trend.get("daily_ema_200", 0),
             "price_vs_daily_ema200": macro_trend.get("price_vs_ema200", "unknown"),
             "block_reason": self._get_block_reason(result, effective_threshold, macro_data),
+            # PROMPT 05: Funding Rate Diagnostics
+            "funding_score": result.funding_score,
+            "funding_rate": funding_data.get("funding_rate", 0) if funding_data else 0,
+            "funding_bps": funding_data.get("funding_bps", 0) if funding_data else 0,
         }
 
         # SYNCHRONES LOGGING: Reason und Scores zusammen mit composite_score
         reason_str = "; ".join(result.signals_active[:3]) if result.signals_active else "Score below threshold"
         self.logger.info(
             f"Composite Score: {result.composite_score:+.1f} | "
-            f"TA: {result.ta_score:+.1f} | Liq: {result.liq_score:+.1f} | Flow: {result.flow_score:+.1f} | Macro: {result.macro_score:+.1f} | "
+            f"TA: {result.ta_score:+.1f} | Liq: {result.liq_score:+.1f} | Flow: {result.flow_score:+.1f} | "
+            f"Macro: {result.macro_score:+.1f} | Funding: {result.funding_score:+.1f} | "  # PROMPT 05
             f"Reason: {reason_str} | Trade: {result.should_trade}"
         )
         
         return result
 
-    def _get_weights(self, regime: str, trend_strength: float = 0.0) -> dict:
+    def _get_weights(self, regime: str, trend_strength: float = 0.0, mr_mode: bool = False) -> dict:
         """
         Wählt Gewichtungs-Preset basierend auf Regime.
         Trending = TA dominiert, Ranging = Liq dominiert.
         
+        PROMPT 03: MR-Modus hat asymmetrische Gewichtung:
+        - Liq: 30%, Flow: 30%, TA: 25%, Macro: 15%
+        
         Kann via config.json überschrieben werden (mit OVERRIDE prefix).
         """
+        # PROMPT 03: MR-Modus asymmetrische Gewichtung
+        if mr_mode:
+            return {
+                "ta": 0.25,
+                "liq": 0.30,
+                "flow": 0.30,
+                "macro": 0.15,
+            }
+        
         # Config-Überschreibung prüfen (nur wenn explizit OVERRIDE_ Keys vorhanden)
         if all(ConfigCache.get(k) is not None for k in ["COMPOSITE_W_OVERRIDE_TA", "COMPOSITE_W_OVERRIDE_LIQ", 
                                                         "COMPOSITE_W_OVERRIDE_FLOW", "COMPOSITE_W_OVERRIDE_MACRO"]):
@@ -938,34 +1077,134 @@ class CompositeScorer:
         
         return round(max(-50, min(50, score)), 1)
 
-    def _get_threshold(self, atr: float = 0.0, price: float = 0.0, macro_data: dict = None) -> float:
-        """Adaptiver Threshold: Basis × Volatilitäts-Multiplikator × Event-Multiplikator."""
+    async def _score_funding(self, direction_hint: str = "neutral") -> float:
+        """
+        PROMPT 05: Funding Rate Score -10 bis +10.
+        
+        Best Practice für BTC Perpetual Trading:
+        - Negativer Funding (Shorts bezahlen Longs) → Long-Favorit
+        - Positiver Funding (Longs bezahlen Shorts) → Short-Favorit
+        
+        Score-Berechnung:
+        - Long bei negativem Funding: +5 (Shorts bezahlen Longs)
+        - Long bei Funding > 0.03%: -8 (Long zahlt teuer)
+        - Symmetrisch für Short
+        
+        Args:
+            direction_hint: "long" oder "short" für gerichtete Scoring
+            
+        Returns:
+            float: Funding Score -10..+10
+        """
+        # Hole Funding-Daten aus Redis
+        funding_data = await self.redis.get_cache("market:funding:current") or {}
+        funding_rate = funding_data.get("funding_rate", 0)
+        funding_bps = funding_data.get("funding_bps", 0)  # Basis-Punkten
+        
+        if funding_rate is None:
+            return 0.0
+        
+        score = 0.0
+        
+        # Konvertiere Funding Rate zu Basis-Punkten (1% = 100 bps)
+        bps = funding_bps if funding_bps else (funding_rate * 10000)
+        
+        # Richtungsabhängige Scoring
+        if direction_hint == "long":
+            # Für Long-Trades
+            if bps < 0:
+                # Negativer Funding = Shorts zahlen Longs → Gut für Long
+                score = min(10, max(5, abs(bps) * 2))
+            elif bps > 5:
+                # Funding > 0.05% = teuer für Long
+                score = -8
+            elif bps > 3:
+                # Funding > 0.03% = moderat teuer
+                score = -5
+            else:
+                # Neutral
+                score = 0
+                
+        elif direction_hint == "short":
+            # Für Short-Trades (inverse Logik)
+            if bps > 0:
+                # Positiver Funding = Longs zahlen Shorts → Gut für Short
+                score = min(10, max(5, bps * 2))
+            elif bps < -5:
+                # Negativer Funding < -0.05% = teuer für Short
+                score = -8
+            elif bps < -3:
+                # Negativer Funding < -0.03% = moderat teuer
+                score = -5
+            else:
+                score = 0
+        else:
+            # Neutral / keine klare Richtung
+            score = 0
+        
+        self.logger.debug(
+            f"PROMPT 05 Funding Score: {score:+.1f} | "
+            f"Funding: {funding_rate:.4%} ({bps:.1f} bps) | Direction: {direction_hint}"
+        )
+        
+        return round(max(-10, min(10, score)), 1)
+
+    def _get_threshold(self, atr: float = 0.0, price: float = 0.0, macro_data: dict = None,
+                       confluence_aligned: int = 0, mtf_aligned: bool = False) -> float:
+        """
+        PROMPT 03: Adaptiver Threshold mit Konfidenz-Bonuses.
+        
+        Basis × Volatilitäts-Multiplikator × Event-Multiplikator - Konfidenz-Bonuses
+        
+        Konfidenz-Bonuses (senken Threshold):
+        - ≥2 Sub-Scores aligned: -3 Punkte
+        - MTF aligned: -5 Punkte
+        - Hard Floor in Learning: 8 (war 15)
+        """
         learning_enabled = ConfigCache.get("LEARNING_MODE_ENABLED", False)
         if learning_enabled:
-            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 16))  # Lowered to 16 for Bruno v3
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 8))  # PROMPT 03: 8 statt 16
+            hard_floor = float(ConfigCache.get("COMPOSITE_FLOOR_LEARNING", 8))  # PROMPT 03: Hard floor
         else:
-            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 40))
+            base = float(ConfigCache.get("COMPOSITE_THRESHOLD_PROD", 25))  # PROMPT 03: 25 statt 40
+            hard_floor = 25.0
 
         if atr <= 0 or price <= 0:
-            return base
-
-        atr_pct = atr / price
-        # Hohe Vola -> konservativer, niedrige Vola -> aggressiver
-        vol_mult = 0.65 + min(0.6, (atr_pct / 0.02) * 0.6)
-        
-        # Event Guard Logic
-        event_mult = 1.0
-        if macro_data:
-            active_event = macro_data.get("Active_Event")
-            if active_event:
-                event_mult = float(active_event.get("threshold_mult", 1.0))
-                self.logger.info(f"Event Guard: {active_event.get('name')} — Threshold ×{event_mult}")
-
-        # HARD FLOOR: In Learning Mode, allow lower thresholds (no floor), in Prod: min 25
-        if learning_enabled:
-            return round(base * vol_mult * event_mult, 1)  # No floor in Learning Mode
+            threshold = base
         else:
-            return round(max(25.0, base * vol_mult * event_mult), 1)  # Prod floor at 25
+            atr_pct = atr / price
+            # Hohe Vola -> konservativer, niedrige Vola -> aggressiver
+            vol_mult = 0.65 + min(0.6, (atr_pct / 0.02) * 0.6)
+            
+            # Event Guard Logic
+            event_mult = 1.0
+            if macro_data:
+                active_event = macro_data.get("Active_Event")
+                if active_event:
+                    event_mult = float(active_event.get("threshold_mult", 1.0))
+                    self.logger.info(f"Event Guard: {active_event.get('name')} — Threshold ×{event_mult}")
+            
+            threshold = base * vol_mult * event_mult
+        
+        # PROMPT 03: Konfidenz-basierte Threshold-Reduktion
+        threshold_bonus = 0
+        
+        # ≥2 Sub-Scores in gleiche Richtung
+        confluence_bonus = float(ConfigCache.get("CONFLUENCE_BONUS_2OF3", -3))
+        if confluence_aligned >= 2:
+            threshold_bonus += confluence_bonus
+            self.logger.debug(f"Threshold bonus: {confluence_aligned} signals aligned = {confluence_bonus}")
+        
+        # MTF aligned
+        mtf_bonus = float(ConfigCache.get("MTF_ALIGN_BONUS", -5))
+        if mtf_aligned:
+            threshold_bonus += mtf_bonus
+            self.logger.debug(f"Threshold bonus: MTF aligned = {mtf_bonus}")
+        
+        threshold += threshold_bonus
+        
+        # HARD FLOOR: Nie unter hard_floor (8 in Learning, 25 in Prod)
+        return round(max(hard_floor, threshold), 1)
 
     def _calc_sl_tp(self, atr: float, price: float, abs_score: float, regime="unknown") -> tuple:
         """

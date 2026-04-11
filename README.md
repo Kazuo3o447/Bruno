@@ -1,25 +1,23 @@
 # Bruno Trading Bot
 
-> **Privacy-First Institutional Bitcoin Trading Bot — v2.1.1 Scoring Hotfix**
+> **Privacy-First Institutional Bitcoin Trading Bot — v3.0 Conflict Resolution & Paper Launch Ready**
 
-> ✅ **V2.1.1 Scoring Hotfix:** Balanced Scoring Logic, Conviction-Gate Removal, TA-Breakdown Transparenz, Moderate Macro Penalties (50% statt 80%), Fair Chancen für bullische Setups im Ranging, Stage-by-Stage Diagnostik (Residual aufgelöst)
-> ✅ **V2.1 Logic-Bugs Fixed:** Sequentielle should_trade Logik, Single OFI Penalty, Conservative insufficient_data, F&G Retry, Dynamic EUR/USD, Rock-Solid Decision Engine
-> ✅ **V2.1 Integration Fixes:** Multi-Strategy Slots (trend, sweep, funding), Scaled Entry Engine, Position Tracker Slot-Aware, Cooldowns (Sweep 60s, Funding 1800s)
-> ✅ **V8.0 Privacy-First News & Bybit Core:** Multi-Source News Ingestion (CryptoPanic, RSS, Tier-3 FreeCryptoNews) mit SHA256 Deduplizierung, Zero-Trust Defensive Architecture, Bybit V5 WebSocket als exklusive "Single Source of Truth", Complete Binance REST Purge
-> ✅ **V8.0 Mathematical Purity:** Präzise CVD Taker-Mathematik, VWAP/VPOC tägliche Resets, Trade-Deduplizierung via execution IDs, Zero Tolerance für Heuristiken
-> ✅ **V3.0 API Integration Complete:** Alle API-Keys konfiguriert (HF_TOKEN, ALPHA_VANTAGE, DEEPSEEK, FRED, LUNARCRUSH), HuggingFace Sentiment Models aktiv, CryptoPanic News Integration
-> ✅ **V3.0 Privacy & Stability:** CryptoPanic API (diskrete News-Quelle), HF_TOKEN für HuggingFace Login, ConfigCache Singleton (nur beim Startup laden), CompositeScorer Logging Sync
-> ✅ **V2.3 Score-Kalibrierung:** Confluence-Bonus (+8 pro aligned Signal), Regime-Kompensation (+15% in Ranging), TA Ranging-Kompensation (±8), Volume Session-Aware, Liq Nearest-Wall Proximity
-> ✅ **V2.2.1 Critical Fixes:** ExecutionAgentV4 aktiviert, PAPER_TRADING_ONLY Hardlock entfernt, Dynamisches Regime-Blending, ConfigCache Performance-Optimierung, ~4000 Zeilen Dead Code entfernt, Ollama komplett eliminiert
-> ✅ **V2.2 Retail Features:** Echtes CVD, GRSS v3, Adaptive Thresholds, Event Calendar, Max Pain Integration (entfernt 2026-04-06)
-> ✅ **MTF-Filter Regime-Kopplung:** Entspannte Filter im Ranging für bessere Signalqualität
-> ✅ **Realistische Retail Fees:** 5 BPS Taker / 2 BPS Maker / 3 BPS Slippage
-> ✅ **TA-Score im Ranging:** Produziert valide Werte (-25 bis +25) statt konstant 0.0
+> ✅ **V3.0 Conflict Resolution:** Macro Conflict Resolver (Prompt 02), Composite v3 Reform (Prompt 03), Bybit Hedge Mode (Prompt 04), Funding-Aware Trading (Prompt 05), Execution Hygiene v4.1 (Prompt 06)
+> ✅ **V3.0 Paper Trading Ready:** Smoke Test Script, Launch Checklist, 24h Testnet Validation, Kill-Switch Integration
+> ✅ **V2.1.1 Scoring Hotfix:** Balanced Scoring Logic, Conviction-Gate Removal, TA-Breakdown Transparenz, Moderate Macro Penalties
+> ✅ **V8.0 Privacy-First News & Bybit Core:** Multi-Source News Ingestion, Bybit V5 WebSocket als "Single Source of Truth", Zero Tolerance für Heuristiken
 > ✅ **DeepSeek Post-Trade Analyse:** Professionelle Trade-Evaluation für Paper Trades
-> ✅ **Adaptive Thresholds:** ATR-basiert mit Event Calendar Guardrails (FOMC/CPI/NFP)
-> ✅ **Pipeline Backtest:** Walk-Forward mit echter CompositeScorer Pipeline
-> ✅ **Paper Trading Lock:** System ist auf Paper Trading beschränkt für sichere Tests (Hardlock aktiv)
-> ✅ **Dashboard Redesign:** Modernes kompaktes Layout mit Entscheidungszyklen-Visualisierung
+
+### V3.0 Highlights (Prompts 02-06)
+
+| Feature | Beschreibung |
+|---------|-------------|
+| **MR-Mode** | Mean-Reversion bei Macro-Konflikt (50% Sizing, 0.8×SL, 1.0×TP1) |
+| **Composite v3** | Dominant Signal Wins, Threshold 8 (Learning), 3-8 Trades/Tag |
+| **Hedge Mode** | Bybit positionIdx (0/1/2), reduceOnly, orderLinkId Idempotenz |
+| **Funding Filter** | Funding Score ±10 (5% Gewicht), Soft-Veto bei >0.05% |
+| **SL/TP v4.1** | Score-basierte Differenzierung, BE garantiert vor TP1 |
+| **Slippage Reject** | Live Excess-Slippage Detection + reduceOnly Close |
 
 **Repository:** https://github.com/Kazuo3o447/Bruno
 
@@ -69,26 +67,25 @@
 - **Port-Konfiguration:** API-Aufrufe über `/api/v1`, WebSockets über `ws://localhost:8000/ws/*` (korrigiert)
 - **Local Development:** Alle Services auf localhost (Docker Container-Namen entfernt)
 
-### Trading Flow Highlights (v8.0)
+### Trading Flow Highlights (v3.0)
 
 - **Bybit V5 Single Source of Truth:** WebSocket (simuliert) + CVD Taker-Mathematik
-- **Privacy-First News Aggregation:** RSS Feeds (primär) + Reddit JSON (sekundär) + Multi-API Fallback + SHA256 Deduplizierung + Redis Storage
-- **Complete Binance Purge:** Alle REST API Calls entfernt, Analytics Service eliminiert
-- **Sentiment Analysis:** HuggingFace Models mit HF_TOKEN, Zero-Shot Classification für News
-- **Real CVD:** aggTrade Delta mit 1-Sekunden-Buckets für echte Volume-Delta-Analyse
+- **Bybit Hedge Mode v2:** positionIdx (0/1/2), reduceOnly für SL/TP, orderLinkId Idempotenz
+- **Privacy-First News Aggregation:** RSS Feeds (primär) + Reddit JSON (sekundär) + SHA256 Deduplizierung
+- **Funding-Aware Trading:** Funding Score ±10 (5% Gewicht), Soft-Veto bei >0.05%
+- **Macro Conflict Resolution:** MR-Mode bei TA+Macro-Konflikt (50% Sizing, 0.8×SL)
+- **Execution Hygiene v4.1:** Score-basierte SL/TP, BE garantiert vor TP1, Live Slippage Reject
+- **Sentiment Analysis:** HuggingFace Models mit HF_TOKEN, Zero-Shot Classification
+- **Real CVD:** aggTrade Delta mit 1-Sekunden-Buckets
 - **GRSS v3:** 4 gewichtete Sub-Scores (Derivatives, Retail, Sentiment, Macro)
-- **Adaptive Thresholds:** ATR-basiert mit Event Calendar Guardrails
-- **Paper Trading:** System ist auf Paper Trading beschränkt für sichere Tests
-- **MTF-Filter:** Regime-abhängige Filter (50%/80% im Ranging vs 30%/70% in Trending)
-- **Event Calendar:** Automatische Threshold-Anpassung um FOMC/CPI/NFP Events
-- **Data Gap Veto:** DVOL & Long/Short Ratio = None → Conviction ↓, Risk Agent veto
-- **Signal Sources:** Bybit V5 (Primary) + Alpha Vantage (Macro) + HuggingFace (Sentiment) + RSS News (Primary) + Reddit JSON (Secondary)
-- **DeepSeek Debrief:** Automatische Post-Trade Analyse für Paper Trades mit JSON-Output
-- **VWAP Reset:** Exakt um 00:00:00 UTC (Typical Price Basis)
-- **VPOC:** Volume Point of Control mit 10-Dollar-Preisstufen
-- **ConfigCache Singleton:** config.json nur beim Startup laden (keine ständigen Disk-Reads)
-- **CompositeScorer Logging:** Synchrones Logging von Reason und Scores
-- **V2.3 Score-Kalibrierung:** Confluence-Bonus, Regime-Kompensation, Ranging-aware TA/Volume/Liq für realistischere Trade-Generierung
+- **Adaptive Thresholds:** ATR-basiert, Threshold 8 (Learning) / 25 (Prod)
+- **Composite v3:** Dominant Signal Wins, 3-8 Trades/Tag erwartet
+- **Paper Trading:** Hard-Lock auf Paper Trading, Launch Checklist
+- **Kill-Switch System:** 8 Consecutive Losses → Block, Reset → Resume
+- **MTF-Filter:** Regime-abhängige Filter (50%/80% im Ranging)
+- **Event Calendar:** Automatische Threshold-Anpassung um FOMC/CPI/NFP
+- **DeepSeek Debrief:** Automatische Post-Trade Analyse mit JSON-Output
+- **VWAP/VPOC:** Tägliche Resets um 00:00:00 UTC
 
 ---
 
