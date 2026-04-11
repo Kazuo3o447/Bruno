@@ -44,10 +44,14 @@ class CompositeSignal:
     
     def to_signal_dict(self, symbol: str = "BTCUSDT") -> dict:
         """Signal-Dict kompatibel mit ExecutionAgentV3."""
+        # BRUNO-FIX-08: Echte Position aus sizing übernehmen
+        sizing = getattr(self, 'sizing', {}) or {}
+        position_btc = float(sizing.get("position_size_btc", 0.0))
+
         return {
             "symbol": symbol,
             "side": "buy" if self.direction == "long" else "sell",
-            "amount": 0.0,  # ExecutionAgent berechnet die echte Positionsgröße
+            "amount": position_btc,  # War 0.0 — jetzt echte Größe
             "position_size_hint_pct": self.position_size_pct,  # Hint für Execution
             "price": self.price,
             "composite_score": self.composite_score,
@@ -206,43 +210,60 @@ class CompositeScorer:
             (macro_score * 2) * weights["macro"]
         )
         
-        # Blend ratio: 0.0 = pure A, 1.0 = pure B
+        # BRUNO-FIX-03: Reduzierte Blend-Ratios + MR als reiner Verstärker
+        # MR darf Strategy A nur verstärken, nie auslöschen
         if regime == "ranging":
-            blend_ratio = 0.4  # 40% Mean Reversion, 60% Trend Following
+            blend_ratio = 0.15  # war 0.40 — Trend bleibt dominant
         elif regime == "high_vola":
-            blend_ratio = 0.3  # 30% Mean Reversion, 70% Trend Following
+            blend_ratio = 0.20  # war 0.30
         elif regime in ("trending_bull", "bear"):
-            blend_ratio = 0.1  # 10% Mean Reversion, 90% Trend Following
+            blend_ratio = 0.05  # war 0.10 — fast reiner Trend
         else:
-            blend_ratio = 0.2  # Default: 20% Mean Reversion
-        
+            blend_ratio = 0.10  # Default
+
         # Normalize mean_reversion_score from -50..+50 to -100..+100 for blending
         mr_normalized = mean_reversion_score * 2
-        
-        # PROMPT 7: Strategy Blending Fix (Der "Brei-Effekt")
-        # WENN trend_score extrem hoch (> 80), DANN darf negativer mean_reversion_score
-        # den Gesamt-Score NICHT mehr reduzieren.
+
+        # BRUNO-FIX-03: MR Contribution nur bei Vorzeichen-Übereinstimmung mit Strategy A
+        # MR verstärkt Trend, löscht ihn nicht aus
         abs_ta_score = abs(ta_score)
         mr_contribution = mr_normalized
-        
-        if abs_ta_score > 80 and mr_normalized < 0:
-            # Trend ist extrem stark - "Overbought" ist ein Zeichen von Stärke, kein Malus
-            # Cap Mean Reversion auf 0, damit es den Trend-Score nicht blockiert
+
+        # Regel 1: Gegensätzliche Vorzeichen → MR-Beitrag = 0
+        strategy_a_sign = 1 if strategy_a_score > 0 else -1 if strategy_a_score < 0 else 0
+        mr_sign = 1 if mr_normalized > 0 else -1 if mr_normalized < 0 else 0
+
+        if strategy_a_sign != 0 and mr_sign != 0 and strategy_a_sign != mr_sign:
             mr_contribution = 0.0
             result.signals_active.append(
-                f"MR capped: Trend score {abs_ta_score:.0f} > 80, ignoring overbought signal"
+                f"MR neutralized: sign conflict (A={strategy_a_score:+.1f}, MR={mr_normalized:+.1f})"
             )
-            self.logger.info(
-                f"PROMPT 7 BLENDING FIX: TA score {abs_ta_score:.0f} > 80, "
-                f"MR normalized was {mr_normalized:.1f}, capped to 0.0"
+            self.logger.debug(
+                f"MR sign conflict: strategy_a={strategy_a_score:+.1f}, "
+                f"mr_normalized={mr_normalized:+.1f} → 0"
             )
-        
+
+        # Regel 2: Bei starkem Trend (abs_ta > 80) — BRUNO-FIX-01
+        if abs_ta_score > 80:
+            if ta_score > 0 and mr_normalized < 0:
+                mr_contribution = 0.0
+                result.signals_active.append(
+                    f"MR capped: Strong bull trend (TA={ta_score:.0f}), ignoring overbought"
+                )
+            elif ta_score < 0 and mr_normalized > 0:
+                mr_contribution = 0.0
+                result.signals_active.append(
+                    f"MR capped: Strong bear trend (TA={ta_score:.0f}), ignoring oversold"
+                )
+
         # Blend Strategy A and B
         composite = (strategy_a_score * (1 - blend_ratio)) + (mr_contribution * blend_ratio)
         result.composite_score = round(max(-100, min(100, composite)), 1)
-        
-        if blend_ratio > 0.2:
-            result.signals_active.append(f"Strategy Blend: {blend_ratio*100:.0f}% Mean Reversion ({regime} regime)")
+
+        if blend_ratio >= 0.15:
+            result.signals_active.append(
+                f"Strategy Blend: {int(blend_ratio*100)}% MR ({regime} regime)"
+            )
 
         # 4b. Signal-Confluence-Bonus (NEU) - PROMPT 1 FIX: Härtere Bedingungen
         # Der Bonus darf NUR addiert werden, WENN:
@@ -280,26 +301,34 @@ class CompositeScorer:
 
         dominant_count = max(bull_count, bear_count)
 
-        # === PROMPT 1 FIX: Confluence Bonus nur bei harten Fakten ===
+        # BRUNO-FIX-03: Confluence Gate gelockert (ODER statt UND)
+        # Bonus ist erreichbar, wenn ENTWEDER MTF aligned ODER Liq/Flow stark sind
+        # Zusätzlich: höhere Boni pro aligned signal
         confluence_bonus_eligible = (
-            result.mtf_aligned and  # a) MTF muss aligned sein
-            (liq_score > 0 or abs(flow_score) > 20)  # b) Liq oder Flow muss stark sein
+            result.mtf_aligned  # MTF alleine reicht
+            or (liq_score > 5 and abs(flow_score) > 10)  # ODER starke Liq+Flow Confluence
+            or abs(flow_score) > 20  # ODER sehr starker Flow alleine
         )
-        
+
         if dominant_count >= 3 and confluence_bonus_eligible:
-            bonus = (dominant_count - 2) * 10  # +10 pro Signal ab dem 3.
+            # BRUNO-FIX-03: Höhere Boni — der Bonus ist kritisch für Learning-Threshold
+            # 3/4 aligned → +15 (war 10)
+            # 4/4 aligned → +25 (war 20)
+            bonus = 15 if dominant_count == 3 else 25
             if bull_count > bear_count:
                 composite += bonus
-                result.signals_active.append(f"Confluence Bonus +{bonus} ({bull_count}/4 aligned, MTF✓)")
+                result.signals_active.append(
+                    f"Confluence Bonus +{bonus} ({bull_count}/4 aligned)"
+                )
             else:
                 composite -= bonus
-                result.signals_active.append(f"Confluence Bonus -{bonus} ({bear_count}/4 aligned, MTF✓)")
+                result.signals_active.append(
+                    f"Confluence Bonus -{bonus} ({bear_count}/4 aligned)"
+                )
         elif dominant_count >= 3 and not confluence_bonus_eligible:
-            # PROMPT 1: Logge warum kein Bonus gegeben wurde
-            if not result.mtf_aligned:
-                result.signals_active.append(f"Confluence Bonus BLOCKED: MTF not aligned ({bull_count}/4 signals)")
-            else:
-                result.signals_active.append(f"Confluence Bonus BLOCKED: No liq/flow backing (liq={liq_score}, flow={flow_score})")
+            result.signals_active.append(
+                f"Confluence Bonus pending: {dominant_count}/4 signals aligned but no gate"
+            )
 
         result.composite_score = round(max(-100, min(100, composite)), 1)
 
@@ -355,21 +384,41 @@ class CompositeScorer:
             effective_threshold = max(30, threshold - 15)
             result.signals_active.append("Sweep-Bonus: Threshold -15")
         
-        # OFI Data Gap Penalty: Wenn OFI keine Daten hat, erhöhe Threshold um 8
+        # BRUNO-FIX-05: OFI Penalty nur in Prod-Mode
+        learning_mode = bool(ConfigCache.get("LEARNING_MODE_ENABLED", False))
+        disable_ofi_penalty = bool(ConfigCache.get("DISABLE_OFI_GAP_PENALTY_IN_LEARNING", True))
         if flow_data.get("OFI_Buy_Pressure") is None:
-            effective_threshold += 8
-            result.signals_active.append("OFI Data Gap: Threshold +8")
+            if learning_mode and disable_ofi_penalty:
+                result.signals_active.append("OFI Data Gap: noted (learning mode, no penalty)")
+            else:
+                effective_threshold += 8
+                result.signals_active.append("OFI Data Gap: Threshold +8")
         
-        # Critical Data Gap Check (für Conviction)
-        critical_data_gap = macro_data.get("DVOL") is None or macro_data.get("Long_Short_Ratio") is None
+        # BRUNO-FIX-06: critical_data_gap ist jetzt eine ECHTE Blackout-Bedingung
+        data_status = macro_data.get("Data_Status", {})
+        components_ok = data_status.get("components_ok", 0)
+        components_total = data_status.get("components_total", 6)
+
+        # Echter Daten-Blackout: <33% der GRSS-Komponenten verfügbar
+        grss_blackout = data_status.get("grss_blackout", False)
+
+        # OFI-Verfügbarkeit bleibt als separater Gate
         ofi_available = flow_data.get("OFI_Available", True)
-        if not ofi_available:
-            critical_data_gap = True
-            
+
+        # critical_data_gap = nur wenn sowohl GRSS als auch OFI fehlen
+        critical_data_gap = grss_blackout and not ofi_available
+
+        disable_halving = bool(ConfigCache.get("DISABLE_CONVICTION_HALVING_IN_LEARNING", True))
+
         base_conviction = min(1.0, abs_score / 100.0)
-        result.conviction = round(base_conviction * (0.5 if critical_data_gap else 1.0), 3)
+
+        if critical_data_gap and not (learning_mode and disable_halving):
+            # Prod: Conviction halbieren
+            result.conviction = round(base_conviction * 0.5, 3)
+        else:
+            result.conviction = round(base_conviction, 3)
+
         if critical_data_gap:
-            # EINE Message, die beschreibt WAS fehlt
             missing = []
             if not ofi_available:
                 missing.append("OFI")
@@ -377,7 +426,15 @@ class CompositeScorer:
                 missing.append("DVOL")
             if macro_data.get("Long_Short_Ratio") is None:
                 missing.append("L/S Ratio")
-            result.signals_active.append(f"Data Gap ({', '.join(missing)}): Conviction halved")
+
+            if learning_mode and disable_halving:
+                result.signals_active.append(
+                    f"Data Gap ({', '.join(missing)}): noted (learning mode, no halving)"
+                )
+            else:
+                result.signals_active.append(
+                    f"Data Gap ({', '.join(missing)}): Conviction halved"
+                )
         
         # Macro Trend Hard Block Daten
         mt_allow_longs = macro_trend.get("allow_longs", True)
@@ -413,12 +470,20 @@ class CompositeScorer:
         # Macro risk is ONLY priced into the score via TA-Score penalty (50% reduction for macro_bear + long)
         # No additional signal reasons needed - the score already reflects macro conditions
         
-        # SCHRITT 5: Sizing Check (kann nur blockieren, nie freigeben)
+        # BRUNO-FIX-04: Sizing Check mit Phantom-Fallback
         if result.should_trade and not sizing.get("sizing_valid", False):
-            result.should_trade = False
-            result.signals_active.append(
-                f"SIZING REJECT: {sizing.get('reject_reason', 'unknown')}"
-            )
+            if sizing.get("phantom_eligible", False):
+                # Learning-Mode: Position zu klein für echten Trade, aber als Phantom aufzeichnen
+                # should_trade bleibt False für Execution, aber signals_active markiert Phantom
+                result.should_trade = False
+                result.signals_active.append(
+                    f"PHANTOM ELIGIBLE: {sizing.get('reject_reason', 'below_notional')}"
+                )
+            else:
+                result.should_trade = False
+                result.signals_active.append(
+                    f"SIZING REJECT: {sizing.get('reject_reason', 'unknown')}"
+                )
         
         result.position_size_pct = sizing.get("position_size_btc", 0.0)
         # Speichere sizing für ExecutionAgent
@@ -522,113 +587,125 @@ class CompositeScorer:
         }
 
     def _calc_position_size(self, abs_score: float, atr: float, price: float,
-                        session: dict, capital_eur: float = 0.0) -> dict:
+                            session: dict, capital_eur: float = 0.0) -> dict:
         """
-        Professionelles Risk-Based Position Sizing.
-        
-        Prinzip: Der RISIKOBETRAG ist fix (2% des Eigenkapitals).
-        Die POSITIONSGRÖSSE ergibt sich aus Risikobetrag ÷ SL-Distanz.
-        Leverage macht die Position kapitaleffizient, NICHT riskanter.
-        
-        Returns: dict mit allen Sizing-Informationen
+        Kontinuierliches Kelly-inspiriertes Position Sizing (BRUNO-FIX-04).
+
+        Prinzip:
+        - Base risk = fixer Prozentsatz des Kapitals (z.B. 2.5%)
+        - size_factor = tanh(abs_score / 40) → monoton, glatt, beschränkt
+        - Effective risk = base_risk * size_factor
+        - Position = effective_risk / SL-Distanz
+
+        Learning-Mode-Relaxation:
+        - MIN_NOTIONAL reduziert (50 vs 100 USDT)
+        - MIN_RR_AFTER_FEES reduziert (1.1 vs 1.5)
+        - Unter-Notional-Positionen werden als Phantom-Trades markiert, nicht gekillt
+
+        Returns: dict mit Sizing-Infos inkl. 'sizing_valid' und 'phantom_eligible'
         """
-        leverage = int(ConfigCache.get("LEVERAGE", 3))
-        risk_pct = float(ConfigCache.get("RISK_PER_TRADE_PCT", 2.0)) / 100.0
-        min_notional = float(ConfigCache.get("MIN_NOTIONAL_USDT", 300))
-        fee_rate = float(ConfigCache.get("FEE_RATE_TAKER", 0.0004))
-        min_rr = float(ConfigCache.get("MIN_RR_AFTER_FEES", 1.5))
-        
-        if price <= 0 or capital_eur <= 0:
-            return {
-                "position_size_btc": 0.0,
-                "position_size_usdt": 0.0,
-                "margin_required_usdt": 0.0,
-                "risk_amount_eur": 0.0,
-                "leverage_used": leverage,
-                "fee_estimate_usdt": 0.0,
-                "rr_after_fees": 0.0,
-                "sizing_valid": False,
-                "reject_reason": "No price or capital",
-            }
-        
-        # EUR → USD (hardcoded - non-async context)
-        eur_to_usd = 1.08  # Fallback für _calc_position_size
-        capital_usd = capital_eur * eur_to_usd
-        
-        # 1. Risikobetrag = fixer Prozentsatz des EIGENKAPITALS
-        risk_amount_usd = capital_usd * risk_pct
-        
-        # 2. Score-basierte Risiko-Skalierung
-        if abs_score > 80:
-            score_mult = 1.5
-        elif abs_score > 60:
-            score_mult = 1.2
-        elif abs_score > 45:
-            score_mult = 1.0
+        import math
+
+        learning_mode = bool(ConfigCache.get("LEARNING_MODE_ENABLED", False))
+
+        leverage = int(ConfigCache.get("LEVERAGE", 5))
+        risk_pct = float(ConfigCache.get("RISK_PER_TRADE_PCT", 2.5)) / 100.0
+
+        # Learning-Mode-Relaxation
+        if learning_mode:
+            min_notional = float(ConfigCache.get("MIN_NOTIONAL_USDT_LEARNING", 50))
+            min_rr = float(ConfigCache.get("MIN_RR_AFTER_FEES_LEARNING", 1.1))
         else:
-            score_mult = 0.7  # Niedriger Score = weniger Risiko
-        
-        risk_amount_usd *= score_mult
-        
-        # 3. Session-Anpassung
+            min_notional = float(ConfigCache.get("MIN_NOTIONAL_USDT", 100))
+            min_rr = float(ConfigCache.get("MIN_RR_AFTER_FEES", 1.5))
+
+        fee_rate = float(ConfigCache.get("FEE_RATE_TAKER", 0.0004))
+
+        if price <= 0 or capital_eur <= 0:
+            return self._sizing_reject(
+                "No price or capital", leverage, 0, 0, 0, 0
+            )
+
+        eur_to_usd = 1.08
+        capital_usd = capital_eur * eur_to_usd
+
+        # === KELLY-INSPIRIERTE SIZING FUNCTION ===
+        # size_factor = tanh(abs_score / 40)
+        # Monoton steigend, glatt, beschränkt auf (0, 1)
+        size_factor = math.tanh(abs_score / 40.0) if abs_score > 0 else 0.0
+
+        # Floor: Im Learning-Mode mindestens 30% des Base-Risk
+        # (verhindert, dass niedrige Scores zu Quasi-Null-Positionen führen)
+        if learning_mode:
+            size_factor = max(0.30, size_factor)
+
+        risk_amount_usd = capital_usd * risk_pct * size_factor
+
+        # Session-Anpassung
         session_mult = session.get("volatility_bias", 1.0) if isinstance(session, dict) else 1.0
-        risk_amount_usd *= min(1.4, max(0.6, session_mult))
-        
-        # 4. SL-Distanz aus ATR
+        session_mult = min(1.4, max(0.6, session_mult))
+        risk_amount_usd *= session_mult
+
+        # SL-Distanz aus ATR
         atr_pct = atr / price if atr > 0 else 0.01
-        sl_pct = max(0.008, min(0.025, atr_pct * 1.5))  # 1.5× ATR als SL
-        
-        # 5. Positionsgröße = Risikobetrag ÷ SL-Distanz
+        sl_pct = max(0.008, min(0.025, atr_pct * 1.5))
+
+        # Positionsgröße
         position_size_usd = risk_amount_usd / sl_pct
         position_size_btc = position_size_usd / price
-        
-        # 6. Margin-Check
+
+        # Margin-Check (Cap bei 80% des Kapitals als Margin)
         margin_required = position_size_usd / leverage
-        max_margin = capital_usd * 0.80  # Max 80% des Kapitals als Margin
-        
+        max_margin = capital_usd * 0.80
+
         if margin_required > max_margin:
             position_size_usd = max_margin * leverage
             position_size_btc = position_size_usd / price
             margin_required = max_margin
-        
-        # 7. Minimum Notional Check
-        if position_size_usd < min_notional:
-            return {
-                "position_size_btc": 0.0,
-                "position_size_usdt": round(position_size_usd, 2),
-                "margin_required_usdt": round(margin_required, 2),
-                "risk_amount_eur": round(risk_amount_usd / eur_to_usd, 2),
-                "leverage_used": leverage,
-                "fee_estimate_usdt": 0.0,
-                "rr_after_fees": 0.0,
-                "sizing_valid": False,
-                "reject_reason": f"Below min notional: ${position_size_usd:.0f} < ${min_notional:.0f}",
-            }
-        
-        # 8. Fee-bewusstes R:R
-        tp1_pct = sl_pct * 1.8  # Minimum TP1 = 1.8× SL
+
+        # Fee-bewusstes R:R
+        tp1_pct = sl_pct * 1.8
         fees_round_trip = position_size_usd * fee_rate * 2
-        
         profit_tp1 = position_size_usd * tp1_pct - fees_round_trip
         loss_sl = position_size_usd * sl_pct + fees_round_trip
         rr_after_fees = profit_tp1 / loss_sl if loss_sl > 0 else 0
-        
-        if rr_after_fees < min_rr:
-            return {
-                "position_size_btc": round(position_size_btc, 5),
-                "position_size_usdt": round(position_size_usd, 2),
-                "margin_required_usdt": round(margin_required, 2),
-                "risk_amount_eur": round(risk_amount_usd / eur_to_usd, 2),
-                "leverage_used": leverage,
-                "fee_estimate_usdt": round(fees_round_trip, 2),
-                "rr_after_fees": round(rr_after_fees, 2),
-                "sizing_valid": False,
-                "reject_reason": f"R:R after fees too low: {rr_after_fees:.2f} < {min_rr}",
-            }
-        
-        # 9. Binance Minimum
+
+        # === HARD CHECKS ===
+        phantom_eligible = False
+        sizing_valid = True
+        reject_reason = None
+
+        # Min-Notional-Check
+        if position_size_usd < min_notional:
+            if learning_mode:
+                # Learning: Phantom statt Kill
+                sizing_valid = False
+                phantom_eligible = True
+                reject_reason = f"below_min_notional_phantom (${position_size_usd:.0f} < ${min_notional:.0f})"
+                self.logger.info(
+                    f"SIZING → PHANTOM: Position ${position_size_usd:.0f} < ${min_notional:.0f} "
+                    f"(Learning Mode → Trade als Phantom aufgezeichnet)"
+                )
+            else:
+                sizing_valid = False
+                reject_reason = f"Below min notional: ${position_size_usd:.0f} < ${min_notional:.0f}"
+
+        # R:R-Check
+        elif rr_after_fees < min_rr:
+            if learning_mode:
+                # Learning: Warning statt Hard-Reject, aber Trade geht trotzdem
+                self.logger.warning(
+                    f"SIZING WARN: R:R {rr_after_fees:.2f} < {min_rr} "
+                    f"(Learning Mode → Trade trotzdem ausgeführt)"
+                )
+                # sizing_valid bleibt True!
+            else:
+                sizing_valid = False
+                reject_reason = f"R:R after fees too low: {rr_after_fees:.2f} < {min_rr}"
+
+        # Binance Minimum Precision
         position_size_btc = max(0.001, round(position_size_btc, 4))
-        
+
         return {
             "position_size_btc": position_size_btc,
             "position_size_usdt": round(position_size_btc * price, 2),
@@ -640,10 +717,33 @@ class CompositeScorer:
             "rr_after_fees": round(rr_after_fees, 2),
             "sl_pct": round(sl_pct, 4),
             "tp1_pct_minimum": round(tp1_pct, 4),
-            "score_mult": score_mult,
+            "size_factor": round(size_factor, 3),
             "session_mult": round(session_mult, 2),
-            "sizing_valid": True,
-            "reject_reason": None,
+            "sizing_valid": sizing_valid,
+            "phantom_eligible": phantom_eligible,  # NEU: Phantom-Trade Kandidat
+            "reject_reason": reject_reason,
+        }
+
+    def _sizing_reject(self, reason: str, leverage: int, position_usd: float,
+                       margin: float, risk_usd: float, fees: float) -> dict:
+        """Helper für klare Reject-Returns."""
+        eur_to_usd = 1.08
+        return {
+            "position_size_btc": 0.0,
+            "position_size_usdt": round(position_usd, 2),
+            "margin_required_usdt": round(margin, 2),
+            "risk_amount_eur": round(risk_usd / eur_to_usd, 2),
+            "risk_amount_usd": round(risk_usd, 2),
+            "leverage_used": leverage,
+            "fee_estimate_usdt": round(fees, 2),
+            "rr_after_fees": 0.0,
+            "sl_pct": 0.0,
+            "tp1_pct_minimum": 0.0,
+            "size_factor": 0.0,
+            "session_mult": 1.0,
+            "sizing_valid": False,
+            "phantom_eligible": False,
+            "reject_reason": reason,
         }
 
     async def _score_flow(self, flow_data: dict, macro_data: dict, 
@@ -713,62 +813,54 @@ class CompositeScorer:
 
     def _determine_regime(self, ta_data, macro_data) -> str:
         """
-        Regime-Bestimmung mit ATR-Ratio und BB-Width (Bruno v3).
-        
-        Metriken:
-        - ATR-Ratio: ATR(14) / Preis (Volatilitätsmaß)
-        - BB-Width: Bollinger Band Breite in % (Volatilitätsmaß)
-        - Macro Trend: Daily-Trend für Kontext
-        
-        Regime-Logik:
-        - high_vola: ATR-Ratio > 2.5% oder BB-Width > 4%
-        - trending_bull: EMA Stack bull + Macro Bull + moderate Volatilität
-        - bear: EMA Stack bear
-        - ranging: Default bei gemischten Signalen
+        Regime-Bestimmung mit BTC-realistisch kalibrierten ATR-Schwellen (BRUNO-FIX-02).
+
+        Historischer Fix: Alte Schwellen (atr_ratio < 1.0 für trending) waren für BTC
+        praktisch unerreichbar. BTC hat auf 1h typischerweise atr_ratio 1.2-2.8%.
+
+        Neue Kalibrierung:
+        - high_vola: atr_ratio > 3.5% ODER bb_width > 5.0%
+        - trending_bull/bear: ema_stack klar + atr_ratio < 3.0%
+        - ranging: Default bei gemischten Signalen (NICHT unknown!)
         """
-        # ATR-Ratio berechnen
         atr = float(ta_data.get("atr_14", 0.0))
         price = float(ta_data.get("price", 0.0))
         atr_ratio = (atr / price * 100) if price > 0 else 0.0
-        
-        # BB-Width aus TA-Daten (wenn verfügbar, sonst schätzen)
+
         bb_data = ta_data.get("bollinger_bands", {})
         bb_width = float(bb_data.get("width", 0.0))
-        
-        # Macro Trend für Kontext
+
         macro_trend = ta_data.get("macro_trend", {})
         mt = macro_trend.get("macro_trend", "unknown")
-        
-        # 1. High Volatility Detection (ATR-Ratio oder BB-Width)
-        if atr_ratio > 2.5 or bb_width > 4.0:
-            return "high_vola"
-        
-        # 2. Trend Detection mit Macro Override
+
         trend = ta_data.get("trend", {})
         ema_stack = trend.get("ema_stack", "mixed")
-        
-        # Macro Override: Daily-Trend schlägt 1h-Trend
-        if mt == "macro_bear":
-            if ema_stack in ("perfect_bull", "bull"):
-                # 1h bull in daily bear = RANGING (Bear Market Rally!)
-                return "ranging"
-            return "bear"
-        
-        if mt == "macro_bull":
-            if ema_stack in ("perfect_bull", "bull"):
-                return "trending_bull"  # Nur wenn AUCH daily bull
-            return "ranging"  # 1h bull ohne daily confirmation = ranging
-        
-        # Ohne klaren Macro-Trend: EMA Stack entscheidet
+
+        # 1. High Volatility (BTC-realistisch: >3.5% ATR-Ratio ist WIRKLICH hoch)
+        if atr_ratio > 3.5 or bb_width > 5.0:
+            self.logger.info(
+                f"Regime: high_vola (atr_ratio={atr_ratio:.2f}%, bb_width={bb_width:.2f}%)"
+            )
+            return "high_vola"
+
+        # 2. Trending Bull — gelockerte Schwellen
         if ema_stack in ("perfect_bull", "bull"):
-            # Prüfe Volatilität: zu hohe Vola = nicht trending
-            if atr_ratio > 1.8:
-                return "ranging"  # Hohe Vola bricht Trend
-            return "trending_bull" if atr_ratio < 1.0 else "ranging"
-        elif ema_stack in ("perfect_bear", "bear"):
+            if atr_ratio > 3.0:
+                return "ranging"
+            # Macro-Override: Nur wenn Daily NICHT bear
+            if mt == "macro_bear":
+                return "ranging"  # Bear Market Rally
+            return "trending_bull"
+
+        # 3. Bear Trend — gelockerte Schwellen
+        if ema_stack in ("perfect_bear", "bear"):
+            if atr_ratio > 3.0:
+                return "ranging"
+            if mt == "macro_bull":
+                return "ranging"  # Bull Market Correction
             return "bear"
-        
-        # Default: Ranging bei gemischten Signalen
+
+        # 4. Mixed / unklar → ranging (NICHT unknown!)
         return "ranging"
 
     def _score_ta(self, ta_data: dict) -> float:

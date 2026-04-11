@@ -959,18 +959,16 @@ class TechnicalAnalysisAgent(PollingAgent):
             signals.append(f"MTF conflict at {mtf['conflicting_tf']}")
         stage_progression["after_mtf_alignment"] = round(score, 1)
         
-        # RSI (10%) - Ranging-spezifische Behandlung
-        if rsi < 30: 
+        # RSI (10%) - Symmetrisch
+        if rsi < 30:
             score += 10; signals.append("RSI oversold")
-        elif rsi < 40: 
-            score += 5
-        elif rsi > 70: 
+        elif rsi > 70:
             score -= 10; signals.append("RSI overbought")
-        elif 40 <= rsi <= 70 and regime == "ranging":
-            # Im Ranging: RSI 40-70 ist neutral (keine Penalty)
-            score += 0
-        elif rsi > 60: 
+        elif rsi < 40:
+            score += 5
+        elif rsi > 60:
             score -= 5
+        # Midzone 40-60: implizit 0
         stage_progression["after_rsi"] = round(score, 1)
         
         # S/R Kontext (20%)
@@ -1019,29 +1017,20 @@ class TechnicalAnalysisAgent(PollingAgent):
                 pass
         stage_progression["after_volume"] = round(score, 1)
         
-        # VWAP (10%) - Ranging-Kompensation
-        if price > vwap * 1.001: 
+        # VWAP (10%) - Symmetrisch
+        if price > vwap * 1.001:
             score += 8; signals.append("Above VWAP")
         elif price < vwap * 0.999:
-            if regime == "ranging":
-                # Im Ranging: VWAP ist weniger relevant
-                score -= 3; signals.append("Below VWAP (ranging)")
-            else:
-                score -= 8; signals.append("Below VWAP")
+            score -= 8; signals.append("Below VWAP")
         stage_progression["after_vwap"] = round(score, 1)
         
-        # Wick-Signal (5% Bonus) - Ranging-Kompensation
-        if wick.get("bullish_wick"): 
-            score += 5 * wick["wick_strength"]; signals.append("Bullish wick detected")
+        # Wick-Signal (5% Bonus) - Symmetrisch
+        if wick.get("bullish_wick"):
+            score += 5 * wick["wick_strength"]
+            signals.append("Bullish wick detected")
         elif wick.get("bearish_wick"):
-            penalty = 5 * wick["wick_strength"]
-            if regime == "ranging":
-                # Im Ranging: weniger harte Wick Penalty
-                penalty *= 0.5  # Halbiere die Penalty
-                signals.append("Bearish wick (ranging)")
-            else:
-                signals.append("Bearish wick detected")
-            score -= penalty
+            score -= 5 * wick["wick_strength"]
+            signals.append("Bearish wick detected")
         stage_progression["after_wick"] = round(score, 1)
         
         # ═══ MTF-FILTER (KRITISCH) ═══

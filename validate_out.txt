@@ -1,0 +1,127 @@
+=== FIX-01 checks ===
+grep Below VWAP:
+            score -= 8; signals.append("Below VWAP")
+        
+        # Wick-Signal (5% Bonus)
+---
+grep bearish_wick:
+        if len(candles_5m) < 3:
+            return {"bullish_wick": False, "bearish_wick": False, 
+                    "wick_strength": 0.0, "wick_price": 0.0}
+        
+        # Prüfe letzte 3 Kerzen
+        for c in candles_5m[-3:]:
+            body = abs(c["close"] - c["open"])
+                return {
+                    "bullish_wick": True, "bearish_wick": False,
+                    "wick_strength": min(1.0, lower_wick / body / 4.0),
+                    "wick_price": c["low"],
+                }
+            # Bearish Shooting Star
+            if upper_wick > body * 2.0 and lower_wick < body * 0.5:
+                return {
+                    "bullish_wick": False, "bearish_wick": True,
+                    "wick_strength": min(1.0, upper_wick / body / 4.0),
+                    "wick_price": c["high"],
+                }
+        
+        return {"bullish_wick": False, "bearish_wick": False,
+        
+        return {"bullish_wick": False, "bearish_wick": False,
+                "wick_strength": 0.0, "wick_price": 0.0}
+
+    def _get_session_context(self) -> dict:
+        """
+        Erkennt die aktuelle Trading-Session.
+            score += 5 * wick["wick_strength"]; signals.append("Bullish wick detected")
+        elif wick.get("bearish_wick"): 
+            score -= 5 * wick["wick_strength"]; signals.append("Bearish wick detected")
+        
+        # ═══ MTF-FILTER (KRITISCH) ═══
+        direction = "long" if score > 0 else "short" if score < 0 else "neutral"
+        alignment = mtf.get("alignment_score", 0)  # -1.0 bis +1.0
+---
+grep elif rsi:
+            score += 10; signals.append("RSI oversold")
+        elif rsi < 40: 
+            score += 5
+        elif rsi > 70: 
+            score -= 10; signals.append("RSI overbought")
+            score += 5
+        elif rsi > 70: 
+            score -= 10; signals.append("RSI overbought")
+        elif rsi > 60: 
+            score -= 5
+            score -= 10; signals.append("RSI overbought")
+        elif rsi > 60: 
+            score -= 5
+        
+        # S/R Kontext (20%)
+---
+grep abs_ta_score > 80:
+NO MATCH
+---
+test exists: False
+
+=== FIX-02 checks ===
+grep atr_ratio >:
+NO MATCH
+---
+REGIME_CONFIGS:
+trending_bull: longs=True, shorts=False
+ranging: longs=True, shorts=True
+crash: longs=False, shorts=True
+high_vola: longs=False, shorts=False
+bear: longs=False, shorts=True
+unknown: longs=False, shorts=False
+
+=== FIX-03 checks ===
+grep blend_ratio = 0.:
+NO MATCH
+---
+grep confluence_bonus_eligible:
+NO MATCH
+
+=== FIX-04 checks ===
+LEVERAGE: None
+MIN_NOTIONAL_USDT: None
+MIN_NOTIONAL_USDT_LEARNING: None
+MIN_RR_AFTER_FEES_LEARNING: None
+SCALED_ENTRY_ENABLED: None
+STRATEGY_TREND_CAPITAL_PCT: None
+POSITION_SIZE_MODE: None
+---
+grep math.tanh:
+NO MATCH
+---
+grep score_mult:
+        score_mult = min(1.5, max(0.5, (abs_score - 40) / 50.0 + 0.5))
+        return round(min(2.0, base_risk * score_mult * vol_mult * session_mult), 2)
+
+=== FIX-05 checks ===
+TRADE_COOLDOWN_SECONDS_LEARNING: False
+DISABLE_CONVICTION_HALVING_IN_LEARNING: False
+DISABLE_OFI_GAP_PENALTY_IN_LEARNING: False
+DISABLE_NEWS_SILENCE_VETO_IN_LEARNING: False
+PHANTOM_TRADE_MIN_SCORE: False
+LOG_EXPLORATION_METRICS: False
+---
+grep exploration:
+NO MATCH
+
+=== FIX-06 checks ===
+grep resilient:
+    def _compute_grss_resilient(self) -> tuple[float, dict]:
+            grss_score, component_status = self._compute_grss_resilient()
+---
+grep missing_critical_liquidity:
+            missing_critical_liquidity = self.dvol is None or self.long_short_ratio is None
+                "Veto_Active": missing_critical_liquidity or minimal_grss < veto_threshold,
+---
+grep Data_Status:
+                "Data_Status": {
+                    "components_ok": sum(1 for v in component_status.values() if v == "ok"),
+                    "components_total": len(component_status),
+                    "components_detail": component_status,
+                    "dvol_missing": dvol_missing,
+                    "lsr_missing": lsr_missing,

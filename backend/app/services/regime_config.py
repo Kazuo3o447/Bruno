@@ -36,85 +36,80 @@ class RegimeConfig:
     confidence_threshold: float = 0.65
 
 
-# Regime-Konfigurationen (Manifest-konform)
+# Regime-Konfigurationen (BRUNO-FIX-02: Keine stillen Hard-Blocks!)
 REGIME_CONFIGS: Dict[str, RegimeConfig] = {
     "trending_bull": RegimeConfig(
         allow_longs=True,
-        allow_shorts=False,
+        allow_shorts=True,    # War False — Counter-Trend-Shorts bei Break möglich
         stop_loss_pct=0.012,
         take_profit_pct=0.025,
         max_position_size_pct=0.15,
-        # FIX: V2.2 Parameter für Bull-Regime
-        tp1_size_pct=0.6,              # 60% Scale-Out bei TP1
-        atr_multiplier=1.8,            # Aggressiver Trailing
-        breakeven_trigger_pct=0.004,   # Früher Breakeven
+        tp1_size_pct=0.6,
+        atr_multiplier=1.8,
+        breakeven_trigger_pct=0.004,
         volatility_multiplier=1.2,
         confidence_threshold=0.60,
     ),
     "ranging": RegimeConfig(
         allow_longs=True,
         allow_shorts=True,
-        stop_loss_pct=0.008,
-        take_profit_pct=0.016,
-        max_position_size_pct=0.08,
-        # FIX: V2.2 Parameter für Ranging-Regime
-        tp1_size_pct=0.4,              # 40% Scale-Out bei TP1
-        atr_multiplier=1.2,            # Konservativer Trailing
-        breakeven_trigger_pct=0.006,   # Später Breakeven
+        stop_loss_pct=0.010,
+        take_profit_pct=0.020,
+        max_position_size_pct=0.10,
+        tp1_size_pct=0.5,
+        atr_multiplier=1.3,
+        breakeven_trigger_pct=0.005,
         volatility_multiplier=1.0,
-        confidence_threshold=0.70,
+        confidence_threshold=0.65,
     ),
     "crash": RegimeConfig(
-        allow_longs=False,
+        allow_longs=False,      # Nur bei Crash: keine Longs (Verkaufspanik)
         allow_shorts=True,
-        stop_loss_pct=0.015,
-        take_profit_pct=0.030,
-        max_position_size_pct=0.05,
-        # FIX: V2.2 Parameter für Crash-Regime
-        tp1_size_pct=0.3,              # 30% Scale-Out bei TP1
-        atr_multiplier=2.0,            # Sehr aggressiver Trailing
-        breakeven_trigger_pct=0.008,   # Sehr später Breakeven
+        stop_loss_pct=0.018,
+        take_profit_pct=0.040,
+        max_position_size_pct=0.06,
+        tp1_size_pct=0.3,
+        atr_multiplier=2.0,
+        breakeven_trigger_pct=0.008,
         volatility_multiplier=0.8,
         confidence_threshold=0.70,
     ),
     "high_vola": RegimeConfig(
-        allow_longs=False,
-        allow_shorts=False,
-        stop_loss_pct=0.015,
-        take_profit_pct=0.030,
-        max_position_size_pct=0.05,
-        # FIX: V2.2 Parameter für High-Vola-Regime
-        tp1_size_pct=0.2,              # 20% Scale-Out bei TP1
-        atr_multiplier=1.5,            # Moderater Trailing
-        breakeven_trigger_pct=0.010,   # Sehr später Breakeven
-        volatility_multiplier=1.5,
-        confidence_threshold=0.75,
+        allow_longs=True,     # War False — high_vola ist OPPORTUNITY, nicht Block
+        allow_shorts=True,    # War False
+        stop_loss_pct=0.020,  # Weiter SL wegen höherer Vola
+        take_profit_pct=0.040,
+        max_position_size_pct=0.07,
+        tp1_size_pct=0.4,
+        atr_multiplier=1.8,
+        breakeven_trigger_pct=0.010,
+        volatility_multiplier=1.3,
+        confidence_threshold=0.70,
     ),
     "bear": RegimeConfig(
-        allow_longs=False,
+        allow_longs=True,     # War False — Bear-Rally-Longs möglich
         allow_shorts=True,
-        stop_loss_pct=0.010,
-        take_profit_pct=0.020,
+        stop_loss_pct=0.012,
+        take_profit_pct=0.024,
         max_position_size_pct=0.10,
-        # FIX: V2.2 Parameter für Bear-Regime
-        tp1_size_pct=0.5,              # 50% Scale-Out bei TP1
-        atr_multiplier=1.3,            # Moderater Trailing
-        breakeven_trigger_pct=0.006,   # Später Breakeven
+        tp1_size_pct=0.5,
+        atr_multiplier=1.5,
+        breakeven_trigger_pct=0.006,
         volatility_multiplier=1.0,
         confidence_threshold=0.65,
     ),
+    # "unknown" bleibt als Safety-Fallback bestehen, aber mit vollen Permissions
     "unknown": RegimeConfig(
-        allow_longs=False,
-        allow_shorts=False,
-        stop_loss_pct=0.010,
-        take_profit_pct=0.020,
-        max_position_size_pct=0.05,
-        # FIX: V2.2 Parameter für Unknown-Regime
-        tp1_size_pct=0.3,              # 30% Scale-Out bei TP1
-        atr_multiplier=1.0,            # Standard Trailing
-        breakeven_trigger_pct=0.010,   # Sehr später Breakeven
+        allow_longs=True,     # War False — kein stiller Block mehr
+        allow_shorts=True,    # War False
+        stop_loss_pct=0.012,
+        take_profit_pct=0.024,
+        max_position_size_pct=0.08,
+        tp1_size_pct=0.5,
+        atr_multiplier=1.3,
+        breakeven_trigger_pct=0.006,
         volatility_multiplier=1.0,
-        confidence_threshold=0.80,
+        confidence_threshold=0.70,
     ),
 }
 

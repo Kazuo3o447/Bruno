@@ -3,6 +3,7 @@ from app.agents.deps import AgentDependencies
 from app.core.exchange_manager import PublicExchangeClient
 from app.services.liquidity_engine import LiquidityEngine
 from app.services.composite_scorer import CompositeScorer
+from app.services.phantom_evaluator import PhantomEvaluator
 from app.core.config_cache import ConfigCache
 import asyncio
 import contextlib
@@ -56,6 +57,12 @@ class QuantAgentV4(PollingAgent):
         
         self.liq_engine = LiquidityEngine(deps.db_session_factory, deps.redis)
         self.scorer = CompositeScorer(redis_client=deps.redis)
+        
+        # BRUNO-FIX-09: Phantom Evaluator
+        self.phantom_evaluator = PhantomEvaluator(
+            deps.redis, deps.db_session_factory, self.exm
+        )
+        self._last_phantom_eval_time: float = 0.0
     
     def get_interval(self) -> float:
         return 60.0
@@ -111,6 +118,14 @@ class QuantAgentV4(PollingAgent):
     async def process(self) -> None:
         await self._ensure_liquidation_listener()
         await self._run_scoring_cycle(trigger_reason="poll")
+        
+        # BRUNO-FIX-09: Phantom Evaluator alle 5 Minuten laufen lassen
+        now = time.time()
+        if now - self._last_phantom_eval_time >= 300:
+            evaluated = await self.phantom_evaluator.evaluate_pending()
+            self._last_phantom_eval_time = now
+            if evaluated > 0:
+                self.logger.info(f"Phantom Evaluator: {evaluated} trades evaluated")
 
     async def teardown(self) -> None:
         if self._liquidation_listener_task:
@@ -198,13 +213,30 @@ class QuantAgentV4(PollingAgent):
                 self._last_price = best_bid_p
                 vamp = (best_bid_p * best_ask_v + best_ask_p * best_bid_v) / (best_bid_v + best_ask_v)
 
-                # CVD - FIXED: Lese echtes CVD aus Redis (aggTrades)
+                # BRUNO-FIX-08: CVD Single Source of Truth mit Drift-Detection
                 try:
                     cvd_cumulative_str = await self.deps.redis.redis.get("market:cvd:cumulative")
                     if cvd_cumulative_str:
-                        self.cvd_cumulative = float(cvd_cumulative_str)
+                        new_cvd = float(cvd_cumulative_str)
+                        # Drift-Detection
+                        if abs(new_cvd - self.cvd_cumulative) > 1_000_000 and self.cvd_cumulative != 0:
+                            self.logger.warning(
+                                f"CVD drift detected: cached={self.cvd_cumulative:.0f}, "
+                                f"redis={new_cvd:.0f} — using fresh redis value"
+                            )
+                        self.cvd_cumulative = new_cvd
+                        # Snapshot für Restart-Recovery aktualisieren
+                        await self.deps.redis.set_cache(
+                            "bruno:cvd:BTCUSDT",
+                            {
+                                "value": self.cvd_cumulative,
+                                "last_processed_ts": int(time.time() * 1000),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            },
+                            ttl=86400
+                        )
                     else:
-                        self.logger.debug("CVD: Kein kumulativer Wert in Redis")
+                        self.logger.debug("CVD: market:cvd:cumulative empty — using last known value")
                 except Exception as e:
                     self.logger.warning(f"CVD Redis Fehler: {e}")
 
@@ -255,23 +287,75 @@ class QuantAgentV4(PollingAgent):
                         f"Gap={signal.diagnostics.get('gap_to_threshold', 0):.1f}"
                     )
 
+                # BRUNO-FIX-05: Exploration Metrics Logging
+                if ConfigCache.get("LOG_EXPLORATION_METRICS", False):
+                    exploration_entry = {
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                        "symbol": self.symbol,
+                        "regime": signal.regime,
+                        "composite_score": signal.composite_score,
+                        "ta_score": signal.ta_score,
+                        "liq_score": signal.liq_score,
+                        "flow_score": signal.flow_score,
+                        "macro_score": signal.macro_score,
+                        "mr_score": signal.mean_reversion_score,
+                        "direction": signal.direction,
+                        "should_trade": signal.should_trade,
+                        "conviction": signal.conviction,
+                        "mtf_aligned": signal.mtf_aligned,
+                        "sweep_confirmed": signal.sweep_confirmed,
+                        "effective_threshold": signal.diagnostics.get("effective_threshold", 0),
+                        "gap_to_threshold": signal.diagnostics.get("gap_to_threshold", 0),
+                        "block_reason": signal.diagnostics.get("block_reason", "NONE"),
+                        "signals": signal.signals_active[:5],
+                    }
+                    try:
+                        import json as _json
+                        pipe = self.deps.redis.redis.pipeline()
+                        pipe.lpush("bruno:exploration:metrics", _json.dumps(exploration_entry))
+                        pipe.ltrim("bruno:exploration:metrics", 0, 999)  # letzte 1000 Samples
+                        await pipe.execute()
+                    except Exception as e:
+                        self.logger.debug(f"Exploration metrics log error: {e}")
+
                 # 6. Multi-Strategy Signal Dispatch
                 from app.services.strategy_manager import StrategyManager
-                
+
                 strategy_mgr = StrategyManager(self.deps.redis, self.deps.db_session_factory)
-                
-                # 6a. TREND-Slot: Basiert auf CompositeScore (wie bisher)
+
+                # 6a. TREND-Slot: BRUNO-FIX-05 reduzierter Cooldown im Learning Mode
                 if signal.should_trade:
                     now = time.time()
-                    cooldown = float(ConfigCache.get("TRADE_COOLDOWN_SECONDS", 300))
-                    if now - self._last_signal_time >= cooldown:
+                    learning_mode = bool(ConfigCache.get("LEARNING_MODE_ENABLED", False))
+                    if learning_mode:
+                        cooldown = float(ConfigCache.get("TRADE_COOLDOWN_SECONDS_LEARNING", 60))
+                    else:
+                        cooldown = float(ConfigCache.get("TRADE_COOLDOWN_SECONDS", 300))
+
+                    # BRUNO-FIX-08: Cooldown-Check vor Submit
+                    cooldown_remaining = cooldown - (now - self._last_signal_time)
+                    if cooldown_remaining > 0:
+                        # Liquidation-Event darf Trend-Cooldown NICHT bypassen
+                        if trigger_reason == "sweep_event":
+                            self.logger.info(
+                                f"TREND skipped (sweep_event trigger, cooldown {cooldown_remaining:.0f}s remaining)"
+                            )
+                    elif now - self._last_signal_time >= cooldown:
                         signal_dict = signal.to_signal_dict(self.symbol)
                         signal_dict["strategy_slot"] = "trend"
-                        # PROMPT 9: Verwende _submit_signal für Strict Pipeline
-                        submitted = await self._submit_signal(signal_dict, "trend")
-                        if submitted:
-                            self._last_signal_time = now
-                            self.logger.info(f"TREND SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
+
+                        # BRUNO-FIX-08: Sanity-Check vor Submit
+                        if signal_dict.get("amount", 0) <= 0:
+                            self.logger.error(
+                                f"SIGNAL DROP: amount={signal_dict.get('amount')} for {signal_dict.get('side')} "
+                                f"signal — sizing={signal_dict.get('sizing', {})}"
+                            )
+                        else:
+                            # PROMPT 9: Verwende _submit_signal für Strict Pipeline
+                            submitted = await self._submit_signal(signal_dict, "trend")
+                            if submitted:
+                                self._last_signal_time = now
+                                self.logger.info(f"TREND SIGNAL: {signal.direction.upper()} | Score={signal.composite_score:+.1f}")
                 
                 # 6b. SWEEP-Slot: Eigenständig, basierend auf Sweep-Detection
                 # PROMPT 5: Sweep-Slot Filter (Falling Knife Protection)
@@ -435,11 +519,21 @@ class QuantAgentV4(PollingAgent):
                             self.logger.info(f"FUNDING SIGNAL: {funding_signal['direction'].upper()} | {funding_signal['reason']} | EMA9 cross validated")
                             self._last_funding_signal_time = now
 
-                # Phantom Trade (Learning Mode)
-                if (not signal.should_trade and self.deps.config.DRY_RUN
+                # BRUNO-FIX-04: Erweiterter Phantom Trade Trigger
+                # Jetzt: Phantom wenn
+                # (a) Learning Mode aktiv UND
+                # (b) Score über Learning-Threshold (15) UND
+                # (c) (Sizing blockierte ODER score knapp unter effective_threshold)
+                phantom_threshold = float(ConfigCache.get("COMPOSITE_THRESHOLD_LEARNING", 15))
+                if (self.deps.config.DRY_RUN
                     and ConfigCache.get("LEARNING_MODE_ENABLED", 0) > 0
-                    and abs(signal.composite_score) > 30):
+                    and abs(signal.composite_score) >= phantom_threshold
+                    and not signal.should_trade):
                     await self._record_phantom_trade(signal, best_bid_p)
+                    self.logger.info(
+                        f"PHANTOM TRADE: Score={signal.composite_score:+.1f}, "
+                        f"reason={'sizing' if 'SIZING' in str(signal.signals_active) or 'PHANTOM ELIG' in str(signal.signals_active) else 'score'}"
+                    )
 
         except Exception as e:
             self.logger.error(f"QuantAgentV4 Fehler: {e}", exc_info=True)

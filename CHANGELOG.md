@@ -4,6 +4,131 @@ Alle wichtigen Änderungen und Fixes pro Version.
 
 ---
 
+## [v3.0.0-fix09] — 2026-04-11 - BRUNO-FIX-09: Phantom Evaluator
+
+### Added
+- `backend/app/services/phantom_evaluator.py`
+- PhantomEvaluator-Hook in QuantAgent (alle 5 Minuten)
+- `backend/tests/test_phantom_evaluator.py`
+
+### Fixed
+- Phantom-Trades wurden geschrieben aber nie ausgewertet
+
+---
+
+## [v3.0.0-fix08] — 2026-04-11 - BRUNO-FIX-08: Execution Pipeline Sanity
+
+### Fixed
+- `to_signal_dict` übergab `amount=0.0` statt echter Position → silent drop möglich
+- CVD wurde aus zwei nicht-synchronisierten Redis-Keys gelesen
+- Liquidation-Spike-Trigger umging den Trend-Slot Cooldown
+
+### Added
+- Sanity-Guard `amount > 0` vor jedem `_submit_signal`
+- CVD Drift-Detection mit Warning-Log (>1M USDT)
+- `backend/tests/test_signal_amount.py` (3 Tests)
+
+---
+
+## [v3.0.0-fix01] — 2026-04-10 - BRUNO-FIX-01: Symmetry Audit
+
+### Fixed
+- VWAP-Penalty in ranging regime war asymmetrisch (−3 statt −8)
+- Wick-Penalty in ranging regime war halbiert (×0.5)
+- RSI-Midzone hatte keine Short-Behandlung in ranging
+- MR-Cap bei starkem Trend wirkte nur auf Bull-Trends
+
+### Added
+- `backend/tests/test_composite_symmetry.py` (3 Symmetry-Invariant-Tests)
+- `WINDSURF_MANIFEST.md`: Abschnitt "Signal Symmetry Invariants"
+
+---
+
+## [v3.0.0-fix06] — 2026-04-10 - BRUNO-FIX-06: Data Gap Resilience
+
+### Added
+- `_compute_grss_resilient` mit partieller Datentoleranz
+- `Data_Status` Dict im GRSS-Cache mit Component-Status-Flags
+- `backend/tests/test_data_gap_resilience.py`
+
+### Changed
+- `Veto_Active` von "DVOL OR LSR missing" auf "grss_blackout OR grss_extreme"
+- `critical_data_gap` neu definiert: nur bei `grss_blackout AND not ofi_available`
+
+### Fixed
+- Permanente Vetos bei fehlendem DVOL oder LSR (intermittierende APIs)
+- Re-normalisierte GRSS-Gewichte bei Teildatenverfügbarkeit
+
+---
+
+## [v3.0.0-fix05] — 2026-04-10 - BRUNO-FIX-05: Learning Mode Real Exploration
+
+### Added
+- Exploration Metrics Logging (`bruno:exploration:metrics` Redis LIST)
+- Config Parameter: `TRADE_COOLDOWN_SECONDS_LEARNING`, `DISABLE_*_IN_LEARNING` flags
+- `backend/tests/test_learning_mode_exploration.py`
+
+### Changed
+- Conviction-Halving bei Data Gap nur noch in Prod-Mode aktiv
+- OFI Gap Threshold Penalty nur noch in Prod-Mode aktiv
+- News Silence Veto nur noch in Prod-Mode aktiv
+- Trade Cooldown im Learning Mode: 300s → 60s
+- Phantom Trade Threshold: `abs_score > 30` → `abs_score >= 15`
+
+---
+
+## [v3.0.0-fix04] — 2026-04-10 - BRUNO-FIX-04: Sizing Overhaul
+
+### Changed
+- `_calc_position_size`: Diskrete Score-Buckets → Kelly-inspirierte tanh()-Funktion
+- `config.json`: LEVERAGE 3→5, MIN_NOTIONAL 300→100, RISK_PER_TRADE 2.0%→2.5%
+- `STRATEGY_TREND_CAPITAL_PCT` 0.40→0.60 (Trend ist Hauptslot)
+- `SCALED_ENTRY_ENABLED` true→false (keine Tranche-Fragmentierung)
+- Separate `MIN_NOTIONAL_USDT_LEARNING` und `MIN_RR_AFTER_FEES_LEARNING` eingeführt
+
+### Added
+- `backend/tests/test_sizing_kelly.py` (5 Tests)
+- Sizing-Result Feld "phantom_eligible" für Learning-Mode Under-Notional Handling
+- Erweiterte Phantom-Trade Trigger in `quant_v4.py`
+- `WINDSURF_MANIFEST.md`: Abschnitt "Position Sizing v4"
+
+### Fixed
+- Stille Sizing-Kills bei Under-Notional im Learning Mode
+- Score-Bucket-Sprünge (44→45 erzeugte 30% Positionsänderung)
+- Min-Notional-Tod bei kleinem Kapital und steigendem ATR
+
+---
+
+## [v3.0.0-fix03] — 2026-04-10 - BRUNO-FIX-03: Blending & Confluence
+
+### Fixed
+- Brei-Effekt: Blend-Ratio im ranging regime von 0.40 auf 0.15 reduziert
+- MR wirkte subtraktiv gegen Trend-Signale (wird jetzt bei Sign-Conflict neutralisiert)
+- Confluence Bonus praktisch unerreichbar (UND-Logik → ODER-Logik)
+- Confluence Bonus zu niedrig (+10/+20 → +15/+25)
+
+### Added
+- `test_mr_sign_conflict_neutralized`
+- `test_confluence_bonus_with_mtf_only`
+- `test_blend_ratio_reduced_in_ranging`
+- `WINDSURF_MANIFEST.md`: Abschnitt "Signal Blending & Confluence"
+
+---
+
+## [v3.0.0-fix02] — 2026-04-10 - BRUNO-FIX-02: Regime Recalibration
+
+### Fixed
+- `_determine_regime` war BTC-unrealistisch (ATR<1.0% für trending)
+- `unknown`/`high_vola` Regime hatten `allow_longs=False AND allow_shorts=False` (stiller Hard-Block)
+- `trending_bull` erlaubte keine Counter-Trend-Shorts
+- `bear` erlaubte keine Bear-Rally-Longs
+
+### Added
+- `backend/tests/test_regime_detection.py`
+- `WINDSURF_MANIFEST.md`: Abschnitt "Regime Classification"
+
+---
+
 ## [v4.0] – 2026-04-09 - Critical Logic Refactoring (Prompts 1-9) Prompts Implementiert
 
 ### 🎯 Bruno V4 Refactoring — Alle 9 Prompts Implementiert

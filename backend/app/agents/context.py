@@ -157,6 +157,13 @@ class ContextAgent(StreamingAgent):
             missing_critical_liquidity = self.dvol is None or self.long_short_ratio is None
 
             veto_threshold = 30.0 if self._is_learning_mode() else 40.0
+
+            # BRUNO-FIX-05: News Silence Veto im Learning Mode deaktivieren
+            learning_mode = bool(ConfigCache.get("LEARNING_MODE_ENABLED", False))
+            disable_news_veto = bool(ConfigCache.get("DISABLE_NEWS_SILENCE_VETO_IN_LEARNING", True))
+            # Warmup: kein News Silence Veto (news_silence_seconds = 0)
+            news_veto_active = False
+
             warmup_payload = {
                 "GRSS_Score_Raw": round(minimal_grss, 1),
                 "GRSS_Score": round(minimal_grss, 1),
@@ -167,7 +174,7 @@ class ContextAgent(StreamingAgent):
                 "Fresh_Source_Count": fresh_count,
                 "Data_Freshness_Active": fresh_count > 0,
                 "News_Silence_Seconds": 0.0,
-                "Veto_Active": missing_critical_liquidity or minimal_grss < veto_threshold,
+                "Veto_Active": missing_critical_liquidity or minimal_grss < veto_threshold or news_veto_active,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "_warmup": True,  # Flag dass dies ein Warm-Up-Payload ist
             }
@@ -1050,6 +1057,160 @@ class ContextAgent(StreamingAgent):
         """Prüft ob Learning Mode aktiv ist."""
         return ConfigCache.get("LEARNING_MODE_ENABLED", False)
 
+    def _compute_grss_resilient(self, data: dict) -> tuple[float, dict]:
+        """
+        BRUNO-FIX-06: Resiliente GRSS-Berechnung mit partieller Datentoleranz.
+
+        Returns:
+            (grss_score, component_status)
+            grss_score: 0-100 (50 = neutral)
+            component_status: dict mit Verfügbarkeits-Flags je Komponente
+        """
+        components = {}  # name → (score, weight)
+        status = {}      # name → "ok" | "missing"
+
+        # Komponenten mit ihren Standardgewichten (wenn alle verfügbar)
+        default_weights = {
+            "funding_rate": 0.20,
+            "dvol": 0.15,
+            "long_short_ratio": 0.15,
+            "open_interest_delta": 0.20,
+            "liquidations": 0.15,
+            "retail_sentiment": 0.15,
+        }
+
+        # 1. Funding Rate — fast immer verfügbar
+        funding_rate = data.get("funding_rate")
+        if funding_rate is not None:
+            fr_score = self._score_funding_rate(funding_rate)
+            components["funding_rate"] = (fr_score, default_weights["funding_rate"])
+            status["funding_rate"] = "ok"
+        else:
+            status["funding_rate"] = "missing"
+
+        # 2. DVOL (Deribit Implied Volatility) — intermittierend
+        dvol = data.get("dvol")
+        if dvol is not None:
+            dvol_score = self._score_dvol(dvol)
+            components["dvol"] = (dvol_score, default_weights["dvol"])
+            status["dvol"] = "ok"
+        else:
+            status["dvol"] = "missing"
+
+        # 3. Long/Short Ratio — intermittierend
+        lsr = data.get("long_short_ratio")
+        if lsr is not None:
+            lsr_score = self._score_lsr(lsr)
+            components["long_short_ratio"] = (lsr_score, default_weights["long_short_ratio"])
+            status["long_short_ratio"] = "ok"
+        else:
+            status["long_short_ratio"] = "missing"
+
+        # 4. Open Interest Delta (aus eigenen Berechnungen, meist verfügbar)
+        oi_delta = data.get("oi_7d_change_pct")
+        if oi_delta is not None and oi_delta != 0:
+            oi_score = self._score_oi_delta(oi_delta)
+            components["open_interest_delta"] = (oi_score, default_weights["open_interest_delta"])
+            status["open_interest_delta"] = "ok"
+        else:
+            status["open_interest_delta"] = "missing"
+
+        # 5. Liquidations (Liquidation Cluster SQL)
+        liq_data = data.get("liq_asymmetry", {})
+        if liq_data and isinstance(liq_data, dict):
+            liq_score = self._score_liquidations(liq_data)
+            components["liquidations"] = (liq_score, default_weights["liquidations"])
+            status["liquidations"] = "ok"
+        else:
+            status["liquidations"] = "missing"
+
+        # 6. Retail Sentiment (optional)
+        retail = data.get("retail_score")
+        if retail is not None:
+            components["retail_sentiment"] = (retail, default_weights["retail_sentiment"])
+            status["retail_sentiment"] = "ok"
+        else:
+            status["retail_sentiment"] = "missing"
+
+        # Fallback: Keine Daten → neutraler GRSS
+        if not components:
+            self.logger.warning("GRSS: No components available, returning neutral 50")
+            return 50.0, status
+
+        # Normalisierung: Gewichte auf 100% neu verteilen
+        total_weight = sum(w for _, w in components.values())
+        if total_weight <= 0:
+            return 50.0, status
+
+        weighted_sum = sum(score * (w / total_weight) for score, w in components.values())
+
+        # Log wenn weniger als 4 Komponenten
+        if len(components) < 4:
+            self.logger.info(
+                f"GRSS: Partial data ({len(components)}/6 components), "
+                f"re-normalized weights. Missing: {[k for k, v in status.items() if v == 'missing']}"
+            )
+
+        return round(weighted_sum, 1), status
+
+    def _score_funding_rate(self, fr: float) -> float:
+        """Score Funding Rate (0-100, 50 = neutral)."""
+        if fr > 0.02:  # >2% (heavy long bias)
+            return 30.0
+        elif fr > 0.01:
+            return 40.0
+        elif fr > -0.01:
+            return 50.0
+        elif fr > -0.02:
+            return 60.0
+        else:
+            return 70.0  # negative funding = bullish
+
+    def _score_dvol(self, dvol: float) -> float:
+        """Score DVOL (implied vol)."""
+        if dvol > 80:
+            return 30.0  # extreme fear
+        elif dvol > 60:
+            return 40.0
+        elif dvol > 40:
+            return 50.0
+        else:
+            return 60.0  # low vol = bullish
+
+    def _score_lsr(self, lsr: float) -> float:
+        """Score Long/Short Ratio."""
+        if lsr > 2.5:  # extreme long bias = bearish
+            return 35.0
+        elif lsr > 1.5:
+            return 45.0
+        elif lsr > 1.0:
+            return 50.0
+        elif lsr > 0.7:
+            return 55.0
+        else:
+            return 65.0  # more shorts = bullish
+
+    def _score_oi_delta(self, oi_delta: float) -> float:
+        """Score Open Interest Delta."""
+        if oi_delta > 20:  # rapid OI increase
+            return 60.0
+        elif oi_delta > 10:
+            return 55.0
+        elif oi_delta > -5:
+            return 50.0
+        else:
+            return 45.0  # OI decrease
+
+    def _score_liquidations(self, liq_data: dict) -> float:
+        """Score Liquidation Asymmetry."""
+        bias = liq_data.get("bias", "balanced")
+        if bias == "short_squeeze_potential":
+            return 70.0
+        elif bias == "long_liquidation_dominant":
+            return 40.0
+        else:
+            return 50.0
+
     async def _report_health(self, name: str, status: str, latency: float):
         curr = await self.deps.redis.get_cache("bruno:health:sources") or {}
         curr[name] = {"status": status, "last_update": datetime.now(timezone.utc).isoformat(), "latency_ms": round(latency, 1)}
@@ -1209,24 +1370,50 @@ class ContextAgent(StreamingAgent):
                 "max_pain_distance_pct": max_pain_distance_pct,
             }
         
-            grss = self.calculate_grss(grss_input)
-            
+            # BRUNO-FIX-06: Resiliente GRSS-Berechnung
+            grss_score, component_status = self._compute_grss_resilient(grss_input)
+
             # Active Event Check
             active_event = EventCalendar.get_active_event()
-            
+
             current_ts = datetime.now(timezone.utc)
-            self.grss_history.append({"timestamp": current_ts, "score": grss})
+            self.grss_history.append({"timestamp": current_ts, "score": grss_score})
             self.grss_history = [
                 entry for entry in self.grss_history
                 if (current_ts - entry["timestamp"]).total_seconds() <= 1800
             ]
-            grss_velocity_30min = round(grss - self.grss_history[0]["score"], 1) if self.grss_history else 0.0
-            self._grss_ema = self._grss_ema_alpha * grss + (1 - self._grss_ema_alpha) * self._grss_ema
-        
+            grss_velocity_30min = round(grss_score - self.grss_history[0]["score"], 1) if self.grss_history else 0.0
+            self._grss_ema = self._grss_ema_alpha * grss_score + (1 - self._grss_ema_alpha) * self._grss_ema
+
             veto_threshold = 30.0 if self._is_learning_mode() else 40.0
-            missing_critical_liquidity = self.dvol is None or self.long_short_ratio is None
+
+            # BRUNO-FIX-06: Veto_Active nur bei ECHTEN Showstoppern
+            components_ok = sum(1 for v in component_status.values() if v == "ok")
+            components_total = len(component_status) if component_status else 6
+            grss_blackout = components_ok < 2  # <33% verfügbar
+            grss_extreme = self._grss_ema < veto_threshold
+
+            # BRUNO-FIX-05: News Silence Veto im Learning Mode deaktivieren
+            learning_mode_ctx = bool(ConfigCache.get("LEARNING_MODE_ENABLED", False))
+            disable_news_veto_ctx = bool(ConfigCache.get("DISABLE_NEWS_SILENCE_VETO_IN_LEARNING", True))
+
+            if learning_mode_ctx and disable_news_veto_ctx:
+                # News Silence als Info, nicht als Veto
+                news_veto_active_ctx = False
+                self.logger.debug(
+                    f"News Silence: {news_silence_seconds:.0f}s (learning mode, no veto)"
+                )
+            else:
+                # Prod: Veto bei langer News Silence (>2h = 7200s)
+                news_veto_active_ctx = news_silence_seconds > 7200
+
+            # Data_Status für transparente Diagnostics
+            dvol_missing = component_status.get("dvol") == "missing"
+            lsr_missing = component_status.get("long_short_ratio") == "missing"
+            partial_data = components_ok < 4
+
             payload = {
-                "GRSS_Score_Raw": round(grss, 1),
+                "GRSS_Score_Raw": round(grss_score, 1),
                 "GRSS_Score": round(self._grss_ema, 1),
                 "GRSS_Velocity_30min": grss_velocity_30min,
                 "GRSS_Deriv_Sub": self._last_grss_breakdown.get("deriv", 0.0),
@@ -1284,8 +1471,18 @@ class ContextAgent(StreamingAgent):
                     "btc_info": coinmarketcap_bundle.get("btc_info", {}),
                     "global_metrics": coinmarketcap_bundle.get("global_metrics", {}),
                 },
-                "Veto_Active": missing_critical_liquidity or self._grss_ema < veto_threshold,
+                "Veto_Active": grss_extreme or grss_blackout or news_veto_active_ctx,
                 "Data_Source_Status": self._get_data_source_summary(health, sources),
+                "Data_Status": {
+                    "components_ok": components_ok,
+                    "components_total": components_total,
+                    "components_detail": component_status,
+                    "dvol_missing": dvol_missing,
+                    "lsr_missing": lsr_missing,
+                    "partial_data": partial_data,
+                    "grss_blackout": grss_blackout,
+                    "news_silence_active": news_veto_active_ctx,
+                },
                 "timestamp": current_ts.isoformat()
             }
             await self.deps.redis.set_cache("bruno:context:grss", payload)
